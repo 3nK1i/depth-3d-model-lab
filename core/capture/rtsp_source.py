@@ -52,16 +52,23 @@ class RtspSource(BaseSource):
         # transport selection; harmless if the backend ignores it.
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{transport}"
 
-        # CAP_PROP_OPEN_TIMEOUT_MSEC must be passed via the constructor's
-        # params list, NOT set on the VideoCapture afterward — the
-        # constructor performs the actual blocking connect, so setting it
-        # post-construction is too late to have any effect and an
-        # unreachable host can then block the worker thread for the OS's
-        # own TCP timeout (potentially 60s+), not the configured value.
+        # Only CAP_PROP_OPEN_TIMEOUT_MSEC goes in the constructor's params
+        # list. Including CAP_PROP_BUFFERSIZE there as well triggers an
+        # UNCONDITIONAL bailout on this FFmpeg backend build ("unsupported
+        # parameters in .open()") — isOpened() then returns False for
+        # every URL, reachable or not, which is exactly the bug that made
+        # every RTSP connection fail regardless of the server. Verified:
+        # timeout alone opens normally; adding buffersize breaks it.
         params = [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, self._connection_timeout_ms]
-        if self._low_latency:
-            params += [cv2.CAP_PROP_BUFFERSIZE, 1]
         capture = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG, params)
+
+        if self._low_latency and capture.isOpened():
+            # Best-effort only: this backend build silently fails to
+            # apply it (set() returns False) rather than erroring, so a
+            # low-latency hint that doesn't take effect must never break
+            # the connection — hence setting it here, after open, not in
+            # the params list above.
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return capture
 
     def _interruptible_sleep(self, seconds: float) -> None:
