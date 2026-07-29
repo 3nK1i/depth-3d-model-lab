@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
     QMainWindow,
     QSplitter,
     QVBoxLayout,
@@ -35,9 +33,8 @@ from app.widgets.header_widget import HeaderWidget
 from app.widgets.mode_tabs import ModeTabs
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.performance_bar import PerformanceBar
-from app.widgets.runtime_toolbar import RuntimeToolbar
 from app.widgets.settings_panel import SettingsPanel
-from app.widgets.source_bar import SourceBar
+from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
 
 MIN_WINDOW_WIDTH = 1366
@@ -49,7 +46,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("EIA TECH — Depth & 3D Model Lab")
+        self.setWindowTitle("EIA TECH - Depth & 3D Model Lab")
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()
@@ -103,32 +100,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._performance_bar, stretch=0)
         return page
 
-    def _build_control_row(self) -> QFrame:
-        """Source-type selector + runtime controls as ONE card.
-
-        The row itself carries the ``sourceBar`` object name so it renders
-        as a single bordered card; the two halves inside are transparent,
-        which also keeps the ``QFrame#sourceBar <control>`` style rules
-        applying to everything in the row.
+    def _build_control_row(self) -> QWidget:
+        """Three independent grouped cards: source type, source config,
+        and runtime actions — see :class:`SourceRuntimeBar`. No outer
+        border wraps them; the page background shows through the gaps.
         """
-        row = QFrame()
-        row.setObjectName("sourceBar")
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._source_bar = SourceBar()
-        self._source_bar.setObjectName("")
-        self._runtime_toolbar = RuntimeToolbar()
-
-        toolbar_wrapper = QWidget()
-        toolbar_layout = QHBoxLayout(toolbar_wrapper)
-        toolbar_layout.setContentsMargins(12, 8, 16, 8)
-        toolbar_layout.addWidget(self._runtime_toolbar)
-
-        layout.addWidget(self._source_bar, stretch=1)
-        layout.addWidget(toolbar_wrapper)
-        return row
+        bar = SourceRuntimeBar()
+        self._source_bar = bar.source_bar
+        self._runtime_toolbar = bar.runtime_toolbar
+        return bar
 
     def _build_main_splitter(self) -> QSplitter:
         self._original_view = OriginalSourceView()

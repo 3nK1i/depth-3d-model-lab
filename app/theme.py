@@ -97,6 +97,23 @@ class Palette:
     footer_status_neutral_fg: str = "#9298a3"
     footer_status_neutral_border: str = "#343a42"
 
+    # Source/runtime toolbar group cards
+    toolbar_card_bg: str = "#14181c"
+    toolbar_card_border: str = "#20262d"
+    toolbar_hover_bg: str = "#1c2126"
+    toolbar_active_bg: str = "#2a1417"
+    toolbar_text: str = "#c5c9cf"
+    toolbar_text_muted: str = "#979da6"
+    toolbar_green_bg: str = "#153323"
+    toolbar_green_border: str = "#2c5c3f"
+    toolbar_green_fg: str = "#6fdb92"
+    toolbar_amber_bg: str = "#332913"
+    toolbar_amber_border: str = "#5c4a24"
+    toolbar_amber_fg: str = "#e0b768"
+    toolbar_red_bg: str = "#331519"
+    toolbar_red_border: str = "#5c2027"
+    toolbar_red_fg: str = "#e88b93"
+
 
 PALETTE = Palette()
 
@@ -150,60 +167,132 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
     QFrame#headerBar {{
-        background-color: {p.bg_panel};
+        background-color: {p.settings_card_bg};
         border-bottom: 1px solid {p.border};
     }}
 
-    QFrame#sourceBar {{
-        background-color: {p.bg_root};
-        border: 1px solid {p.viewport_border};
-        border-radius: {RADIUS_MD}px;
+    /* ---- Source/runtime toolbar: three independent grouped cards ---- */
+
+    QFrame#toolbarGroupCard {{
+        background-color: {p.toolbar_card_bg};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 7px;
     }}
 
-    /* Controls inside the source/runtime bar sit flush on the bar: no
-       lighter grey fill, just a subtle border. Colored runtime buttons
-       (#successButton / #warningButton / #stopButton) keep their own
-       backgrounds because they set them explicitly further down. */
-    QFrame#sourceBar QPushButton,
-    QFrame#sourceBar QComboBox,
-    QFrame#sourceBar QLineEdit {{
+    QLabel#toolbarSectionTitle {{
+        color: {p.toolbar_text};
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        background: transparent;
+    }}
+
+    /* Segmented source-type buttons: near-invisible when inactive, a
+       translucent red fill + bottom accent line when active — not a
+       full bright rectangular outline. */
+    QPushButton#sourceTypeButton {{
         background-color: transparent;
-        border: 1px solid {p.viewport_border};
+        border: 1px solid transparent;
+        border-radius: 5px;
+        padding: 5px 10px;
+        color: {p.toolbar_text_muted};
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+    }}
+    QPushButton#sourceTypeButton:hover {{
+        background-color: {p.toolbar_hover_bg};
+        color: {p.toolbar_text};
+    }}
+    QPushButton#sourceTypeButton:checked {{
+        background-color: {p.toolbar_active_bg};
+        border: 1px solid transparent;
+        border-bottom: 2px solid {p.accent};
+        color: {p.accent};
+        font-weight: 700;
     }}
 
-    QFrame#sourceBar QPushButton:hover {{
+    /* Compact combo boxes reused from the settings sidebar
+       (#settingsCombo) automatically pick up their own styling — no
+       toolbar-specific override needed, keeping one shared look. */
+
+    /* Runtime action buttons: translucent tinted background + thin
+       border, not a solid opaque fill. */
+    QPushButton#toolbarDisconnectButton {{
+        background-color: {p.toolbar_hover_bg};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 5px;
+        padding: 6px 14px;
+        color: {p.toolbar_text};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#toolbarDisconnectButton:hover {{
         background-color: {p.bg_input};
     }}
-
-    QFrame#sourceBar QComboBox:hover,
-    QFrame#sourceBar QLineEdit:focus {{
-        border-color: {p.border_light};
+    QPushButton#toolbarDisconnectButton:pressed {{
+        background-color: {p.bg_root};
+    }}
+    QPushButton#toolbarDisconnectButton:disabled {{
+        color: {p.toolbar_text_muted};
+        background-color: transparent;
     }}
 
-    /* The three rules above flatten every QPushButton in the source bar
-       to transparent. That rule and "QPushButton#successButton" etc. below
-       tie on ID count (1) but the descendant rule has more type selectors,
-       so in Qt's QSS it actually wins the tie — silently erasing the
-       colored buttons even when enabled. These combined selectors add a
-       second ID to the match, which is unambiguously more specific, so
-       the colors always win regardless of rule order. */
-    QFrame#sourceBar QPushButton#successButton,
-    QFrame#sourceBar QPushButton#warningButton,
-    QFrame#sourceBar QPushButton#stopButton {{
-        border: none;
+    QPushButton#toolbarStartButton {{
+        background-color: {p.toolbar_green_bg};
+        border: 1px solid {p.toolbar_green_border};
+        border-radius: 5px;
+        padding: 6px 14px;
+        color: {p.toolbar_green_fg};
+        font-size: 12px;
+        font-weight: 600;
     }}
-    QFrame#sourceBar QPushButton#successButton {{ background-color: #1c5c33; }}
-    QFrame#sourceBar QPushButton#warningButton {{ background-color: #7a5a17; }}
-    QFrame#sourceBar QPushButton#stopButton {{ background-color: {p.accent}; }}
-    /* Dark hover: a noticeably darker shade of each button's own color,
-       not the bar's generic grey hover (which would fight this rule on
-       specificity anyway, same trap as the base colors above). */
-    QFrame#sourceBar QPushButton#successButton:hover {{ background-color: #164a29; }}
-    QFrame#sourceBar QPushButton#warningButton:hover {{ background-color: #614710; }}
-    QFrame#sourceBar QPushButton#stopButton:hover {{ background-color: {p.accent_pressed}; }}
-    QFrame#sourceBar QPushButton#successButton:disabled {{ background-color: #16301f; }}
-    QFrame#sourceBar QPushButton#warningButton:disabled {{ background-color: #3d2e14; }}
-    QFrame#sourceBar QPushButton#stopButton:disabled {{ background-color: #2a1417; }}
+    QPushButton#toolbarStartButton:hover {{ background-color: #1c3d27; }}
+    QPushButton#toolbarStartButton:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.toolbar_text_muted};
+    }}
+
+    QPushButton#toolbarPauseButton {{
+        background-color: {p.toolbar_amber_bg};
+        border: 1px solid {p.toolbar_amber_border};
+        border-radius: 5px;
+        padding: 6px 14px;
+        color: {p.toolbar_amber_fg};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#toolbarPauseButton:hover {{ background-color: #3d3218; }}
+    QPushButton#toolbarPauseButton:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.toolbar_text_muted};
+    }}
+
+    QPushButton#toolbarStopButton {{
+        background-color: {p.toolbar_red_bg};
+        border: 1px solid {p.toolbar_red_border};
+        border-radius: 5px;
+        padding: 6px 14px;
+        color: {p.toolbar_red_fg};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#toolbarStopButton:hover {{ background-color: #3d1a1f; }}
+    QPushButton#toolbarStopButton:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.toolbar_text_muted};
+    }}
+
+    QLabel#sourceConnectionBadge {{
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        border-radius: 5px;
+        padding: 3px 10px;
+    }}
 
     QLabel {{
         color: {p.text_primary};
@@ -232,12 +321,12 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
 
     QLabel#proBadge {{
         background-color: {p.accent};
+        border: 1px solid {p.accent_hover};
         color: white;
-        font-size: 9px;
+        font-size: 11px;
         font-weight: 800;
         letter-spacing: 0.5px;
-        border-radius: 3px;
-        padding: 1px 5px;
+        border-radius: 6px;
     }}
 
     QLabel#sectionTitle {{

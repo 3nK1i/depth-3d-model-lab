@@ -1,7 +1,7 @@
 [project]
 name = "depth-3d-model-lab"
 version = "0.1.0"
-description = "EIA TECH — Depth & 3D Model Lab: live monocular depth + interactive 3D point-cloud desktop application"
+description = "EIA TECH - Depth & 3D Model Lab: live monocular depth + interactive 3D point-cloud desktop application"
 requires-python = ">=3.11,<3.13"
 readme = "README.md"
 

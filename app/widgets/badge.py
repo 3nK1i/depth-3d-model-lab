@@ -23,10 +23,6 @@ class BadgeKind(Enum):
     RECONSTRUCTION_ONLY = "reconstruction_only"
     NOT_RECOMMENDED = "not_recommended"
     NOT_INSTALLED = "not_installed"
-    # Flat (no chip background) status text, e.g. the source connection
-    # badge sitting directly on the source bar.
-    CONNECTED_FLAT = "connected_flat"
-    DISCONNECTED_FLAT = "disconnected_flat"
 
 
 _STYLE_MAP: dict[BadgeKind, tuple[str, str]] = {
@@ -46,8 +42,6 @@ _STYLE_MAP: dict[BadgeKind, tuple[str, str]] = {
         PALETTE.badge_not_recommended_fg,
     ),
     BadgeKind.NOT_INSTALLED: (PALETTE.badge_not_installed_bg, PALETTE.badge_not_installed_fg),
-    BadgeKind.CONNECTED_FLAT: ("transparent", PALETTE.badge_recommended_fg),
-    BadgeKind.DISCONNECTED_FLAT: ("transparent", PALETTE.badge_not_recommended_fg),
 }
 
 _TEXT_MAP: dict[BadgeKind, str] = {
@@ -61,8 +55,6 @@ _TEXT_MAP: dict[BadgeKind, str] = {
     BadgeKind.RECONSTRUCTION_ONLY: "RECONSTRUCTION ONLY",
     BadgeKind.NOT_RECOMMENDED: "NOT RECOMMENDED",
     BadgeKind.NOT_INSTALLED: "NOT INSTALLED",
-    BadgeKind.CONNECTED_FLAT: "CONNECTED",
-    BadgeKind.DISCONNECTED_FLAT: "DISCONNECTED",
 }
 
 

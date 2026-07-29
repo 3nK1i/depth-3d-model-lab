@@ -101,6 +101,7 @@ class HeaderWidget(QFrame):
         pro_badge = QLabel("PRO")
         pro_badge.setObjectName("proBadge")
         pro_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pro_badge.setFixedSize(34, 20)
         title_row.addWidget(pro_badge)
 
         version = QLabel(APP_VERSION)
