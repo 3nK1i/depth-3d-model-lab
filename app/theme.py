@@ -75,6 +75,28 @@ class Palette:
     settings_badge_fg: str = "#4ad07d"
     settings_badge_border: str = "#245c3a"
 
+    # Performance footer
+    footer_bg: str = "#111519"
+    footer_border: str = "#272d34"
+    footer_separator: str = "#252b31"
+    footer_label: str = "#a6abb3"
+    footer_value: str = "#e4e7eb"
+    footer_value_positive: str = "#52d66b"
+    footer_value_muted: str = "#c5c9cf"
+    footer_track_bg: str = "#2a2f36"
+    footer_status_green_bg: str = "#173a25"
+    footer_status_green_fg: str = "#4ad07d"
+    footer_status_green_border: str = "#245c3a"
+    footer_status_amber_bg: str = "#3a2f14"
+    footer_status_amber_fg: str = "#e0a83c"
+    footer_status_amber_border: str = "#5c4a24"
+    footer_status_red_bg: str = "#3a1418"
+    footer_status_red_fg: str = "#e0293e"
+    footer_status_red_border: str = "#5c2027"
+    footer_status_neutral_bg: str = "#1c1f24"
+    footer_status_neutral_fg: str = "#9298a3"
+    footer_status_neutral_border: str = "#343a42"
+
 
 PALETTE = Palette()
 
@@ -726,6 +748,67 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
     QSlider#settingsSlider::handle:horizontal:hover {{
         background: {p.settings_text};
+    }}
+
+    /* ---- Performance footer ---- */
+
+    QFrame#performanceFooter {{
+        background-color: {p.footer_bg};
+        border: 1px solid {p.footer_border};
+        border-radius: 7px;
+    }}
+
+    QFrame#footerSeparator {{
+        background-color: {p.footer_separator};
+        border: none;
+    }}
+
+    QLabel#footerCellLabel {{
+        color: {p.footer_label};
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        background: transparent;
+    }}
+
+    QLabel#footerCellValue {{
+        color: {p.footer_value};
+        font-size: 13px;
+        font-weight: 500;
+        background: transparent;
+    }}
+
+    QLabel#footerCellValuePositive {{
+        color: {p.footer_value_positive};
+        font-size: 13px;
+        font-weight: 600;
+        background: transparent;
+    }}
+
+    QLabel#footerCellValueMuted {{
+        color: {p.footer_value_muted};
+        font-size: 13px;
+        font-weight: 500;
+        background: transparent;
+    }}
+
+    QLabel#footerStatusBadge {{
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        border-radius: 5px;
+        padding: 3px 10px;
+    }}
+
+    QPushButton#modelInfoButton {{
+        background: transparent;
+        border: 1px solid {p.footer_separator};
+        border-radius: 4px;
+        padding: 0px;
+    }}
+    QPushButton#modelInfoButton:hover {{
+        background-color: {p.bg_input};
+        border-color: {p.border_light};
     }}
     """
 

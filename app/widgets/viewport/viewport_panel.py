@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtCore import QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -324,34 +324,147 @@ class _RenderModeCard(QFrame):
         col.addWidget(reset_btn)
 
 
+class PerspectiveFloorGrid:
+    """Reusable static perspective floor-grid painter for the Phase 1
+    placeholder canvas.
+
+    Draws a restrained, one-point-perspective ground plane: minor + major
+    depth lines that compress toward the horizon, and perspective rays
+    converging on a discreet vanishing point, with alpha fading by
+    distance and toward the side edges so nothing reads as a hard line or
+    a flat 2D fan.
+
+    In Phase 4 this whole helper is replaced by a real VisPy ``Lines``
+    visual on a 3D ground plane sharing the point-cloud's camera (see the
+    module docstring on :class:`_CanvasSurface`); every value here is
+    derived from the widget's current rect, never a fixed resolution, so
+    porting the same proportions to the VisPy scene later is direct.
+    """
+
+    # Vertical extent: the grid lives in the lower ~60% of the viewport.
+    VANISHING_Y_FRACTION = 0.42
+    GRID_BOTTOM_FRACTION = 0.985
+
+    # Line counts (spec: 17-21 rays, 11-14 depth lines).
+    N_RAYS = 19
+    N_DEPTH_LINES = 13
+    MAJOR_EVERY = 4
+
+    # How aggressively depth lines compress toward the horizon.
+    # >1 = denser near the horizon, sparser near the camera.
+    PERSPECTIVE_POWER = 1.7
+
+    # Rays extend this far past each side at the near edge so the floor
+    # still spans the full width close to the camera.
+    RAY_OVERHANG = 1.7
+
+    # Base colors (never pure grey/white; tuned per spec §5).
+    MINOR_COLOR = "#252b32"
+    MAJOR_COLOR = "#303740"
+    MINOR_ALPHA_MAX = 30
+    MAJOR_ALPHA_MAX = 44
+
+    def paint(self, painter: QPainter, viewport_rect: QRectF) -> None:
+        width = viewport_rect.width()
+        height = viewport_rect.height()
+        if width <= 0 or height <= 0:
+            return
+
+        origin_x = viewport_rect.left()
+        origin_y = viewport_rect.top()
+        vanishing_y = origin_y + height * self.VANISHING_Y_FRACTION
+        grid_bottom = origin_y + height * self.GRID_BOTTOM_FRACTION
+        vanishing_point = QPointF(origin_x + width / 2.0, vanishing_y)
+        floor_span = grid_bottom - vanishing_y
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setClipRect(viewport_rect)
+
+        self._draw_depth_lines(painter, origin_x, width, vanishing_y, floor_span)
+        self._draw_rays(painter, origin_x, width, grid_bottom, vanishing_point)
+
+        painter.restore()
+
+    def _draw_depth_lines(
+        self,
+        painter: QPainter,
+        origin_x: float,
+        width: float,
+        vanishing_y: float,
+        floor_span: float,
+    ) -> None:
+        """Horizontal lines, compressed toward the horizon, fading in from
+        near-zero alpha there up to full strength in the foreground."""
+        for i in range(1, self.N_DEPTH_LINES + 1):
+            t = i / self.N_DEPTH_LINES
+            y = vanishing_y + floor_span * (t**self.PERSPECTIVE_POWER)
+            is_major = (i % self.MAJOR_EVERY) == 0
+            # t alone (not i) drives alpha, so the very first lines —
+            # right where a "horizon band" would otherwise appear — stay
+            # almost invisible regardless of how many lines there are.
+            alpha_fraction = t
+            pen = self._make_pen(is_major, alpha_fraction)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(origin_x, y), QPointF(origin_x + width, y))
+
+    def _draw_rays(
+        self,
+        painter: QPainter,
+        origin_x: float,
+        width: float,
+        grid_bottom: float,
+        vanishing_point: QPointF,
+    ) -> None:
+        """Perspective rays converging on the vanishing point, each faded
+        by how far it sits from the horizontal center (edge attenuation)
+        and kept faint near the vanishing point itself."""
+        near_left = origin_x - width * (self.RAY_OVERHANG - 1.0) / 2.0
+        near_span = width * self.RAY_OVERHANG
+        center_index = self.N_RAYS / 2.0
+
+        for i in range(self.N_RAYS + 1):
+            x = near_left + near_span * i / self.N_RAYS
+            is_major = (i % self.MAJOR_EVERY) == 0
+            # Fade rays that land far from center (left/right edge fade);
+            # never let the center ray spike to full alpha on its own.
+            distance_from_center = abs(i - center_index) / center_index
+            edge_fraction = 1.0 - 0.55 * distance_from_center
+            pen = self._make_pen(is_major, edge_fraction)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(x, grid_bottom), vanishing_point)
+
+    def _make_pen(self, is_major: bool, fraction: float) -> QPen:
+        fraction = max(0.0, min(1.0, fraction))
+        color_hex = self.MAJOR_COLOR if is_major else self.MINOR_COLOR
+        alpha_max = self.MAJOR_ALPHA_MAX if is_major else self.MINOR_ALPHA_MAX
+        color = QColor(color_hex)
+        color.setAlpha(int(alpha_max * fraction))
+        pen = QPen(color)
+        pen.setWidthF(1.0)
+        pen.setCosmetic(True)  # stays 1 device-independent pixel at any DPI
+        return pen
+
+
 class _CanvasSurface(QFrame):
     """The full-bleed 3D drawing surface.
 
-    In Phase 1 this paints a faint static perspective floor grid (so the
-    viewport reads as a 3D space even while idle) plus a centred idle
-    message. Phase 4 calls :meth:`attach_native` with the VisPy canvas'
-    native widget, which covers this surface entirely — the real
-    camera-aware grid is then drawn by VisPy and this painted one is
-    hidden behind it automatically.
+    In Phase 1 this paints a restrained static perspective floor grid via
+    :class:`PerspectiveFloorGrid` (so the viewport reads as a 3D space
+    even while idle) plus an idle message positioned above the grid's
+    vanishing point. Phase 4 calls :meth:`attach_native` with the VisPy
+    canvas' native widget, which covers this surface entirely — the real
+    camera-aware grid is then drawn by VisPy on an actual ground plane
+    sharing the point-cloud's camera, and this painted one is hidden
+    behind it automatically.
     """
-
-    # Ground-grid tuning: horizon sits at this fraction of the height.
-    # A single vanishing point at the horizon center gives the clean
-    # one-point-perspective floor look (Unity/Blender viewport style)
-    # instead of a crosshatch from two off-screen points.
-    HORIZON = 0.40
-    N_DEPTH_LINES = 10
-    N_WIDTH_LINES = 12
-    # Ground plane extends this many widths past each side at the near
-    # edge, so verticals converging toward the centre still cover the
-    # full width close to the camera.
-    GROUND_OVERHANG = 1.6
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("viewportCanvas")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumHeight(260)
+        self._grid = PerspectiveFloorGrid()
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -362,7 +475,12 @@ class _CanvasSurface(QFrame):
         )
         self._idle.setObjectName("idleMessage")
         self._idle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._layout.addWidget(self._idle, stretch=1)
+        # Positioned via asymmetric stretch (9:11) rather than a single
+        # centered stretch, so the message sits at ~45% height — above
+        # the grid's vanishing point instead of directly on top of it.
+        self._layout.addStretch(9)
+        self._layout.addWidget(self._idle)
+        self._layout.addStretch(11)
 
         self._native: QWidget | None = None
 
@@ -372,36 +490,7 @@ class _CanvasSurface(QFrame):
             return  # VisPy owns the surface once attached.
 
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        width, height = self.width(), self.height()
-        horizon_y = height * self.HORIZON
-        vanishing_point = QPointF(width / 2.0, horizon_y)
-
-        pen = QPen(QColor(PALETTE.viewport_grid_line))
-        pen.setWidthF(1.0)
-        painter.setPen(pen)
-
-        # Depth lines: evenly spaced on the ground, drawn with quadratic
-        # easing toward the horizon so equal real-world spacing reads as
-        # perspective foreshortening — this is what makes it read as a
-        # *floor* rather than a ladder of parallel lines.
-        span = height - horizon_y
-        for i in range(1, self.N_DEPTH_LINES + 1):
-            t = i / self.N_DEPTH_LINES
-            y = horizon_y + span * (t * t)
-            painter.drawLine(QPointF(0, y), QPointF(width, y))
-
-        # Width lines: evenly spaced along the NEAR (bottom) edge, each
-        # drawn straight to the single vanishing point. Equal spacing at
-        # the near edge is what a real ground grid looks like; spacing
-        # them evenly at the horizon instead is what produced the messy
-        # crosshatch before.
-        near_left = -width * (self.GROUND_OVERHANG - 1.0) / 2.0
-        near_span = width * self.GROUND_OVERHANG
-        for i in range(self.N_WIDTH_LINES + 1):
-            x = near_left + near_span * i / self.N_WIDTH_LINES
-            painter.drawLine(QPointF(x, height), vanishing_point)
-
+        self._grid.paint(painter, QRectF(self.rect()))
         painter.end()
 
     def attach_native(self, native: QWidget) -> None:
