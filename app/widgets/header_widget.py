@@ -114,11 +114,23 @@ class HeaderWidget(QFrame):
 
     def _build_hardware_block(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(24)
+        row.setSpacing(14)
         row.addLayout(self._metric_pair("GPU", "Detecting…", "gpu_value", PALETTE.success))
+        row.addWidget(self._vline())
         row.addLayout(self._metric_pair("VRAM", "— / — GB", "vram_value", PALETTE.text_primary))
+        row.addWidget(self._vline())
         row.addLayout(self._metric_pair("CUDA", "—", "cuda_value", PALETTE.success))
         return row
+
+    @staticmethod
+    def _vline() -> QFrame:
+        """Thin vertical divider between header metric groups."""
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.VLine)
+        line.setFixedWidth(1)
+        line.setFixedHeight(22)
+        line.setStyleSheet(f"background-color: {PALETTE.border}; border: none;")
+        return line
 
     def _metric_pair(self, label_text: str, initial: str, name: str, value_color: str) -> QVBoxLayout:
         col = QVBoxLayout()
@@ -137,6 +149,10 @@ class HeaderWidget(QFrame):
 
     def _build_status_badge(self) -> BadgeLabel:
         self._status_badge = BadgeLabel(BadgeKind.LOADING, "INITIALIZING")
+        # Height pinned (not width — text varies: READY vs INITIALIZING);
+        # without this, QHBoxLayout stretches it to the full 56px header
+        # height, same bug the PRO badge had.
+        self._status_badge.setFixedHeight(20)
         return self._status_badge
 
     # -- Public update API ------------------------------------------------

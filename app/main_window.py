@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.application_controller import ApplicationController
 from app.settings import AppSettings
 from app.theme import (
     BODY_SPACING,
@@ -46,7 +47,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("EIA TECH - Depth & 3D Model Lab")
+        self.setWindowTitle("EIA TECH — Depth & 3D Model Lab")
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()
@@ -54,6 +55,9 @@ class MainWindow(QMainWindow):
         self._is_running = False
 
         self._build_ui()
+        self._controller = ApplicationController(
+            self._source_bar, self._original_view, parent_widget=self
+        )
         self._wire_demo_lifecycle()
         self._restore_layout()
 
@@ -160,8 +164,7 @@ class MainWindow(QMainWindow):
 
     def _demo_on_connect(self) -> None:
         self._is_connected = True
-        self._source_bar.set_connection_state(True)
-        self._original_view.set_live(True)
+        self._controller.connect_active_source()
         self._header.set_status(BadgeKind.READY, "READY")
         self._performance_bar.set_status(BadgeKind.COMPATIBLE, "SOURCE READY")
         self._runtime_toolbar.apply_button_states(
@@ -175,9 +178,7 @@ class MainWindow(QMainWindow):
     def _demo_on_disconnect(self) -> None:
         self._is_connected = False
         self._is_running = False
-        self._source_bar.set_connection_state(False)
-        self._original_view.set_live(False)
-        self._original_view.clear_frame()
+        self._controller.disconnect_active_source()
         self._depth_view.clear_frame()
         self._viewport_panel.set_live(False)
         self._performance_bar.set_status(BadgeKind.NOT_INSTALLED, "IDLE")
@@ -259,5 +260,6 @@ class MainWindow(QMainWindow):
         self._settings.sync()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override signature
+        self._controller.disconnect_active_source()
         self._save_layout()
         super().closeEvent(event)

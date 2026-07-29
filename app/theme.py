@@ -910,6 +910,6 @@ def apply_theme(app: QApplication) -> None:
 def badge_style(bg: str, fg: str) -> str:
     """Return inline QSS for a small status/compatibility badge label."""
     return (
-        f"background-color: {bg}; color: {fg}; border-radius: 3px; "
-        f"padding: 2px 8px; font-size: 10px; font-weight: 700;"
+        f"background-color: {bg}; color: {fg}; border-radius: 5px; "
+        f"padding: 2px 10px; font-size: 10px; font-weight: 700;"
     )
