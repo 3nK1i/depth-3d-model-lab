@@ -1,0 +1,29 @@
+# EIA TECH — Depth & 3D Model Lab
+# Application-level configuration.
+#
+# Phase 1 note: nothing in the UI shell currently reads this file — it
+# exists now so the config-driven pattern is established up front. Real
+# consumers arrive with their subsystems: timeouts with the inference
+# process manager (Phase 3), default source settings with the capture
+# system (Phase 2), benchmark settings with the benchmark page (Phase 7).
+
+app:
+  name: "EIA TECH — Depth & 3D Model Lab"
+  version: "0.1.0"
+
+window:
+  min_width: 1366
+  min_height: 768
+
+runtime:
+  # Seconds to wait for a worker acknowledgement before offering
+  # "Continue Waiting" / "Restart Worker" (spec §13). Implemented in
+  # Phase 3.
+  stop_timeout_seconds: 5
+
+logging:
+  directory: "logs"
+  file: "app.log"
+  max_bytes: 5_000_000
+  backup_count: 5
+  level: "INFO"

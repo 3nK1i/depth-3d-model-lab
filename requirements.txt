@@ -1,0 +1,14 @@
+# EIA TECH — Depth & 3D Model Lab
+# Phase 1 requirements: UI shell only.
+#
+# This intentionally does NOT include OpenCV, PyTorch, VisPy, pynvml, etc.
+# Those arrive with their respective phases (capture in Phase 2, inference
+# runtime in Phase 3, geometry/VisPy in Phase 4, models in Phase 5+) as
+# separate requirement files, per the dependency-isolation approach in
+# the README — one fragile combined file is exactly what we're avoiding.
+
+PyQt6>=6.7,<6.9
+
+# Dev/test dependencies
+pytest>=8.0
+pytest-qt>=4.4

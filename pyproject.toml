@@ -1,0 +1,28 @@
+[project]
+name = "depth-3d-model-lab"
+version = "0.1.0"
+description = "EIA TECH — Depth & 3D Model Lab: live monocular depth + interactive 3D point-cloud desktop application"
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+
+# Phase 1 (this milestone) only needs the UI stack. Capture (OpenCV),
+# 3D rendering (VisPy), hardware monitoring (pynvml/psutil) and
+# per-model inference dependencies are added in their respective phases
+# and documented separately — see README "Installation" and the future
+# requirements/models-*.txt files.
+dependencies = [
+    "PyQt6>=6.7,<6.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app", "app.widgets", "app.widgets.viewport", "app.dialogs", "core"]
