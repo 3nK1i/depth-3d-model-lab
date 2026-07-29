@@ -1,4 +1,4 @@
-# EIA TECH — Depth & 3D Model Lab
+# EIA TECH - Depth & 3D Model Lab
 
 A PyQt6 desktop application for live monocular depth estimation and
 interactive 3D point-cloud visualization, built for Ubuntu 24.04 with
@@ -10,7 +10,7 @@ RTX 2060 / RTX 5090 GPUs as primary targets.
 > implemented yet.** See [Status](#status--what-is-and-isnt-here) below
 > before assuming any feature works.
 
-## Status — what is (and isn't) here
+## Status - What is (and isn't) here ?
 
 | Area | State |
 |---|---|
