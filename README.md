@@ -14,7 +14,15 @@ Phases 1-4 are implemented:
 - Interactive VisPy 3D viewport
 - Runtime settings and performance footer
 
-Phase 5 adds the first real model: MoGe-2, hardware-aware profiles and real GPU metrics.
+Phase 5 is in progress. Step 1 is implemented:
+
+- NVIDIA GPU discovery without creating model tensors in the Qt process
+- PyTorch/CUDA build checks and clear CPU fallbacks
+- Capability-based Efficient, Balanced and Ultra profiles
+- Automatic profile selection for RTX 2060-, RTX 5090- and other NVIDIA-class GPUs
+- Persistent profile selection in the MODEL card
+
+The MoGe-2 adapter, worker-side warm-up/inference and live GPU metrics follow in the next steps.
 
 ## Requirements
 
@@ -32,6 +40,16 @@ pip install -e ".[dev]"
 ```
 
 MoGe-2 dependencies will be installed separately from the base UI/runtime environment during Phase 5.
+
+## Hardware check
+
+Run the standalone detector before installing or loading MoGe-2:
+
+```bash
+python scripts/check_hardware.py
+```
+
+The detector uses `nvidia-smi` first and reads PyTorch build metadata when available. A CPU-only PyTorch installation is reported explicitly instead of silently selecting CUDA. Profile thresholds are capability/VRAM based, not hard-coded to one GPU product name.
 
 ## Run
 

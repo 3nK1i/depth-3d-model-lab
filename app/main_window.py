@@ -51,6 +51,8 @@ class MainWindow(QMainWindow):
         self._settings = AppSettings()
 
         self._build_ui()
+        self._sync_header_hardware()
+
         self._controller = ApplicationController(
             self._source_bar, self._original_view, parent_widget=self
         )
@@ -142,7 +144,7 @@ class MainWindow(QMainWindow):
         # The 3D viewport is the visually dominant element (spec §4).
         self._left_splitter.setSizes([250, 640])
 
-        self._settings_panel = SettingsPanel()
+        self._settings_panel = SettingsPanel(app_settings=self._settings)
 
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setHandleWidth(BODY_SPACING)
@@ -155,6 +157,39 @@ class MainWindow(QMainWindow):
         self._main_splitter.setSizes([980, 348])
 
         return self._main_splitter
+
+    def _sync_header_hardware(self) -> None:
+        """Display the detected startup hardware snapshot in the header."""
+        hardware = self._settings_panel.hardware_info
+
+        total_gib = hardware.total_memory_gib
+        free_gib = hardware.free_memory_gib
+
+        if total_gib is not None:
+            used_gib = (
+                max(total_gib - free_gib, 0.0)
+                if free_gib is not None
+                else 0.0
+            )
+
+            self._header.update_gpu_status(
+                gpu_name=hardware.name,
+                vram_used_gb=used_gib,
+                vram_total_gb=total_gib,
+            )
+        else:
+            self._header.update_gpu_status(
+                gpu_name=hardware.name,
+                vram_used_gb=0.0,
+                vram_total_gb=0.0,
+            )
+
+        cuda_label = (
+            hardware.torch_cuda_version
+            if hardware.cuda_ready
+            else None
+        )
+        self._header.update_cuda_status(cuda_label)
 
     # -- Persistence ------------------------------------------------------
 

@@ -27,6 +27,7 @@ class AppSettings:
     KEY_SPLITTER_TOP = "splitters/top_row"
     KEY_LAST_SOURCE_TYPE = "source/last_type"
     KEY_LAST_MODEL_ID = "model/last_id"
+    KEY_COMPUTE_PROFILE = "hardware/compute_profile"
     KEY_SETTINGS_PANEL_COLLAPSED = "ui/settings_panel_collapsed"
 
     def __init__(self) -> None:
@@ -65,6 +66,13 @@ class AppSettings:
 
     def load_last_model_id(self) -> str | None:
         value = self._qs.value(self.KEY_LAST_MODEL_ID)
+        return str(value) if value is not None else None
+
+    def save_compute_profile(self, profile: str) -> None:
+        self._qs.setValue(self.KEY_COMPUTE_PROFILE, profile)
+
+    def load_compute_profile(self) -> str | None:
+        value = self._qs.value(self.KEY_COMPUTE_PROFILE)
         return str(value) if value is not None else None
 
     def save_settings_panel_collapsed(self, collapsed: bool) -> None:

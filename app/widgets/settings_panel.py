@@ -1,36 +1,15 @@
-"""Right settings sidebar: a vertical stack of independent accordion cards.
+"""Right settings sidebar and hardware-aware model profile controls.
 
-Structure:
-
-    SettingsPanel
-    └── QScrollArea
-        └── content widget
-            └── QVBoxLayout
-                ├── CollapsibleSettingsCard("MODEL")            stretch=33
-                ├── gap
-                ├── CollapsibleSettingsCard("DEPTH SETTINGS")   stretch=36
-                ├── gap
-                └── CollapsibleSettingsCard("RENDER SETTINGS")  stretch=31
-
-No stretch after the cards: when the sidebar has more height available
-than the cards need, the three stretch factors redistribute it across
-all three cards (in roughly 33/36/31 proportion) so Render Settings'
-visible bottom border lands on the 3D viewport's bottom border, instead
-of leaving a black void beneath it. Each card converts its extra share
-into balanced spacing between its own rows — see
-:meth:`CollapsibleSettingsCard._mark_row_stretch` — not by stretching
-individual controls.
-
-The sidebar itself is a plain surface with no card styling; each card
-brings its own background, border and padding.
-
-Phase 1 note: values are presets — the model registry starts driving the
-MODEL card in Phase 5.
+The three independent accordion cards preserve the Phase 4 layout. Phase 5
+Step 1 replaces the MODEL card's static GPU presets with a real startup
+hardware snapshot and a typed Efficient/Balanced/Ultra resolver. The
+resolved config is exposed through :attr:`model_runtime_config`; no model is
+loaded from this widget and no CUDA tensors are allocated in the UI process.
 """
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QScrollArea,
@@ -38,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.settings import AppSettings
 from app.widgets.settings_card import CollapsibleSettingsCard
 from app.widgets.settings_controls import (
     SettingsComboBox,
@@ -46,6 +26,13 @@ from app.widgets.settings_controls import (
     StatusBadge,
     ValueBox,
     make_toggle,
+)
+from core.hardware.gpu_info import HardwareInfo, detect_hardware
+from core.hardware.profiles import (
+    PROFILE_SPECS,
+    ComputeProfile,
+    ResolvedProfile,
+    resolve_profile,
 )
 
 SIDEBAR_MIN_WIDTH = 320
@@ -65,17 +52,29 @@ def _fmt_ratio(v: int) -> str:
 
 
 class SettingsPanel(QFrame):
-    """Scrollable stack of MODEL / DEPTH SETTINGS / RENDER SETTINGS cards."""
+    """Scrollable MODEL / DEPTH SETTINGS / RENDER SETTINGS cards."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    compute_profile_changed = pyqtSignal(object)  # ResolvedProfile
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        hardware_info: HardwareInfo | None = None,
+        app_settings: AppSettings | None = None,
+    ) -> None:
         super().__init__(parent)
-        # No "panel" objectName here: the sidebar is a bare surface, the
-        # cards supply the visible chrome.
         self.setObjectName("settingsSidebar")
         self.setMinimumWidth(SIDEBAR_MIN_WIDTH)
         self.setMaximumWidth(SIDEBAR_MAX_WIDTH)
+
+        self._hardware_info = hardware_info or detect_hardware()
+        self._app_settings = app_settings or AppSettings()
+        self._resolved_profile: ResolvedProfile | None = None
         self._bindings: list[SliderValueBinding] = []
+
         self._build_ui()
+        self._initialize_compute_profile()
 
     def sizeHint(self):  # noqa: N802 - Qt override
         hint = super().sizeHint()
@@ -95,18 +94,14 @@ class SettingsPanel(QFrame):
         content = QWidget()
         content.setObjectName("settingsContent")
         layout = QVBoxLayout(content)
-        # Zero outer margins: the page grid provides the gutters, so the
-        # first card's top edge aligns exactly with the Original/Depth row
-        # and the last card can end level with the 3D viewer.
         layout.setContentsMargins(
-            SIDEBAR_PADDING_H, SIDEBAR_PADDING_V, SIDEBAR_PADDING_H, SIDEBAR_PADDING_V
+            SIDEBAR_PADDING_H,
+            SIDEBAR_PADDING_V,
+            SIDEBAR_PADDING_H,
+            SIDEBAR_PADDING_V,
         )
         layout.setSpacing(CARD_GAP)
 
-        # Stretch factors distribute leftover sidebar height across all
-        # three cards (33/36/31) instead of collecting below the last one.
-        # No addStretch() after them: that is what created the black void
-        # beneath Render Settings.
         model_card = self._build_model_card()
         depth_card = self._build_depth_card()
         render_card = self._build_render_card()
@@ -118,9 +113,6 @@ class SettingsPanel(QFrame):
         }
         for card, stretch in self._card_stretches.items():
             layout.addWidget(card, stretch)
-            # On collapse, free this card's stretch share (drop to 0) so
-            # the still-expanded cards absorb the released height instead
-            # of a blank gap appearing where this card used to be.
             card.expansion_changed.connect(
                 lambda expanded, c=card, s=stretch: layout.setStretchFactor(
                     c, s if expanded else 0
@@ -135,23 +127,38 @@ class SettingsPanel(QFrame):
     def _build_model_card(self) -> CollapsibleSettingsCard:
         card = CollapsibleSettingsCard("MODEL", uppercase_labels=True)
 
-        self._model_combo = SettingsComboBox(["MoGe-2 ViT-L Normal", "No model registered yet"])
+        # The adapter is added in a later Phase 5 step. Keep the existing
+        # visual selection intact while Step 1 makes its execution profile real.
+        self._model_combo = SettingsComboBox(
+            ["MoGe-2 ViT-L Normal", "Development Mock"]
+        )
         self._model_badge = StatusBadge("RECOMMENDED")
-        # Selector and badge share one row; the badge never wraps.
         card.add_wide_row(self._model_combo, self._model_badge)
 
-        self._gpu_profile = SettingsComboBox(
-            ["Auto (RTX 5090)", "Efficient", "Balanced", "Ultra", "Custom"]
-        )
+        self._gpu_profile = SettingsComboBox()
+        self._populate_profile_combo()
+        self._gpu_profile.currentIndexChanged.connect(self._on_profile_selected)
         card.add_control_row("GPU Profile", self._gpu_profile)
 
-        self._quality = SettingsComboBox(["Ultra", "Balanced", "Efficient"])
-        card.add_control_row("Quality Preset", self._quality)
+        # These rows are profile outputs in Step 1. They become editable only
+        # when a dedicated Custom profile is introduced later.
+        self._model_variant = SettingsComboBox(
+            [PROFILE_SPECS[p].model_label for p in _CONCRETE_PROFILES]
+        )
+        self._model_variant.setEnabled(False)
+        card.add_control_row("Model Variant", self._model_variant)
 
-        self._resolution = SettingsComboBox(["768 px", "448 px", "384 px"])
-        card.add_control_row("Inference Resolution", self._resolution)
+        self._resolution = SettingsComboBox(
+            [
+                _resolution_label(PROFILE_SPECS[p].resolution_level, PROFILE_SPECS[p].num_tokens)
+                for p in _CONCRETE_PROFILES
+            ]
+        )
+        self._resolution.setEnabled(False)
+        card.add_control_row("Inference Detail", self._resolution)
 
         self._precision = SettingsComboBox(["FP16 (Half)", "FP32", "BF16"])
+        self._precision.setEnabled(False)
         card.add_control_row("Precision", self._precision)
         return card
 
@@ -206,7 +213,86 @@ class SettingsPanel(QFrame):
         card.add_toggle_row("VSync", self._vsync_toggle)
         return card
 
-    # -- Public API: live-read values for the geometry pipeline -------------
+    # -- Hardware/profile lifecycle ---------------------------------------
+
+    def _populate_profile_combo(self) -> None:
+        auto_label = f"Auto ({self._hardware_info.short_label})"
+        self._gpu_profile.addItem(auto_label, ComputeProfile.AUTO.value)
+        for profile in _CONCRETE_PROFILES:
+            self._gpu_profile.addItem(profile.display_name, profile.value)
+        self._gpu_profile.setToolTip(self._hardware_info.details)
+
+    def _initialize_compute_profile(self) -> None:
+        saved = self._app_settings.load_compute_profile()
+        try:
+            requested = ComputeProfile(saved) if saved else ComputeProfile.AUTO
+        except ValueError:
+            requested = ComputeProfile.AUTO
+
+        index = self._gpu_profile.findData(requested.value)
+        _set_combo_index_blocked(self._gpu_profile, max(index, 0))
+        self._apply_profile(requested, emit_signal=False)
+
+    def _on_profile_selected(self, _index: int) -> None:
+        raw = self._gpu_profile.currentData()
+        try:
+            requested = ComputeProfile(str(raw))
+        except ValueError:
+            requested = ComputeProfile.AUTO
+        self._apply_profile(requested, emit_signal=True)
+
+    def _apply_profile(self, requested: ComputeProfile, *, emit_signal: bool) -> None:
+        resolved = resolve_profile(requested, self._hardware_info)
+        self._resolved_profile = resolved
+        self._app_settings.save_compute_profile(requested.value)
+
+        variant_index = _CONCRETE_PROFILES.index(resolved.effective)
+        _set_combo_index_blocked(self._model_variant, variant_index)
+        _set_combo_index_blocked(self._resolution, variant_index)
+
+        precision_index = self._precision.findText(resolved.precision.display_name)
+        _set_combo_index_blocked(self._precision, max(precision_index, 0))
+
+        budget_label = _point_budget_label(resolved.spec.point_budget)
+        budget_index = self._point_budget.findText(budget_label)
+        if budget_index >= 0:
+            _set_combo_index_blocked(self._point_budget, budget_index)
+
+        tooltip_parts = [self._hardware_info.details]
+        if resolved.warning:
+            tooltip_parts.append(f"Profile: {resolved.warning}")
+        profile_tooltip = "\n".join(part for part in tooltip_parts if part)
+        self._gpu_profile.setToolTip(profile_tooltip)
+
+        if resolved.downgraded:
+            self._model_badge.setText("SAFE FALLBACK")
+        elif self._hardware_info.cuda_ready:
+            self._model_badge.setText("GPU READY")
+        else:
+            self._model_badge.setText("CPU MODE")
+        self._model_badge.setToolTip(profile_tooltip)
+
+        if emit_signal:
+            self.compute_profile_changed.emit(resolved)
+
+    # -- Public API: hardware/model profile -------------------------------
+
+    @property
+    def hardware_info(self) -> HardwareInfo:
+        return self._hardware_info
+
+    @property
+    def resolved_profile(self) -> ResolvedProfile:
+        assert self._resolved_profile is not None
+        return self._resolved_profile
+
+    @property
+    def model_runtime_config(self) -> dict[str, object]:
+        config = self.resolved_profile.as_model_config()
+        config["point_budget"] = self.point_budget
+        return config
+
+    # -- Public API: live-read geometry settings --------------------------
 
     @property
     def colormap_name(self) -> str:
@@ -248,3 +334,26 @@ class SettingsPanel(QFrame):
         if text.endswith("K"):
             return int(float(text[:-1]) * 1_000)
         return int(text)
+
+
+_CONCRETE_PROFILES = (
+    ComputeProfile.EFFICIENT,
+    ComputeProfile.BALANCED,
+    ComputeProfile.ULTRA,
+)
+
+
+def _resolution_label(level: int, num_tokens: int) -> str:
+    return f"Level {level} · {num_tokens} tok"
+
+
+def _point_budget_label(point_budget: int) -> str:
+    if point_budget >= 1_000_000:
+        return f"{point_budget / 1_000_000:g}M"
+    return f"{point_budget // 1_000}K"
+
+
+def _set_combo_index_blocked(combo: SettingsComboBox, index: int) -> None:
+    blocker = QSignalBlocker(combo)
+    combo.setCurrentIndex(index)
+    del blocker
