@@ -83,6 +83,7 @@ def worker_main(
 
             elif command.type == CommandType.PAUSE:
                 paused = True
+                _drain(frame_queue)
                 control_conn.send(Ack(command.type, True))
 
             elif command.type == CommandType.RESUME:

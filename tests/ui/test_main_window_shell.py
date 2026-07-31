@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from app.main_window import MainWindow
+from core.capture.frame import SourceFrame
 from app.widgets.mode_tabs import AppMode
 from core.models.adapters.mock_adapter import MOCK_MODEL_ID
 from core.runtime.messages import Ack, CommandType, InferenceResult
@@ -138,6 +139,78 @@ def test_mock_performance_snapshot_reports_real_point_count(window):
     assert window._performance_bar._points._value.text() == "12,345"
     assert window._performance_bar._precision._value.text() == "FP32"
 
+
+
+def test_live_stream_keeps_only_the_latest_pending_frame(window, qtbot, monkeypatch):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    submitted: list[tuple[int, int, int]] = []
+
+    monkeypatch.setattr(
+        controller._process_manager,
+        "submit_frame",
+        lambda session_id, frame_id, image: (
+            submitted.append((session_id, frame_id, int(image[0, 0, 0]))) or True
+        ),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(Ack(CommandType.LOAD_MODEL, True))
+
+    controller.on_source_frame(
+        SourceFrame(np.full((8, 8, 3), 1, dtype=np.uint8), frame_id=1)
+    )
+    controller.on_source_frame(
+        SourceFrame(np.full((8, 8, 3), 2, dtype=np.uint8), frame_id=2)
+    )
+    controller.on_source_frame(
+        SourceFrame(np.full((8, 8, 3), 3, dtype=np.uint8), frame_id=3)
+    )
+
+    assert [value for _session, _frame, value in submitted] == [1]
+    assert controller._pending_source_frame is not None
+    assert int(controller._pending_source_frame.image[0, 0, 0]) == 3
+
+    controller._last_submit_at = time.monotonic() - 1.0
+    controller._on_result_ready(
+        InferenceResult(
+            session_id=controller._session.active_session_id,
+            frame_id=submitted[0][1],
+            model_id=MOCK_MODEL_ID,
+            depth=None,
+            latency_ms=0.0,
+            error="synthetic test completion",
+        )
+    )
+
+    assert [value for _session, _frame, value in submitted] == [1, 3]
+
+
+def test_continuous_preview_paints_only_the_latest_frame(window, monkeypatch):
+    from PyQt6.QtGui import QPixmap
+
+    presented_values: list[int] = []
+
+    def _fake_pixmap(image):
+        presented_values.append(int(image[0, 0, 0]))
+        return QPixmap(1, 1)
+
+    monkeypatch.setattr(
+        "app.application_controller.ndarray_to_qpixmap",
+        _fake_pixmap,
+    )
+
+    window._controller._on_frame_ready(
+        SourceFrame(np.full((8, 8, 3), 10, dtype=np.uint8), frame_id=10)
+    )
+    window._controller._on_frame_ready(
+        SourceFrame(np.full((8, 8, 3), 20, dtype=np.uint8), frame_id=20)
+    )
+
+    assert presented_values == []
+    window._controller._present_latest_preview()
+    assert presented_values == [20]
 
 def _left_button():
     from PyQt6.QtCore import Qt

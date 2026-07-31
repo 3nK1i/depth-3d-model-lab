@@ -14,10 +14,35 @@ the GPU-profile point budgets from the original spec:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
-def decimate_grid(points: np.ndarray, colors: np.ndarray, stride: int) -> tuple[np.ndarray, np.ndarray]:
+def stride_for_point_budget(height: int, width: int, budget: int) -> int:
+    """Return the smallest regular-grid stride that stays within ``budget``.
+
+    This is used before point projection for live video/camera/RTSP frames.
+    Projecting a 1280×1440 depth map creates more than 1.8 million 3D points
+    only to throw most of them away later; choosing the stride first avoids
+    that unnecessary CPU allocation while preserving an even spatial sample.
+    """
+    if height <= 0 or width <= 0:
+        return 1
+    if budget <= 0:
+        raise ValueError("point budget must be positive")
+
+    stride = max(1, int(math.sqrt((height * width) / budget)))
+    while math.ceil(height / stride) * math.ceil(width / stride) > budget:
+        stride += 1
+    return stride
+
+
+def decimate_grid(
+    points: np.ndarray,
+    colors: np.ndarray,
+    stride: int,
+) -> tuple[np.ndarray, np.ndarray]:
     """Take every ``stride``-th row/column of a dense (H, W, 3) grid.
 
     ``stride=1`` returns the grid unchanged (still dense — caller

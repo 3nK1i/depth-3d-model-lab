@@ -42,6 +42,12 @@ SIDEBAR_PADDING_H = 0
 SIDEBAR_PADDING_V = 0
 CARD_GAP = 8
 
+_LIVE_POINT_BUDGET_CAPS: dict[ComputeProfile, int] = {
+    ComputeProfile.EFFICIENT: 100_000,
+    ComputeProfile.BALANCED: 250_000,
+    ComputeProfile.ULTRA: 500_000,
+}
+
 
 def _fmt_metres(v: int) -> str:
     return f"{v / 10:.1f} m"
@@ -272,6 +278,14 @@ class SettingsPanel(QFrame):
         if budget_index >= 0:
             _set_combo_index_blocked(self._point_budget, budget_index)
 
+        live_cap = _LIVE_POINT_BUDGET_CAPS[resolved.effective]
+        self._point_budget.setToolTip(
+            "Maximum point count for a static image. "
+            f"Continuous video/camera/RTSP rendering is safety-capped at "
+            f"{_point_budget_label(live_cap)} for the "
+            f"{resolved.effective.display_name} profile to keep the UI responsive."
+        )
+
         tooltip_parts = [self._hardware_info.details]
         if resolved.warning:
             tooltip_parts.append(f"Profile: {resolved.warning}")
@@ -348,6 +362,12 @@ class SettingsPanel(QFrame):
         if text.endswith("K"):
             return int(float(text[:-1]) * 1_000)
         return int(text)
+
+    @property
+    def live_point_budget(self) -> int:
+        """Safe point-cloud cap for continuous video/camera/RTSP sources."""
+        cap = _LIVE_POINT_BUDGET_CAPS[self.resolved_profile.effective]
+        return min(self.point_budget, cap)
 
 
 _CONCRETE_PROFILES = (

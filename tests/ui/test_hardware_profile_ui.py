@@ -52,6 +52,7 @@ def test_2060_auto_profile_is_efficient(qtbot) -> None:
     assert panel.resolved_profile.effective is ComputeProfile.EFFICIENT
     assert panel.model_runtime_config["pretrained"] == "Ruicheng/moge-2-vits-normal"
     assert panel.point_budget == 250_000
+    assert panel.live_point_budget == 100_000
 
 
 def test_5090_auto_profile_is_ultra(qtbot) -> None:
@@ -64,6 +65,7 @@ def test_5090_auto_profile_is_ultra(qtbot) -> None:
     assert panel.resolved_profile.effective is ComputeProfile.ULTRA
     assert panel.model_runtime_config["pretrained"] == "Ruicheng/moge-2-vitl-normal"
     assert panel.point_budget == 1_000_000
+    assert panel.live_point_budget == 500_000
 
 
 def test_unsafe_manual_selection_uses_safe_fallback(qtbot) -> None:

@@ -14,10 +14,14 @@ the source side.
 from __future__ import annotations
 
 import logging
+import time
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QWidget
 
+from app.widgets.original_view import OriginalSourceView
+from app.widgets.source_bar import SourceBar
+from app.widgets.source_toolbar_snapshot import ConnectionState, SourceType
 from core.capture.base_source import BaseSource, SourceStatus
 from core.capture.camera_source import CameraEnumerator, CameraSource
 from core.capture.frame import SourceFrame
@@ -26,9 +30,6 @@ from core.capture.image_source import ImageSource
 from core.capture.qt_convert import ndarray_to_qpixmap
 from core.capture.rtsp_source import RtspSource, sanitize_rtsp_url
 from core.capture.video_source import VideoSource
-from app.widgets.original_view import OriginalSourceView
-from app.widgets.source_bar import SourceBar
-from app.widgets.source_toolbar_snapshot import ConnectionState, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ _STATUS_TO_CONNECTION_STATE: dict[SourceStatus, ConnectionState] = {
 
 _IMAGE_FILE_FILTER = "Images (" + " ".join(f"*{ext}" for ext in IMAGE_EXTENSIONS) + ")"
 _VIDEO_FILE_FILTER = "Videos (*.mp4 *.avi *.mkv *.mov *.webm)"
+_PREVIEW_TARGET_FPS = 30.0
+_PREVIEW_INTERVAL_MS = round(1000.0 / _PREVIEW_TARGET_FPS)
+_FPS_WINDOW_SECONDS = 1.0
 
 
 class ApplicationController(QObject):
@@ -64,6 +68,21 @@ class ApplicationController(QObject):
         self._original_view = original_view
         self._parent_widget = parent_widget
         self._active_source: BaseSource | None = None
+
+        # High-rate cameras can deliver 60-100+ decoded frames per second.
+        # Converting every one to a QPixmap in the GUI thread would starve
+        # depth/geometry work. Keep only the newest preview frame and paint it
+        # at a smooth, bounded 30 FPS. The raw SourceFrame still reaches the
+        # inference controller immediately through ``frame_captured``.
+        self._latest_preview_frame: SourceFrame | None = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(_PREVIEW_INTERVAL_MS)
+        self._preview_timer.timeout.connect(self._present_latest_preview)
+        self._preview_timer.start()
+
+        self._capture_fps_window_start = time.monotonic()
+        self._capture_fps_window_count = 0
+        self._last_capture_fps: float | None = None
 
         source_bar.browse_image_clicked.connect(self._on_browse_image)
         source_bar.browse_video_clicked.connect(self._on_browse_video)
@@ -117,6 +136,8 @@ class ApplicationController(QObject):
         self._source_bar.set_connection_enum(ConnectionState.DISCONNECTED)
         self._original_view.set_live(False)
         self._original_view.clear_frame()
+        self._latest_preview_frame = None
+        self._reset_capture_fps()
 
     # -- Browse handlers -----------------------------------------------------
 
@@ -176,12 +197,14 @@ class ApplicationController(QObject):
             CameraSource(device_index, width=width, height=height, fps=fps)
         )
 
-    # -- Source lifecycle plumbing --------------------------------------------
+    # -- Source lifecycle plumbing ------------------------------------------
 
     def _replace_active_source(self, source: BaseSource) -> None:
         if self._active_source is not None:
             self._active_source.stop()
 
+        self._latest_preview_frame = None
+        self._reset_capture_fps()
         source.frame_ready.connect(self._on_frame_ready)
         source.status_changed.connect(self._on_status_changed)
         source.error_occurred.connect(self._on_error)
@@ -189,10 +212,41 @@ class ApplicationController(QObject):
         source.start()
 
     def _on_frame_ready(self, frame: SourceFrame) -> None:
+        self._record_capture_frame()
+        self._latest_preview_frame = frame
+
+        # Static images should appear immediately. Continuous sources are
+        # presented by the timer so a 100 FPS stream cannot flood Qt painting.
+        if isinstance(self._active_source, ImageSource):
+            self._present_latest_preview()
+
+        # No QPixmap conversion happens before this signal. InferenceController
+        # stores only its newest pending frame, so this path remains cheap.
+        self.frame_captured.emit(frame)
+
+    def _present_latest_preview(self) -> None:
+        frame = self._latest_preview_frame
+        if frame is None:
+            return
+        self._latest_preview_frame = None
         pixmap = ndarray_to_qpixmap(frame.image)
         self._original_view.set_frame(pixmap)
         self._original_view.set_live(True)
-        self.frame_captured.emit(frame)
+
+    def _record_capture_frame(self) -> None:
+        now = time.monotonic()
+        self._capture_fps_window_count += 1
+        elapsed = now - self._capture_fps_window_start
+        if elapsed < _FPS_WINDOW_SECONDS:
+            return
+        self._last_capture_fps = self._capture_fps_window_count / elapsed
+        self._capture_fps_window_start = now
+        self._capture_fps_window_count = 0
+
+    def _reset_capture_fps(self) -> None:
+        self._capture_fps_window_start = time.monotonic()
+        self._capture_fps_window_count = 0
+        self._last_capture_fps = None
 
     def _on_status_changed(self, status: SourceStatus) -> None:
         self._source_bar.set_connection_enum(_STATUS_TO_CONNECTION_STATE[status])
@@ -211,3 +265,20 @@ class ApplicationController(QObject):
     @property
     def active_source(self) -> BaseSource | None:
         return self._active_source
+
+    @property
+    def is_stream_source(self) -> bool:
+        """Whether the current source continuously produces frames.
+
+        Video files use the same backpressure policy as cameras and RTSP.
+        Before a source object exists, the selected source type is a safe
+        fallback for tests and for the short pre-connect state.
+        """
+        if self._active_source is not None:
+            return isinstance(self._active_source, (VideoSource, CameraSource, RtspSource))
+        return self._source_bar.active_type is not SourceType.IMAGE
+
+    @property
+    def capture_fps(self) -> float | None:
+        """Most recently measured source frame rate, or ``None`` until ready."""
+        return self._last_capture_fps

@@ -127,12 +127,15 @@ class InferenceProcessManager(QObject):
         worker to drain its queue and pause."""
         self._send(Command(type=CommandType.STOP, session_id=session_id), watch=True)
 
-    def submit_frame(self, session_id: int, frame_id: int, image) -> None:
-        """Latest-frame-only submission: drop any frame still waiting in
-        the queue before adding the new one, so the queue can never
-        accumulate a backlog (spec §12)."""
+    def submit_frame(self, session_id: int, frame_id: int, image) -> bool:
+        """Submit one frame without ever allowing a queue backlog.
+
+        Returns ``True`` only when the frame was accepted. The UI-side
+        controller also permits at most one request in flight; this bounded
+        queue remains a second safety net for restarts or unusual races.
+        """
         if self._frame_queue is None:
-            return
+            return False
         try:
             self._frame_queue.get_nowait()
         except queue_module.Empty:
@@ -140,7 +143,8 @@ class InferenceProcessManager(QObject):
         try:
             self._frame_queue.put_nowait(FrameRequest(session_id, frame_id, image))
         except queue_module.Full:
-            pass  # Another submit raced us; the newer frame wins either way.
+            return False
+        return True
 
     # -- Internals -------------------------------------------------------------
 
