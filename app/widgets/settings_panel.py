@@ -127,12 +127,17 @@ class SettingsPanel(QFrame):
     def _build_model_card(self) -> CollapsibleSettingsCard:
         card = CollapsibleSettingsCard("MODEL", uppercase_labels=True)
 
-        # The adapter is added in a later Phase 5 step. Keep the existing
-        # visual selection intact while Step 1 makes its execution profile real.
-        self._model_combo = SettingsComboBox(
-            ["MoGe-2 ViT-L Normal", "Development Mock"]
+        # Step 1 still executes the development mock. Keep the active-model
+        # control truthful and non-interactive until the real MoGe-2 adapter is
+        # registered in Step 2. The rows below describe the resolved MoGe-2
+        # runtime profile that Step 2 will consume.
+        self._model_combo = SettingsComboBox(["Development Mock"])
+        self._model_combo.setEnabled(False)
+        self._model_combo.setToolTip(
+            "Active adapter: Development Mock. "
+            "The resolved MoGe-2 configuration below becomes active in Step 2."
         )
-        self._model_badge = StatusBadge("RECOMMENDED")
+        self._model_badge = StatusBadge("MOCK ACTIVE")
         card.add_wide_row(self._model_combo, self._model_badge)
 
         self._gpu_profile = SettingsComboBox()
@@ -146,6 +151,9 @@ class SettingsPanel(QFrame):
             [PROFILE_SPECS[p].model_label for p in _CONCRETE_PROFILES]
         )
         self._model_variant.setEnabled(False)
+        self._model_variant.setToolTip(
+            "Resolved MoGe-2 variant for the selected hardware profile."
+        )
         card.add_control_row("Model Variant", self._model_variant)
 
         self._resolution = SettingsComboBox(
@@ -155,10 +163,16 @@ class SettingsPanel(QFrame):
             ]
         )
         self._resolution.setEnabled(False)
+        self._resolution.setToolTip(
+            "Resolved inference detail for the selected hardware profile."
+        )
         card.add_control_row("Inference Detail", self._resolution)
 
         self._precision = SettingsComboBox(["FP16 (Half)", "FP32", "BF16"])
         self._precision.setEnabled(False)
+        self._precision.setToolTip(
+            "Resolved numeric precision for the selected hardware profile."
+        )
         card.add_control_row("Precision", self._precision)
         return card
 

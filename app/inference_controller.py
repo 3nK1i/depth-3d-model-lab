@@ -296,11 +296,16 @@ class InferenceController(QObject):
             return
 
         rgb = self._recent_frames.pop(result.frame_id, None)
-        self._update_geometry(result.depth, rgb, result.model_id)
+        point_count = self._update_geometry(result.depth, rgb, result.model_id)
         self._update_inference_fps()
-        self._update_performance_snapshot(result)
+        self._update_performance_snapshot(result, point_count=point_count)
 
-    def _update_geometry(self, depth: np.ndarray, rgb: np.ndarray | None, model_id: str) -> None:
+    def _update_geometry(
+        self,
+        depth: np.ndarray,
+        rgb: np.ndarray | None,
+        model_id: str,
+    ) -> int:
         """The real Phase 4 pipeline: colorize depth for the Depth Map
         panel, back-project to a point cloud, filter/sample it per the
         sidebar's live settings, and push it into the VisPy canvas
@@ -361,7 +366,14 @@ class InferenceController(QObject):
         if model_id == MOCK_MODEL_ID:
             self._header.set_status(BadgeKind.EXPERIMENTAL, "MOCK")
 
-    def _update_performance_snapshot(self, result: InferenceResult) -> None:
+        return int(flat_points.shape[0])
+
+    def _update_performance_snapshot(
+        self,
+        result: InferenceResult,
+        *,
+        point_count: int,
+    ) -> None:
         model_label = MOCK_DISPLAY_LABEL if result.model_id == MOCK_MODEL_ID else result.model_id
         uptime_seconds = (
             int(time.monotonic() - self._run_started_at) if self._run_started_at is not None else None
@@ -371,14 +383,16 @@ class InferenceController(QObject):
                 status="RUNNING",
                 inference_fps=self._last_inference_fps,
                 latency_ms=result.latency_ms,
+                point_count=point_count,
                 model_name=model_label,
+                precision="FP32" if result.model_id == MOCK_MODEL_ID else None,
                 resolution=(result.depth.shape[1], result.depth.shape[0])
                 if result.depth is not None
                 else None,
                 uptime_seconds=uptime_seconds,
-                # camera_fps/render_fps/points/vram: real capture-FPS
-                # metering and GPU monitoring land in Phase 5 — left as
-                # None (renders as "—") rather than fabricated.
+                # camera_fps/render_fps/vram: real capture-FPS metering,
+                # VisPy render timing, and worker-side GPU monitoring land in
+                # later Phase 5 steps. They stay None rather than fabricated.
             )
         )
 
