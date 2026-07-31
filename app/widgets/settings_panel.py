@@ -161,16 +161,27 @@ class SettingsPanel(QFrame):
         self._colormap = SettingsComboBox(["Turbo", "Inferno", "Magma", "Viridis", "Greyscale"])
         card.add_control_row("Colormap", self._colormap)
 
-        for label, minimum, maximum, value, fmt in (
-            ("Min Depth", 0, 100, 1, _fmt_metres),
-            ("Max Depth", 0, 200, 80, _fmt_metres),
-            ("Edge Filtering", 0, 100, 60, _fmt_ratio),
-            ("Temporal Smoothing", 0, 100, 40, _fmt_ratio),
-        ):
-            slider = SettingsSlider(minimum, maximum, value)
-            box = ValueBox()
-            self._bindings.append(SliderValueBinding(slider, box, fmt))
-            card.add_slider_row(label, slider, box)
+        self._min_depth_slider = SettingsSlider(0, 100, 1)
+        min_box = ValueBox()
+        self._bindings.append(SliderValueBinding(self._min_depth_slider, min_box, _fmt_metres))
+        card.add_slider_row("Min Depth", self._min_depth_slider, min_box)
+
+        self._max_depth_slider = SettingsSlider(0, 200, 80)
+        max_box = ValueBox()
+        self._bindings.append(SliderValueBinding(self._max_depth_slider, max_box, _fmt_metres))
+        card.add_slider_row("Max Depth", self._max_depth_slider, max_box)
+
+        self._edge_filter_slider = SettingsSlider(0, 100, 60)
+        edge_box = ValueBox()
+        self._bindings.append(SliderValueBinding(self._edge_filter_slider, edge_box, _fmt_ratio))
+        card.add_slider_row("Edge Filtering", self._edge_filter_slider, edge_box)
+
+        self._temporal_smoothing_slider = SettingsSlider(0, 100, 40)
+        smoothing_box = ValueBox()
+        self._bindings.append(
+            SliderValueBinding(self._temporal_smoothing_slider, smoothing_box, _fmt_ratio)
+        )
+        card.add_slider_row("Temporal Smoothing", self._temporal_smoothing_slider, smoothing_box)
 
         self._bg_removal = make_toggle(True)
         card.add_toggle_row("Background Removal", self._bg_removal)
@@ -194,3 +205,46 @@ class SettingsPanel(QFrame):
         self._vsync_toggle = make_toggle(True)
         card.add_toggle_row("VSync", self._vsync_toggle)
         return card
+
+    # -- Public API: live-read values for the geometry pipeline -------------
+
+    @property
+    def colormap_name(self) -> str:
+        return self._colormap.currentText()
+
+    @property
+    def min_depth_m(self) -> float:
+        return self._min_depth_slider.value() / 10.0
+
+    @property
+    def max_depth_m(self) -> float:
+        return self._max_depth_slider.value() / 10.0
+
+    @property
+    def edge_filter_strength(self) -> float:
+        return self._edge_filter_slider.value() / 100.0
+
+    @property
+    def temporal_smoothing(self) -> float:
+        return self._temporal_smoothing_slider.value() / 100.0
+
+    @property
+    def background_removal_enabled(self) -> bool:
+        return self._bg_removal.isChecked()
+
+    @property
+    def grid_visible(self) -> bool:
+        return self._grid_toggle.isChecked()
+
+    @property
+    def axes_visible(self) -> bool:
+        return self._axes_toggle.isChecked()
+
+    @property
+    def point_budget(self) -> int:
+        text = self._point_budget.currentText().upper()
+        if text.endswith("M"):
+            return int(float(text[:-1]) * 1_000_000)
+        if text.endswith("K"):
+            return int(float(text[:-1]) * 1_000)
+        return int(text)

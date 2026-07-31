@@ -14,12 +14,13 @@ Structure (spec: layered composition, not sibling columns):
 Everything except the canvas floats *inside* the canvas, so there is no
 separate control column and no unused region below the canvas.
 
-Phase 1 note: the canvas is still a placeholder surface — the real VisPy
-``SceneCanvas`` is attached in Phase 4 via :meth:`ViewportPanel.attach_canvas`,
-which applies the Expanding/Expanding size policy the spec requires and
-hides the idle message. Per spec §10 the canvas is created once and
-never rebuilt per frame, and the camera is only fitted on the first
-valid cloud or an explicit Reset View (see ``camera_initialized``).
+_CanvasSurface itself is ALSO a single-cell QGridLayout (idle label and
+the native VisPy widget share cell (0,0)) rather than a QVBoxLayout with
+both stacked as separate stretch=1 items — that stacking was a real bug:
+hiding the idle label doesn't remove it from the layout, so it kept
+competing for vertical space with the native canvas, silently giving the
+real VisPy widget only about half its rightful height. Single-cell
+layering is what makes both fill the complete surface.
 """
 
 from __future__ import annotations
@@ -294,12 +295,13 @@ class _RenderModeCard(QFrame):
 
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
+        self._current_render_mode = self.MODES[0]
         for i, mode in enumerate(self.MODES):
             radio = QRadioButton(mode)
             if i == 0:
                 radio.setChecked(True)
             radio.toggled.connect(
-                lambda checked, m=mode: self.render_mode_changed.emit(m) if checked else None
+                lambda checked, m=mode: self._on_mode_toggled(m, checked)
             )
             self._mode_group.addButton(radio)
             col.addWidget(radio)
@@ -322,6 +324,27 @@ class _RenderModeCard(QFrame):
         reset_btn.setIcon(render_icon("reset", PALETTE.viewport_text, 13))
         reset_btn.clicked.connect(self.reset_view_clicked.emit)
         col.addWidget(reset_btn)
+
+    def _on_mode_toggled(self, mode: str, checked: bool) -> None:
+        if checked:
+            self._current_render_mode = mode
+            self.render_mode_changed.emit(mode)
+
+    @property
+    def render_mode(self) -> str:
+        return self._current_render_mode
+
+    @property
+    def point_size(self) -> float:
+        return self._point_size.slider.value() / 10.0
+
+    @property
+    def density_ratio(self) -> float:
+        return self._density.slider.value() / 100.0
+
+    @property
+    def smoothing(self) -> float:
+        return self._smoothing.slider.value() / 100.0
 
 
 class PerspectiveFloorGrid:
@@ -447,80 +470,144 @@ class PerspectiveFloorGrid:
 
 
 class _CanvasSurface(QFrame):
-    """The full-bleed 3D drawing surface.
+    """Full-size host surface for the embedded VisPy canvas.
 
-    In Phase 1 this paints a restrained static perspective floor grid via
-    :class:`PerspectiveFloorGrid` (so the viewport reads as a 3D space
-    even while idle) plus an idle message positioned above the grid's
-    vanishing point. Phase 4 calls :meth:`attach_native` with the VisPy
-    canvas' native widget, which covers this surface entirely — the real
-    camera-aware grid is then drawn by VisPy on an actual ground plane
-    sharing the point-cloud's camera, and this painted one is hidden
-    behind it automatically.
+    The idle label and the native VisPy widget share the SAME grid cell
+    (0, 0) — layered, not stacked. Stacking them as two items in a
+    QVBoxLayout (the original Phase 1 implementation) was a real bug:
+    hiding the idle label doesn't remove it from the layout, so it kept
+    competing for vertical space via its own stretch factor, silently
+    giving the real VisPy widget only about half its rightful height.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("viewportCanvas")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumHeight(260)
-        self._grid = PerspectiveFloorGrid()
 
-        self._layout = QVBoxLayout(self)
+        self.setObjectName("viewportCanvas")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.setMinimumHeight(260)
+
+        self._grid = PerspectiveFloorGrid()
+        self._native: QWidget | None = None
+
+        # Layer the idle label and native VisPy canvas in the same cell.
+        self._layout = QGridLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
+        self._layout.setRowStretch(0, 1)
+        self._layout.setColumnStretch(0, 1)
 
         self._idle = QLabel(
-            "Interactive 3D viewport\nStart inference to generate geometry"
+            "Interactive 3D viewport\n"
+            "Start inference to generate geometry"
         )
         self._idle.setObjectName("idleMessage")
         self._idle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Positioned via asymmetric stretch (9:11) rather than a single
-        # centered stretch, so the message sits at ~45% height — above
-        # the grid's vanishing point instead of directly on top of it.
-        self._layout.addStretch(9)
-        self._layout.addWidget(self._idle)
-        self._layout.addStretch(11)
+        self._idle.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+            True,
+        )
 
-        self._native: QWidget | None = None
+        self._layout.addWidget(
+            self._idle,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().paintEvent(event)
+
+        # The static Phase 1 grid is needed only before VisPy is attached.
         if self._native is not None:
-            return  # VisPy owns the surface once attached.
+            return
 
         painter = QPainter(self)
         self._grid.paint(painter, QRectF(self.rect()))
         painter.end()
 
     def attach_native(self, native: QWidget) -> None:
-        """Embed the real VisPy canvas widget and hide the idle message."""
-        native.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._idle.hide()
-        self._layout.addWidget(native, stretch=1)
+        """Attach the native VisPy widget so it fills the complete surface."""
+
+        if self._native is native:
+            return
+
+        if self._native is not None:
+            self._layout.removeWidget(self._native)
+            self._native.hide()
+            self._native.setParent(None)
+
         self._native = native
+        native.setParent(self)
+        native.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+
+        # Prevent a model/backend widget minimum size from constraining the layout.
+        native.setMinimumSize(0, 0)
+        native.setMaximumSize(16_777_215, 16_777_215)
+
+        # Same cell as the idle layer: the native canvas gets the entire area.
+        self._layout.addWidget(native, 0, 0)
+        native.show()
+        native.raise_()
+
+        self._idle.hide()
+
+        self._layout.invalidate()
+        self.updateGeometry()
         self.update()
 
     def set_idle_visible(self, visible: bool) -> None:
         self._idle.setVisible(visible)
+
+        # Show the message above the canvas when loading or awaiting geometry.
+        if visible:
+            self._idle.raise_()
+        elif self._native is not None:
+            self._native.raise_()
 
     @property
     def native(self) -> QWidget | None:
         return self._native
 
 
-class _OverlayLayer(QWidget):
-    """Transparent layer holding every floating control above the canvas.
+class _OverlayHost(QWidget):
+    """Small content-sized host used to inset one overlay widget.
 
-    ``WA_TransparentForMouseEvents`` is set on this container only, so
-    clicks in empty areas fall through to the canvas while the child
-    controls still receive their own events.
+    A full-viewport mouse-transparent overlay cannot be used here because
+    ``WA_TransparentForMouseEvents`` also makes its descendants transparent
+    to mouse input. Each host therefore occupies only its child's area. The
+    VisPy canvas receives mouse events everywhere else, while the tool strip
+    and render card remain fully interactive.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        child: QWidget,
+        *,
+        left: int = 0,
+        top: int = 0,
+        right: int = 0,
+        bottom: int = 0,
+        mouse_transparent: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setStyleSheet("background: transparent;")
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(left, top, right, bottom)
+        layout.setSpacing(0)
+        layout.addWidget(child)
+
+        if mouse_transparent:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
 
 class ViewportPanel(QFrame):
@@ -544,44 +631,68 @@ class ViewportPanel(QFrame):
         grid.setContentsMargins(CARD_MARGIN, CARD_MARGIN, CARD_MARGIN, CARD_MARGIN)
         grid.setSpacing(0)
 
+        # Base layer: the native VisPy widget fills the complete card.
         self._canvas = _CanvasSurface()
         grid.addWidget(self._canvas, 0, 0)
 
-        overlay = _OverlayLayer()
-        overlay_grid = QGridLayout(overlay)
-        overlay_grid.setContentsMargins(
-            OVERLAY_MARGIN, OVERLAY_MARGIN, OVERLAY_MARGIN, OVERLAY_MARGIN
-        )
-        overlay_grid.setSpacing(0)
-
+        # Overlay widgets are added directly to the same grid cell. Their
+        # hosts are content-sized, so empty viewport areas remain available
+        # to the VisPy camera while the interactive controls receive clicks.
         self._header = _ViewportHeader()
-        overlay_grid.addWidget(
-            self._header, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        self._header_host = _OverlayHost(
+            self._header,
+            left=OVERLAY_MARGIN,
+            top=OVERLAY_MARGIN,
+            mouse_transparent=True,
+        )
+        grid.addWidget(
+            self._header_host,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
         )
 
         self._tools = _ToolOverlay()
         self._tools.tool_changed.connect(self.tool_changed.emit)
         self._tools.fit_requested.connect(self.fit_requested.emit)
         self._tools.fullscreen_requested.connect(self.fullscreen_requested.emit)
-        overlay_grid.addWidget(
-            self._tools, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        self._tools_host = _OverlayHost(self._tools, left=OVERLAY_MARGIN)
+        grid.addWidget(
+            self._tools_host,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
         )
 
         self._render_card = _RenderModeCard()
         self._render_card.render_mode_changed.connect(self.render_mode_changed.emit)
         self._render_card.reset_view_clicked.connect(self._on_reset_view)
-        overlay_grid.addWidget(
-            self._render_card, 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+        self._render_host = _OverlayHost(
+            self._render_card,
+            top=OVERLAY_MARGIN,
+            right=OVERLAY_MARGIN,
+        )
+        grid.addWidget(
+            self._render_host,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
         )
 
         self._axis = _AxisIndicator()
-        overlay_grid.addWidget(
-            self._axis, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
+        self._axis_host = _OverlayHost(
+            self._axis,
+            left=OVERLAY_MARGIN,
+            bottom=OVERLAY_MARGIN,
+            mouse_transparent=True,
+        )
+        grid.addWidget(
+            self._axis_host,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
         )
 
-        # Canvas and overlay share one cell; the canvas is the only widget
-        # given stretch so it always takes all remaining space.
-        grid.addWidget(overlay, 0, 0)
         grid.setRowStretch(0, 1)
         grid.setColumnStretch(0, 1)
 
@@ -605,7 +716,6 @@ class ViewportPanel(QFrame):
     # -- Public API --------------------------------------------------------
 
     def attach_canvas(self, native: QWidget) -> None:
-        """Embed the VisPy canvas' native widget (Phase 4)."""
         self._canvas.attach_native(native)
 
     def set_idle_message_visible(self, visible: bool) -> None:
@@ -614,6 +724,26 @@ class ViewportPanel(QFrame):
     def set_live(self, is_live: bool) -> None:
         self._header.set_live(is_live)
 
+    def set_axis_visible(self, visible: bool) -> None:
+        """Show or hide the single bottom-left orientation indicator."""
+        self._axis_host.setVisible(visible)
+
     @property
     def canvas_surface(self) -> _CanvasSurface:
         return self._canvas
+
+    @property
+    def render_mode(self) -> str:
+        return self._render_card.render_mode
+
+    @property
+    def point_size(self) -> float:
+        return self._render_card.point_size
+
+    @property
+    def density_ratio(self) -> float:
+        return self._render_card.density_ratio
+
+    @property
+    def smoothing(self) -> float:
+        return self._render_card.smoothing

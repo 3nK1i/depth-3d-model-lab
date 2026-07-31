@@ -1,5 +1,5 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
 *.egg-info/
 build/
@@ -10,7 +10,5 @@ venv/
 logs/*.log
 logs/*.log.*
 
-# Local, non-shared Qt settings (window geometry etc.) are stored via
-# QSettings outside the repo (~/.config on Linux), not as files here.
-
+# Local Qt settings are stored outside the repository via QSettings.
 .DS_Store

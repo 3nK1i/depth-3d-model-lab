@@ -1,11 +1,9 @@
 """Main application window for EIA TECH — Depth & 3D Model Lab.
 
-Phase 1 scope: assemble the full visual shell described in spec §4 with
-responsive QSplitter-based layout, and demonstrate runtime-button
-enable/disable with a small local demo (``_DemoRuntimeDemo``). That demo
-is explicitly temporary — Phase 3 replaces it with the real application
-state machine (spec §14) driving :meth:`RuntimeToolbar.apply_button_states`
-from actual source/inference lifecycle events instead of button clicks.
+Assembles the full visual shell (spec §4). Runtime button enable/disable
+is driven by the real application state machine via
+:class:`~app.inference_controller.InferenceController` (Phase 3) — the
+Phase 1 demo lifecycle that used to live here has been fully replaced.
 """
 
 from __future__ import annotations
@@ -19,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.application_controller import ApplicationController
+from app.inference_controller import InferenceController
 from app.settings import AppSettings
 from app.theme import (
     BODY_SPACING,
@@ -28,7 +27,6 @@ from app.theme import (
     PAGE_SPACING,
     SPLITTER_HANDLE,
 )
-from app.widgets.badge import BadgeKind
 from app.widgets.depth_view import DepthMapView
 from app.widgets.header_widget import HeaderWidget
 from app.widgets.mode_tabs import ModeTabs
@@ -51,14 +49,21 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()
-        self._is_connected = False
-        self._is_running = False
 
         self._build_ui()
         self._controller = ApplicationController(
             self._source_bar, self._original_view, parent_widget=self
         )
-        self._wire_demo_lifecycle()
+        self._inference_controller = InferenceController(
+            self._controller,
+            self._runtime_toolbar,
+            self._header,
+            self._performance_bar,
+            self._depth_view,
+            self._viewport_panel,
+            self._settings_panel,
+        )
+        self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
         self._restore_layout()
 
     # -- Construction --------------------------------------------------
@@ -151,84 +156,6 @@ class MainWindow(QMainWindow):
 
         return self._main_splitter
 
-    # -- Phase-1 demo lifecycle -----------------------------------------
-    # Deliberately minimal and self-contained. Replaced wholesale by the
-    # real state machine + application controller in Phase 3.
-
-    def _wire_demo_lifecycle(self) -> None:
-        self._runtime_toolbar.connect_clicked.connect(self._demo_on_connect)
-        self._runtime_toolbar.disconnect_clicked.connect(self._demo_on_disconnect)
-        self._runtime_toolbar.start_clicked.connect(self._demo_on_start)
-        self._runtime_toolbar.pause_resume_clicked.connect(self._demo_on_pause_resume)
-        self._runtime_toolbar.stop_clicked.connect(self._demo_on_stop)
-
-    def _demo_on_connect(self) -> None:
-        self._is_connected = True
-        self._controller.connect_active_source()
-        self._header.set_status(BadgeKind.READY, "READY")
-        self._performance_bar.set_status(BadgeKind.COMPATIBLE, "SOURCE READY")
-        self._runtime_toolbar.apply_button_states(
-            connect_enabled=False,
-            disconnect_enabled=True,
-            start_enabled=True,
-            pause_resume_enabled=False,
-            stop_enabled=False,
-        )
-
-    def _demo_on_disconnect(self) -> None:
-        self._is_connected = False
-        self._is_running = False
-        self._controller.disconnect_active_source()
-        self._depth_view.clear_frame()
-        self._viewport_panel.set_live(False)
-        self._performance_bar.set_status(BadgeKind.NOT_INSTALLED, "IDLE")
-        self._performance_bar.reset_metrics()
-        self._runtime_toolbar.apply_button_states(
-            connect_enabled=True,
-            disconnect_enabled=False,
-            start_enabled=False,
-            pause_resume_enabled=False,
-            stop_enabled=False,
-        )
-
-    def _demo_on_start(self) -> None:
-        self._is_running = True
-        self._viewport_panel.set_live(True)
-        self._performance_bar.set_status(BadgeKind.RECOMMENDED, "RUNNING")
-        self._runtime_toolbar.set_paused_label(is_paused=False)
-        self._runtime_toolbar.apply_button_states(
-            connect_enabled=False,
-            disconnect_enabled=True,
-            start_enabled=False,
-            pause_resume_enabled=True,
-            stop_enabled=True,
-        )
-
-    def _demo_on_pause_resume(self) -> None:
-        is_paused = not self._runtime_toolbar.is_paused
-        self._runtime_toolbar.set_paused_label(is_paused)
-        self._viewport_panel.set_live(not is_paused)
-        self._performance_bar.set_status(
-            BadgeKind.EXPERIMENTAL if is_paused else BadgeKind.RECOMMENDED,
-            "PAUSED" if is_paused else "RUNNING",
-        )
-
-    def _demo_on_stop(self) -> None:
-        self._is_running = False
-        self._viewport_panel.set_live(False)
-        self._runtime_toolbar.set_paused_label(is_paused=False)
-        self._performance_bar.set_status(BadgeKind.COMPATIBLE, "SOURCE READY")
-        self._performance_bar.reset_metrics()
-        # Source preview stays live: stopping inference must never touch
-        # the source connection (spec §5, §13).
-        self._runtime_toolbar.apply_button_states(
-            connect_enabled=False,
-            disconnect_enabled=True,
-            start_enabled=True,
-            pause_resume_enabled=False,
-            stop_enabled=False,
-        )
-
     # -- Persistence ------------------------------------------------------
 
     def _restore_layout(self) -> None:
@@ -260,6 +187,7 @@ class MainWindow(QMainWindow):
         self._settings.sync()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override signature
+        self._inference_controller.shutdown()
         self._controller.disconnect_active_source()
         self._save_layout()
         super().closeEvent(event)

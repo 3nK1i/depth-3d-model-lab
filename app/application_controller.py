@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QWidget
 
 from core.capture.base_source import BaseSource, SourceStatus
@@ -47,6 +47,10 @@ _VIDEO_FILE_FILTER = "Videos (*.mp4 *.avi *.mkv *.mov *.webm)"
 
 class ApplicationController(QObject):
     """Owns the active capture source and drives the source-facing UI."""
+
+    frame_captured = pyqtSignal(object)  # SourceFrame — for anything else
+    # (e.g. Phase 3's InferenceController) that wants live frames without
+    # this controller needing to know inference exists at all.
 
     def __init__(
         self,
@@ -84,9 +88,24 @@ class ApplicationController(QObject):
             self._start_camera()
         elif source_type is SourceType.RTSP:
             self._start_rtsp()
-        elif source_type is SourceType.IMAGE and isinstance(self._active_source, ImageSource):
-            self._active_source.resend()
+        else:
+            self.resend_current_frame()
         # VIDEO: nothing to do — Browse already started playback.
+
+    def resend_current_frame(self) -> None:
+        """Re-emit the active source's current frame without re-reading
+        anything from disk/device.
+
+        Needed specifically for a static ImageSource: it only ever emits
+        ONE frame, immediately on connect/browse — well before Start
+        Inference has been clicked. Without an explicit resend when
+        inference actually begins RUNNING, that single frame opportunity
+        is already gone and the image source can never feed inference
+        anything (Camera/Video/RTSP don't have this gap since they keep
+        emitting frames continuously).
+        """
+        if isinstance(self._active_source, ImageSource):
+            self._active_source.resend()
 
     def disconnect_active_source(self) -> None:
         if self._active_source is not None:
@@ -173,6 +192,7 @@ class ApplicationController(QObject):
         pixmap = ndarray_to_qpixmap(frame.image)
         self._original_view.set_frame(pixmap)
         self._original_view.set_live(True)
+        self.frame_captured.emit(frame)
 
     def _on_status_changed(self, status: SourceStatus) -> None:
         self._source_bar.set_connection_enum(_STATUS_TO_CONNECTION_STATE[status])
