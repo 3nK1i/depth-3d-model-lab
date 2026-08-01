@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QMessageBox,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -146,6 +147,10 @@ class MetricCell(QWidget):
             self._value.style().unpolish(self._value)
             self._value.style().polish(self._value)
 
+    def set_tooltip(self, text: str) -> None:
+        self.setToolTip(text)
+        self._value.setToolTip(text)
+
 
 class StatusMetricCell(QWidget):
     """STATUS label + compact colored state badge, on one row."""
@@ -185,6 +190,10 @@ class StatusMetricCell(QWidget):
         self._badge.setStyleSheet(
             f"background-color: {bg}; color: {fg}; border: 1px solid {border};"
         )
+
+    def set_tooltip(self, text: str) -> None:
+        self.setToolTip(text)
+        self._badge.setToolTip(text)
 
 
 class CompactProgressBar(QWidget):
@@ -250,6 +259,11 @@ class VramMetricCell(QWidget):
         self._value.setText(format_vram(used_gb, total_gb))
         self._bar.set_ratio(vram_ratio(used_gb, total_gb))
 
+    def set_tooltip(self, text: str) -> None:
+        self.setToolTip(text)
+        self._value.setToolTip(text)
+        self._bar.setToolTip(text)
+
 
 class ModelMetricCell(QWidget):
     """MODEL: elidable one-line name, full name in a tooltip, info button."""
@@ -284,6 +298,7 @@ class ModelMetricCell(QWidget):
         col.addStretch(1)
 
         self._full_name = ""
+        self._details = ""
 
     def _build_info_button(self) -> QPushButton:
         btn = QPushButton()
@@ -292,6 +307,7 @@ class ModelMetricCell(QWidget):
         btn.setIcon(render_icon("info", PALETTE.footer_label, 13))
         btn.setToolTip("Model details")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(self._show_details)
         self._info_btn = btn
         return btn
 
@@ -301,7 +317,20 @@ class ModelMetricCell(QWidget):
         metrics = self._value.fontMetrics()
         elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(self._value.width(), 60))
         self._value.setText(elided)
-        self._value.setToolTip(self._full_name)
+        self._value.setToolTip(self._details or self._full_name)
+
+    def set_details(self, details: str) -> None:
+        self._details = details
+        tooltip = details or self._full_name or "Model details"
+        self._value.setToolTip(tooltip)
+        self._info_btn.setToolTip(tooltip)
+
+    def _show_details(self) -> None:
+        QMessageBox.information(
+            self,
+            "Model & Runtime Details",
+            self._details or self._full_name or "No model details are available yet.",
+        )
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
@@ -317,8 +346,9 @@ class PerformanceBar(QFrame):
         self.setObjectName("performanceFooter")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(FOOTER_HEIGHT)
+        self._snapshot = PerformanceSnapshot.empty()
         self._build_ui()
-        self.update_snapshot(PerformanceSnapshot.empty())
+        self.update_snapshot(self._snapshot)
 
     def _build_ui(self) -> None:
         layout = QHBoxLayout(self)
@@ -362,6 +392,7 @@ class PerformanceBar(QFrame):
 
     def update_snapshot(self, snapshot: PerformanceSnapshot) -> None:
         """Update every cell from one structured snapshot."""
+        self._snapshot = snapshot
         self._status_cell.set_state(snapshot.status)
         self._cam_fps.set_value(format_fps(snapshot.camera_fps), positive=True)
         self._inf_fps.set_value(format_fps(snapshot.inference_fps), positive=True)
@@ -374,6 +405,18 @@ class PerformanceBar(QFrame):
         self._precision.set_value(format_or_dash(snapshot.precision))
         self._uptime.set_value(format_uptime(snapshot.uptime_seconds))
 
+        self._status_cell.set_tooltip(snapshot.status_tooltip())
+        self._cam_fps.set_tooltip(snapshot.camera_fps_tooltip())
+        self._inf_fps.set_tooltip(snapshot.inference_fps_tooltip())
+        self._latency.set_tooltip(snapshot.latency_tooltip())
+        self._render_fps.set_tooltip(snapshot.render_fps_tooltip())
+        self._points.set_tooltip(snapshot.points_tooltip())
+        self._resolution.set_tooltip("Depth-result resolution returned by the active model.")
+        self._vram.set_tooltip(snapshot.vram_tooltip())
+        self._model.set_details(snapshot.model_tooltip())
+        self._precision.set_tooltip("Actual precision reported by the loaded worker model.")
+        self._uptime.set_tooltip("Elapsed wall-clock time for the current inference session.")
+
     def clear_metrics(self) -> None:
         """Reset to the IDLE state: neutral badge, every metric unavailable."""
         self.update_snapshot(PerformanceSnapshot.empty())
@@ -385,7 +428,14 @@ class PerformanceBar(QFrame):
 
     def set_status(self, kind: BadgeKind, text: str) -> None:
         role = _BADGE_KIND_TO_COLOR.get(kind, "neutral")
+        self._snapshot = self._snapshot.with_status(text)
         self._status_cell.set_state(text, color_role=role)
+        self._status_cell.set_tooltip(self._snapshot.status_tooltip())
+
+    @property
+    def snapshot(self) -> PerformanceSnapshot:
+        """Return the last snapshot rendered by the footer."""
+        return self._snapshot
 
     def reset_metrics(self) -> None:
         self.clear_metrics()

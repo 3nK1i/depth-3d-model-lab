@@ -35,8 +35,8 @@ class Command:
 class Ack:
     """Worker acknowledgement for a control command.
 
-    ``metadata`` is populated after a successful model load. Defaults keep the
-    command contract backward-compatible with existing tests and callers.
+    ``load_time_ms`` remains the total load + warm-up duration for backward
+    compatibility. The two explicit fields provide the accurate breakdown.
     """
 
     command_type: CommandType
@@ -45,6 +45,8 @@ class Ack:
     model_id: str = ""
     metadata: dict | None = None
     load_time_ms: float | None = None
+    model_load_time_ms: float | None = None
+    warmup_time_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,24 +54,22 @@ class FrameRequest:
     """One latest-frame inference request.
 
     ``point_budget`` lets direct-geometry adapters downsample point maps in the
-    worker before IPC. This avoids copying a full H×W×3 float map for every live
-    frame while preserving a full-resolution depth map for the depth panel.
+    worker before IPC. ``submitted_at`` and ``source_timestamp`` use the host's
+    monotonic clock and are telemetry-only; inference correctness never depends
+    on them.
     """
 
     session_id: int
     frame_id: int
     image: np.ndarray  # HxWx3 BGR uint8
     point_budget: int | None = None
+    submitted_at: float | None = None
+    source_timestamp: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class InferenceResult:
-    """Geometry data returned by the worker.
-
-    ``points``/``normals`` may be sampled regular grids. ``point_stride`` is the
-    source-image stride used to create them. ``valid_mask`` remains full-size so
-    both the depth panel and sampled 3D path can use the same prediction mask.
-    """
+    """Geometry and measured worker telemetry returned by the worker."""
 
     session_id: int
     frame_id: int
@@ -84,6 +84,21 @@ class InferenceResult:
     is_metric: bool = False
     model_name: str = ""
     precision: str = ""
+
+    # Worker timing breakdown. ``latency_ms`` is the model forward pass and is
+    # retained as the stable public field used by older tests/callers.
+    preprocess_ms: float | None = None
+    postprocess_ms: float | None = None
+    worker_total_ms: float | None = None
+    queue_wait_ms: float | None = None
+
+    # Explicit CUDA allocator/device telemetry. ``vram_used_gib`` remains a
+    # compatibility alias and is populated with reserved memory by the worker.
     vram_used_gib: float | None = None
+    vram_allocated_gib: float | None = None
+    vram_reserved_gib: float | None = None
+    vram_peak_reserved_gib: float | None = None
+    vram_device_used_gib: float | None = None
     vram_total_gib: float | None = None
+
     error: str | None = None

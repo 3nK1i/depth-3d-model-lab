@@ -134,6 +134,8 @@ class InferenceProcessManager(QObject):
         image,
         *,
         point_budget: int | None = None,
+        submitted_at: float | None = None,
+        source_timestamp: float | None = None,
     ) -> bool:
         """Submit one frame without ever allowing a queue backlog.
 
@@ -149,7 +151,14 @@ class InferenceProcessManager(QObject):
             pass
         try:
             self._frame_queue.put_nowait(
-                FrameRequest(session_id, frame_id, image, point_budget=point_budget)
+                FrameRequest(
+                    session_id,
+                    frame_id,
+                    image,
+                    point_budget=point_budget,
+                    submitted_at=submitted_at,
+                    source_timestamp=source_timestamp,
+                )
             )
         except queue_module.Full:
             return False
@@ -189,7 +198,6 @@ class InferenceProcessManager(QObject):
         if self._process is not None and not self._process.is_alive():
             self.worker_crashed.emit()
             self._poll_timer.stop()
-
 
     def _dispose_ipc(self) -> None:
         """Close and clear process/pipe/queue resources after shutdown."""

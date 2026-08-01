@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-2 are implemented:
+Phases 1-4 and Phase 5 Steps 1-3 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -13,7 +13,10 @@ Phases 1-4 and Phase 5 Steps 1-2 are implemented:
 - Development mock adapter for lifecycle diagnostics
 - MoGe-2 metric depth, direct point maps, normals, mask and intrinsics
 - Interactive VisPy point-cloud viewport
-- Measured latency, FPS, point count and worker-side VRAM metrics
+- End-to-end, model, worker, geometry and VisPy update timing
+- Sliding-window capture, inference and 3D update rates
+- Explicit CUDA allocated, reserved, peak and device-wide VRAM telemetry
+- Model load/warm-up timing and latest-frame drop/backpressure diagnostics
 
 ## Requirements
 
@@ -55,6 +58,8 @@ python main.py
 ```
 
 Select a source, choose **MoGe-2** in the MODEL card, connect the source, then press **Start Inference**. The optional **Development Mock** remains available when testing the UI without model weights.
+
+Hover over the footer metrics for exact definitions and timing/VRAM breakdowns. The **LATENCY** value is end-to-end from worker submission to the completed depth/3D update; the tooltip also shows the model forward pass, worker preprocessing/postprocessing, UI geometry time and source-to-render age. The **VRAM USAGE** value is PyTorch reserved memory, with allocated, peak-reserved and device-wide usage listed in its tooltip. The MODEL info button shows checkpoint, device, precision, token count, load time and warm-up time.
 
 ## Tests
 

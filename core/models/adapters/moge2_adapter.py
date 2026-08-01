@@ -145,9 +145,50 @@ class Moge2GeometryModel(BaseGeometryModel):
 
     def infer(self, frame: FrameRequest) -> GeometryResult:
         self._require_loaded()
+        worker_started = time.perf_counter()
+        queue_wait_ms = self._queue_wait_ms(frame)
+        self._reset_peak_memory_stats()
         try:
-            output, latency_ms = self._infer_model(frame.image)
-            return self._to_geometry_result(frame, output, latency_ms)
+            output, latency_ms, preprocess_ms = self._infer_model(frame.image)
+            post_started = time.perf_counter()
+            result = self._to_geometry_result(
+                frame,
+                output,
+                latency_ms,
+                preprocess_ms=preprocess_ms,
+                queue_wait_ms=queue_wait_ms,
+            )
+            postprocess_ms = (time.perf_counter() - post_started) * 1000.0
+            worker_total_ms = (time.perf_counter() - worker_started) * 1000.0
+            return GeometryResult(
+                session_id=result.session_id,
+                frame_id=result.frame_id,
+                timestamp=result.timestamp,
+                rgb=result.rgb,
+                depth=result.depth,
+                points=result.points,
+                colors=result.colors,
+                normals=result.normals,
+                intrinsics=result.intrinsics,
+                confidence=result.confidence,
+                valid_mask=result.valid_mask,
+                point_stride=result.point_stride,
+                latency_ms=result.latency_ms,
+                preprocess_ms=preprocess_ms,
+                postprocess_ms=postprocess_ms,
+                worker_total_ms=worker_total_ms,
+                queue_wait_ms=queue_wait_ms,
+                is_metric=result.is_metric,
+                model_id=result.model_id,
+                model_name=result.model_name,
+                precision=result.precision,
+                vram_used_gib=result.vram_used_gib,
+                vram_allocated_gib=result.vram_allocated_gib,
+                vram_reserved_gib=result.vram_reserved_gib,
+                vram_peak_reserved_gib=result.vram_peak_reserved_gib,
+                vram_device_used_gib=result.vram_device_used_gib,
+                vram_total_gib=result.vram_total_gib,
+            )
         except Exception as exc:  # noqa: BLE001
             if self._is_cuda_oom(exc):
                 self._clear_cuda_cache()
@@ -189,13 +230,18 @@ class Moge2GeometryModel(BaseGeometryModel):
 
     # -- Internal model execution -----------------------------------------
 
-    def _infer_model(self, bgr_image: np.ndarray) -> tuple[dict[str, Any], float]:
+    def _infer_model(
+        self,
+        bgr_image: np.ndarray,
+    ) -> tuple[dict[str, Any], float, float]:
         torch = self._torch
         assert torch is not None
         assert self._model is not None
         assert self._device is not None
 
+        preprocess_started = time.perf_counter()
         image = self._image_to_tensor(bgr_image)
+        preprocess_ms = (time.perf_counter() - preprocess_started) * 1000.0
         kwargs = {
             "num_tokens": self._num_tokens,
             "resolution_level": self._resolution_level,
@@ -219,7 +265,7 @@ class Moge2GeometryModel(BaseGeometryModel):
 
         if not isinstance(output, dict):
             raise RuntimeError("MoGe-2 returned an unexpected non-dictionary output.")
-        return output, latency_ms
+        return output, latency_ms, preprocess_ms
 
     def _image_to_tensor(self, bgr_image: np.ndarray):
         if bgr_image.ndim != 3 or bgr_image.shape[2] != 3:
@@ -240,6 +286,9 @@ class Moge2GeometryModel(BaseGeometryModel):
         frame: FrameRequest,
         output: dict[str, Any],
         latency_ms: float,
+        *,
+        preprocess_ms: float | None = None,
+        queue_wait_ms: float | None = None,
     ) -> GeometryResult:
         torch = self._torch
         assert torch is not None
@@ -285,7 +334,13 @@ class Moge2GeometryModel(BaseGeometryModel):
         if intrinsics_tensor is not None:
             intrinsics = self._tensor_to_numpy(intrinsics_tensor, dtype=np.float32)
 
-        used_gib, total_gib = self._vram_usage()
+        (
+            allocated_gib,
+            reserved_gib,
+            peak_reserved_gib,
+            device_used_gib,
+            total_gib,
+        ) = self._vram_usage()
         return GeometryResult(
             session_id=frame.session_id,
             frame_id=frame.frame_id,
@@ -298,11 +353,17 @@ class Moge2GeometryModel(BaseGeometryModel):
             valid_mask=valid_mask,
             point_stride=stride,
             latency_ms=latency_ms,
+            preprocess_ms=preprocess_ms,
+            queue_wait_ms=queue_wait_ms,
             is_metric=True,
             model_id=MOGE2_MODEL_ID,
             model_name=self._model_name,
             precision=self.precision_label,
-            vram_used_gib=used_gib,
+            vram_used_gib=reserved_gib,
+            vram_allocated_gib=allocated_gib,
+            vram_reserved_gib=reserved_gib,
+            vram_peak_reserved_gib=peak_reserved_gib,
+            vram_device_used_gib=device_used_gib,
             vram_total_gib=total_gib,
         )
 
@@ -358,7 +419,16 @@ class Moge2GeometryModel(BaseGeometryModel):
         except Exception:  # noqa: BLE001 - cleanup must never mask the real error
             pass
 
-    def _vram_usage(self) -> tuple[float | None, float | None]:
+    def _vram_usage(
+        self,
+    ) -> tuple[
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]:
+        """Return allocated, reserved, peak-reserved, device-used, total GiB."""
         torch = self._torch
         if (
             torch is None
@@ -366,10 +436,45 @@ class Moge2GeometryModel(BaseGeometryModel):
             or self._device.type != "cuda"
             or not torch.cuda.is_available()
         ):
-            return None, None
+            return None, None, None, None, None
+
+        allocated = float(torch.cuda.memory_allocated(self._device)) / 1024**3
         reserved = float(torch.cuda.memory_reserved(self._device)) / 1024**3
+        peak_reserved = float(torch.cuda.max_memory_reserved(self._device)) / 1024**3
         total = float(torch.cuda.get_device_properties(self._device).total_memory) / 1024**3
-        return reserved, total
+        device_used = None
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info(self._device)
+            total = float(total_bytes) / 1024**3
+            device_used = float(total_bytes - free_bytes) / 1024**3
+        except (AttributeError, RuntimeError):
+            pass
+        return allocated, reserved, peak_reserved, device_used, total
+
+    def _reset_peak_memory_stats(self) -> None:
+        torch = self._torch
+        if (
+            torch is None
+            or self._device is None
+            or self._device.type != "cuda"
+            or not torch.cuda.is_available()
+        ):
+            return
+        try:
+            torch.cuda.reset_peak_memory_stats(self._device)
+        except (AttributeError, RuntimeError):
+            pass
+
+    @staticmethod
+    def _queue_wait_ms(frame: FrameRequest) -> float | None:
+        if frame.submitted_at is None:
+            return None
+        elapsed = (time.monotonic() - frame.submitted_at) * 1000.0
+        # Cross-process monotonic clocks are shared on supported desktop
+        # platforms, but discard clearly invalid values rather than display them.
+        if elapsed < 0.0 or elapsed > 60_000.0:
+            return None
+        return elapsed
 
     def _is_cuda_oom(self, exc: BaseException) -> bool:
         torch = self._torch

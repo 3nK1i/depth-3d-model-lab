@@ -46,28 +46,39 @@ def worker_main(
             command: Command = control_conn.recv()
 
             if command.type == CommandType.LOAD_MODEL:
-                load_started = time.perf_counter()
+                total_started = time.perf_counter()
+                model_load_time_ms: float | None = None
+                warmup_time_ms: float | None = None
                 try:
                     if active_model is not None:
                         active_model.unload()
                     active_model = _build_model(command.model_id)
                     config = command.config or {}
+
+                    load_started = time.perf_counter()
                     active_model.load(
                         device=str(config.get("device", "cpu")),
                         precision=str(config.get("precision", "fp32")),
                         config=config,
                     )
+                    model_load_time_ms = (time.perf_counter() - load_started) * 1000.0
+
+                    warmup_started = time.perf_counter()
                     active_model.warmup()
+                    warmup_time_ms = (time.perf_counter() - warmup_started) * 1000.0
+
                     active_model_id = command.model_id
                     metadata = active_model.get_metadata()
-                    load_time_ms = (time.perf_counter() - load_started) * 1000.0
+                    total_time_ms = (time.perf_counter() - total_started) * 1000.0
                     control_conn.send(
                         Ack(
                             command.type,
                             True,
                             model_id=active_model_id,
                             metadata=metadata,
-                            load_time_ms=load_time_ms,
+                            load_time_ms=total_time_ms,
+                            model_load_time_ms=model_load_time_ms,
+                            warmup_time_ms=warmup_time_ms,
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 - report, never crash silently
@@ -84,7 +95,9 @@ def worker_main(
                             False,
                             str(exc),
                             model_id=command.model_id,
-                            load_time_ms=(time.perf_counter() - load_started) * 1000.0,
+                            load_time_ms=(time.perf_counter() - total_started) * 1000.0,
+                            model_load_time_ms=model_load_time_ms,
+                            warmup_time_ms=warmup_time_ms,
                         )
                     )
 
@@ -138,6 +151,10 @@ def worker_main(
                     model_id=active_model_id or result.model_id,
                     depth=result.depth,
                     latency_ms=result.latency_ms,
+                    preprocess_ms=result.preprocess_ms,
+                    postprocess_ms=result.postprocess_ms,
+                    worker_total_ms=result.worker_total_ms,
+                    queue_wait_ms=result.queue_wait_ms,
                     points=result.points,
                     normals=result.normals,
                     intrinsics=result.intrinsics,
@@ -147,6 +164,10 @@ def worker_main(
                     model_name=result.model_name,
                     precision=result.precision,
                     vram_used_gib=result.vram_used_gib,
+                    vram_allocated_gib=result.vram_allocated_gib,
+                    vram_reserved_gib=result.vram_reserved_gib,
+                    vram_peak_reserved_gib=result.vram_peak_reserved_gib,
+                    vram_device_used_gib=result.vram_device_used_gib,
                     vram_total_gib=result.vram_total_gib,
                 ),
             )

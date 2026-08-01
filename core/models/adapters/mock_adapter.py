@@ -25,7 +25,6 @@ from core.models.result import GeometryResult
 from core.runtime.messages import FrameRequest
 
 
-
 class SimulatedOOMError(Exception):
     """Raised by the mock adapter when configured to simulate CUDA OOM."""
 
@@ -78,12 +77,20 @@ class MockGeometryModel(BaseGeometryModel):
         if self._simulate_oom:
             raise SimulatedOOMError("Simulated CUDA out-of-memory (mock)")
 
-        start = time.monotonic()
+        worker_started = time.perf_counter()
+        queue_wait_ms = None
+        if frame.submitted_at is not None:
+            queue_wait_ms = max(0.0, (time.monotonic() - frame.submitted_at) * 1000.0)
+
+        model_started = time.perf_counter()
         if self._latency_ms > 0:
             time.sleep(self._latency_ms / 1000.0)
+        elapsed_ms = (time.perf_counter() - model_started) * 1000.0
 
+        post_started = time.perf_counter()
         depth = self._synthetic_depth(frame.image)
-        elapsed_ms = (time.monotonic() - start) * 1000.0
+        postprocess_ms = (time.perf_counter() - post_started) * 1000.0
+        worker_total_ms = (time.perf_counter() - worker_started) * 1000.0
         self._frame_counter += 1
 
         return GeometryResult(
@@ -93,8 +100,14 @@ class MockGeometryModel(BaseGeometryModel):
             rgb=frame.image,
             depth=depth,
             latency_ms=elapsed_ms,
+            preprocess_ms=0.0,
+            postprocess_ms=postprocess_ms,
+            worker_total_ms=worker_total_ms,
+            queue_wait_ms=queue_wait_ms,
             is_metric=False,
             model_id=MOCK_MODEL_ID,
+            model_name=MOCK_DISPLAY_LABEL,
+            precision="FP32",
         )
 
     def unload(self) -> None:

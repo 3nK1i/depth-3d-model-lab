@@ -20,6 +20,7 @@ from core.capture.video_source import VideoSource
 from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
 from core.runtime.messages import Ack, CommandType, InferenceResult
 from core.runtime.state_machine import ApplicationState
+from core.runtime.telemetry import GeometryTiming
 
 
 @pytest.fixture
@@ -60,6 +61,8 @@ def _moge_ack() -> Ack:
             "device": "cuda:0",
         },
         load_time_ms=100.0,
+        model_load_time_ms=70.0,
+        warmup_time_ms=30.0,
     )
 
 
@@ -175,6 +178,78 @@ def test_mock_performance_snapshot_reports_real_point_count(window):
 
     assert window._performance_bar._points._value.text() == "12,345"
     assert window._performance_bar._precision._value.text() == "FP32"
+
+
+
+def test_step3_snapshot_reports_truthful_latency_vram_and_diagnostics(window):
+    controller = window._inference_controller
+    controller._run_started_at = time.monotonic()
+    controller._active_model_metadata.update(
+        {
+            "display_name": "MoGe-2 ViT-S Normal",
+            "device": "cuda:0",
+            "precision": "FP16",
+            "pretrained": "Ruicheng/moge-2-vits-normal",
+            "num_tokens": 1200,
+            "resolution_level": 5,
+            "model_load_time_ms": 1200.0,
+            "warmup_time_ms": 240.0,
+            "load_time_ms": 1440.0,
+        }
+    )
+    controller._counters.source_frames_seen = 12
+    controller._counters.pending_frames_replaced = 4
+    controller._counters.frames_submitted = 8
+    controller._counters.results_received = 7
+    controller._counters.results_rendered = 6
+    controller._counters.pending_results_replaced = 1
+
+    result = InferenceResult(
+        session_id=1,
+        frame_id=2,
+        model_id=MOGE2_MODEL_ID,
+        depth=np.ones((24, 32), dtype=np.float32),
+        latency_ms=64.2,
+        preprocess_ms=1.5,
+        postprocess_ms=15.0,
+        worker_total_ms=82.0,
+        queue_wait_ms=2.0,
+        model_name="MoGe-2 ViT-S Normal",
+        precision="FP16",
+        vram_used_gib=0.8,
+        vram_allocated_gib=0.6,
+        vram_reserved_gib=0.8,
+        vram_peak_reserved_gib=0.9,
+        vram_device_used_gib=1.1,
+        vram_total_gib=6.0,
+        point_stride=4,
+    )
+
+    controller._update_performance_snapshot(
+        result,
+        geometry=GeometryTiming(
+            point_count=73_728,
+            depth_view_ms=3.0,
+            geometry_cpu_ms=8.0,
+            canvas_update_ms=4.0,
+            total_ms=15.0,
+        ),
+        pipeline_latency_ms=105.0,
+        source_to_render_ms=118.0,
+    )
+
+    bar = window._performance_bar
+    assert bar._latency._value.text() == "105.0 ms"
+    assert "Model forward pass: 64.2 ms" in bar._latency.toolTip()
+    assert bar._vram._value.text() == "0.8 / 6 GB"
+    assert "Allocated tensors: 0.60 GiB" in bar._vram.toolTip()
+    assert "Dropped/replaced total: 5" in bar._status_cell.toolTip()
+    assert "Warm-up: 240.0 ms" in bar._model._info_btn.toolTip()
+    assert bar.snapshot.latency_ms == 105.0
+    assert window._header._vram_value.text() == "1.1 / 6 GB"
+
+    controller._refresh_uptime()
+    assert bar.snapshot.source_frames_seen == 12
 
 
 def test_live_stream_keeps_only_the_latest_pending_frame(window, qtbot, monkeypatch):

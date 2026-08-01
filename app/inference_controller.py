@@ -40,6 +40,7 @@ from core.models.catalog import (
 from core.runtime.messages import Ack, CommandType, InferenceResult
 from core.runtime.session import SessionTracker
 from core.runtime.state_machine import ApplicationState, StateMachine
+from core.runtime.telemetry import GeometryTiming, RateMeter, RuntimeCounters
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +111,11 @@ class InferenceController(QObject):
         self._active_model_metadata: dict[str, object] = {}
         self._run_started_at: float | None = None
 
-        self._fps_window_start: float | None = None
-        self._fps_window_count = 0
+        self._inference_rate = RateMeter(window_seconds=2.0)
+        self._render_rate = RateMeter(window_seconds=2.0)
         self._last_inference_fps: float | None = None
-
-        self._render_fps_window_start: float | None = None
-        self._render_fps_window_count = 0
         self._last_render_fps: float | None = None
+        self._counters = RuntimeCounters()
 
         # Latest-frame-only policy: one worker request in flight, one newest
         # pending capture frame, and one newest pending render result.
@@ -127,10 +126,16 @@ class InferenceController(QObject):
         self._pending_render: tuple[InferenceResult, np.ndarray | None] | None = None
         self._last_render_at: float | None = None
         self._recent_frames: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        self._submitted_at_by_frame: "OrderedDict[int, float]" = OrderedDict()
+        self._source_timestamp_by_frame: "OrderedDict[int, float]" = OrderedDict()
 
         self._pipeline_timer = QTimer(self)
         self._pipeline_timer.setInterval(_PIPELINE_TICK_MS)
         self._pipeline_timer.timeout.connect(self._on_pipeline_tick)
+
+        self._uptime_timer = QTimer(self)
+        self._uptime_timer.setInterval(500)
+        self._uptime_timer.timeout.connect(self._refresh_uptime)
 
         # Created once; only its data buffers are updated per result.
         self._point_cloud_canvas = PointCloudCanvas(self)
@@ -244,9 +249,11 @@ class InferenceController(QObject):
         self._process_manager.resume()
         self._state_machine.transition_to(ApplicationState.RUNNING)
         self._run_started_at = time.monotonic()
+        self._performance_bar.update_snapshot(self._initial_session_snapshot())
         self._viewport_panel.set_status(ViewportStatus.LIVE)
         self._set_active_model_header()
         self._pipeline_timer.start()
+        self._uptime_timer.start()
         self._apply_button_states()
 
         # Static images emitted before inference starts need an explicit resend.
@@ -259,8 +266,16 @@ class InferenceController(QObject):
             self._runtime_toolbar.set_paused_label(is_paused=True)
             self._viewport_panel.set_status(ViewportStatus.PAUSED)
             self._pipeline_timer.stop()
+            if self._pending_source_frame is not None:
+                self._counters.pending_frames_replaced += 1
+            if self._pending_render is not None:
+                dropped_result, _dropped_rgb = self._pending_render
+                self._counters.pending_results_replaced += 1
+                self._submitted_at_by_frame.pop(dropped_result.frame_id, None)
+                self._source_timestamp_by_frame.pop(dropped_result.frame_id, None)
             self._pending_source_frame = None
             self._pending_render = None
+            self._refresh_uptime()
         elif self._state_machine.state == ApplicationState.PAUSED:
             self._process_manager.resume()
             self._state_machine.transition_to(ApplicationState.RUNNING)
@@ -278,6 +293,7 @@ class InferenceController(QObject):
     def _stop_inference(self) -> None:
         self._state_machine.transition_to(ApplicationState.STOPPING)
         self._apply_button_states()
+        self._refresh_uptime()
         stopped_session_id = self._session.active_session_id
         self._session.invalidate()
         self._reset_pipeline_runtime()
@@ -308,6 +324,9 @@ class InferenceController(QObject):
     def on_source_frame(self, frame: SourceFrame) -> None:
         if self._state_machine.state != ApplicationState.RUNNING:
             return
+        self._counters.source_frames_seen += 1
+        if self._pending_source_frame is not None:
+            self._counters.pending_frames_replaced += 1
         self._pending_source_frame = frame
         self._try_submit_latest_frame()
 
@@ -349,18 +368,36 @@ class InferenceController(QObject):
             if self._app_controller.is_stream_source
             else self._settings_panel.point_budget
         )
-        accepted = self._process_manager.submit_frame(
-            session_id,
-            frame_id,
-            source_frame.image,
-            point_budget=point_budget,
-        )
+        try:
+            accepted = self._process_manager.submit_frame(
+                session_id,
+                frame_id,
+                source_frame.image,
+                point_budget=point_budget,
+                submitted_at=now,
+                source_timestamp=source_frame.timestamp,
+            )
+        except TypeError as exc:
+            # Compatibility with focused legacy test doubles that implement
+            # the pre-telemetry submit_frame signature.
+            if "unexpected keyword" not in str(exc):
+                raise
+            accepted = self._process_manager.submit_frame(
+                session_id,
+                frame_id,
+                source_frame.image,
+                point_budget=point_budget,
+            )
         # Only explicit False is rejection; legacy test doubles may return None.
         if accepted is False:
+            self._counters.submit_rejected += 1
             self._recent_frames.pop(frame_id, None)
             self._pending_source_frame = source_frame
             return
 
+        self._counters.frames_submitted += 1
+        self._submitted_at_by_frame[frame_id] = now
+        self._source_timestamp_by_frame[frame_id] = source_frame.timestamp
         self._inference_in_flight = True
         self._inflight_frame_id = frame_id
         self._last_submit_at = now
@@ -380,6 +417,10 @@ class InferenceController(QObject):
         self._active_model_metadata = dict(ack.metadata or {})
         if ack.load_time_ms is not None:
             self._active_model_metadata["load_time_ms"] = ack.load_time_ms
+        if ack.model_load_time_ms is not None:
+            self._active_model_metadata["model_load_time_ms"] = ack.model_load_time_ms
+        if ack.warmup_time_ms is not None:
+            self._active_model_metadata["warmup_time_ms"] = ack.warmup_time_ms
         self._settings_panel.set_model_loaded(self._active_model_metadata)
         self._set_active_model_header()
 
@@ -413,14 +454,18 @@ class InferenceController(QObject):
 
     def _on_result_ready(self, result: InferenceResult) -> None:
         if not self._session.is_current(result.session_id):
+            self._counters.stale_results_ignored += 1
             return
 
+        self._counters.results_received += 1
         rgb = self._recent_frames.pop(result.frame_id, None)
         if result.frame_id == self._inflight_frame_id:
             self._inference_in_flight = False
             self._inflight_frame_id = None
 
         if self._state_machine.state != ApplicationState.RUNNING:
+            self._submitted_at_by_frame.pop(result.frame_id, None)
+            self._source_timestamp_by_frame.pop(result.frame_id, None)
             return
 
         if result.error is not None:
@@ -431,6 +476,11 @@ class InferenceController(QObject):
             return
 
         self._update_inference_fps()
+        if self._pending_render is not None:
+            replaced_result, _replaced_rgb = self._pending_render
+            self._counters.pending_results_replaced += 1
+            self._submitted_at_by_frame.pop(replaced_result.frame_id, None)
+            self._source_timestamp_by_frame.pop(replaced_result.frame_id, None)
         self._pending_render = (result, rgb)
 
         # Overlap newest inference with the bounded UI render slot without
@@ -440,6 +490,8 @@ class InferenceController(QObject):
 
     def _handle_inference_failure(self, message: str) -> None:
         logger.error("Inference failed: %s", message)
+        self._counters.inference_errors += 1
+        self._refresh_uptime()
         self._session.invalidate()
         self._reset_pipeline_runtime()
         self._process_manager.pause()
@@ -471,14 +523,36 @@ class InferenceController(QObject):
         result, rgb = self._pending_render
         self._pending_render = None
         try:
-            point_count = self._update_geometry(result, rgb)
+            geometry = self._update_geometry(result, rgb)
+            if isinstance(geometry, int):  # compatibility with focused test doubles
+                geometry = GeometryTiming(point_count=geometry)
         except Exception as exc:  # noqa: BLE001 - renderer errors must be visible
             self._handle_inference_failure(f"Geometry rendering failed: {exc}")
             return
 
-        self._last_render_at = time.monotonic()
+        rendered_at = time.monotonic()
+        self._last_render_at = rendered_at
+        self._counters.results_rendered += 1
         self._update_render_fps()
-        self._update_performance_snapshot(result, point_count=point_count)
+
+        submitted_at = self._submitted_at_by_frame.pop(result.frame_id, None)
+        source_timestamp = self._source_timestamp_by_frame.pop(result.frame_id, None)
+        pipeline_latency_ms = (
+            (rendered_at - submitted_at) * 1000.0
+            if submitted_at is not None
+            else None
+        )
+        source_to_render_ms = (
+            (rendered_at - source_timestamp) * 1000.0
+            if source_timestamp is not None
+            else None
+        )
+        self._update_performance_snapshot(
+            result,
+            geometry=geometry,
+            pipeline_latency_ms=pipeline_latency_ms,
+            source_to_render_ms=source_to_render_ms,
+        )
 
         if not self._app_controller.is_stream_source:
             self._complete_static_result()
@@ -499,13 +573,19 @@ class InferenceController(QObject):
 
     # -- Geometry ---------------------------------------------------------
 
-    def _update_geometry(self, result: InferenceResult, rgb: np.ndarray | None) -> int:
-        """Render either a direct model point map or a depth-only fallback."""
+    def _update_geometry(
+        self,
+        result: InferenceResult,
+        rgb: np.ndarray | None,
+    ) -> GeometryTiming:
+        """Render geometry and return measured UI-side stage timings."""
+        total_started = time.perf_counter()
         depth = result.depth
         if depth is None or depth.ndim != 2:
             raise ValueError("Expected a two-dimensional depth map.")
 
         settings = self._settings_panel
+        depth_started = time.perf_counter()
         full_valid_mask = _aligned_mask(result.valid_mask, depth.shape)
         depth_rgb = apply_colormap(
             depth,
@@ -515,6 +595,8 @@ class InferenceController(QObject):
             valid_mask=full_valid_mask,
         )
         self._depth_view.set_depth_frame(_ndarray_to_qpixmap_rgb(depth_rgb))
+        depth_view_ms = (time.perf_counter() - depth_started) * 1000.0
+        geometry_started = time.perf_counter()
 
         point_budget = (
             settings.live_point_budget
@@ -558,6 +640,8 @@ class InferenceController(QObject):
             point_budget,
         )
 
+        geometry_cpu_ms = (time.perf_counter() - geometry_started) * 1000.0
+        canvas_started = time.perf_counter()
         self._point_cloud_canvas.set_point_size(self._viewport_panel.point_size)
         self._point_cloud_canvas.set_grid_visible(settings.grid_visible)
         self._viewport_panel.set_axis_visible(settings.axes_visible)
@@ -569,9 +653,16 @@ class InferenceController(QObject):
         if flat_points.shape[0] > 0 and not self._viewport_panel.camera_initialized:
             self._point_cloud_canvas.fit_scene()
             self._viewport_panel.mark_camera_initialized()
+        canvas_update_ms = (time.perf_counter() - canvas_started) * 1000.0
 
         self._set_active_model_header()
-        return int(flat_points.shape[0])
+        return GeometryTiming(
+            point_count=int(flat_points.shape[0]),
+            depth_view_ms=depth_view_ms,
+            geometry_cpu_ms=geometry_cpu_ms,
+            canvas_update_ms=canvas_update_ms,
+            total_ms=(time.perf_counter() - total_started) * 1000.0,
+        )
 
     def _direct_geometry_inputs(
         self,
@@ -673,8 +764,13 @@ class InferenceController(QObject):
         self,
         result: InferenceResult,
         *,
-        point_count: int,
+        geometry: GeometryTiming | None = None,
+        point_count: int | None = None,
+        pipeline_latency_ms: float | None = None,
+        source_to_render_ms: float | None = None,
     ) -> None:
+        if geometry is None:
+            geometry = GeometryTiming(point_count=point_count or 0)
         model_label = result.model_name or self._active_model_display_name(result.model_id)
         precision = result.precision or (
             "FP32" if result.model_id == MOCK_MODEL_ID else None
@@ -688,29 +784,122 @@ class InferenceController(QObject):
         if result.depth is not None:
             resolution = (result.depth.shape[1], result.depth.shape[0])
 
+        metadata = self._active_model_metadata
+        reserved_gib = (
+            result.vram_reserved_gib
+            if result.vram_reserved_gib is not None
+            else result.vram_used_gib
+        )
+        visible_latency = (
+            pipeline_latency_ms
+            if pipeline_latency_ms is not None
+            else result.worker_total_ms
+            if result.worker_total_ms is not None
+            else result.latency_ms
+        )
+        point_budget = (
+            self._settings_panel.live_point_budget
+            if self._app_controller.is_stream_source
+            else self._settings_panel.point_budget
+        )
+
         self._performance_bar.update_snapshot(
             PerformanceSnapshot(
                 status="RUNNING",
                 camera_fps=self._app_controller.capture_fps,
                 inference_fps=self._last_inference_fps,
-                latency_ms=result.latency_ms,
+                latency_ms=visible_latency,
+                model_latency_ms=result.latency_ms,
+                preprocess_ms=result.preprocess_ms,
+                postprocess_ms=result.postprocess_ms,
+                worker_total_ms=result.worker_total_ms,
+                queue_wait_ms=result.queue_wait_ms,
+                geometry_ms=geometry.total_ms,
+                geometry_cpu_ms=geometry.geometry_cpu_ms,
+                depth_view_ms=geometry.depth_view_ms,
+                canvas_update_ms=geometry.canvas_update_ms,
+                source_to_render_ms=source_to_render_ms,
                 render_fps=self._last_render_fps,
-                point_count=point_count,
+                point_count=geometry.point_count,
                 model_name=model_label,
                 precision=precision,
                 resolution=resolution,
-                vram_used_gb=result.vram_used_gib,
+                vram_used_gb=reserved_gib,
+                vram_allocated_gb=result.vram_allocated_gib,
+                vram_reserved_gb=reserved_gib,
+                vram_peak_reserved_gb=result.vram_peak_reserved_gib,
+                vram_device_used_gb=result.vram_device_used_gib,
                 vram_total_gb=result.vram_total_gib,
                 uptime_seconds=uptime_seconds,
+                model_load_time_ms=_float_metadata(metadata, "model_load_time_ms"),
+                warmup_time_ms=_float_metadata(metadata, "warmup_time_ms"),
+                total_load_time_ms=_float_metadata(metadata, "load_time_ms"),
+                model_device=_string_metadata(metadata, "device"),
+                checkpoint=_string_metadata(metadata, "pretrained"),
+                num_tokens=_int_metadata(metadata, "num_tokens"),
+                resolution_level=_int_metadata(metadata, "resolution_level"),
+                source_frames_seen=self._counters.source_frames_seen,
+                frames_submitted=self._counters.frames_submitted,
+                results_received=self._counters.results_received,
+                results_rendered=self._counters.results_rendered,
+                dropped_before_inference=self._counters.dropped_before_inference,
+                dropped_before_render=self._counters.dropped_before_render,
+                submit_rejected=self._counters.submit_rejected,
+                inference_errors=self._counters.inference_errors,
+                point_stride=max(1, int(result.point_stride)),
+                point_budget=point_budget,
             )
         )
 
-        if result.vram_used_gib is not None and result.vram_total_gib is not None:
+        header_used_gib = (
+            result.vram_device_used_gib
+            if result.vram_device_used_gib is not None
+            else reserved_gib
+        )
+        if header_used_gib is not None and result.vram_total_gib is not None:
+            # The compact header is device-wide VRAM usage. The footer is
+            # deliberately PyTorch-reserved memory and explains its allocator
+            # breakdown in the tooltip.
             self._header.update_gpu_status(
                 self._settings_panel.hardware_info.name,
-                result.vram_used_gib,
+                header_used_gib,
                 result.vram_total_gib,
             )
+
+    def _initial_session_snapshot(self) -> PerformanceSnapshot:
+        metadata = self._active_model_metadata
+        precision = _string_metadata(metadata, "precision")
+        if not precision and self._active_model_id == MOCK_MODEL_ID:
+            precision = "FP32"
+        return PerformanceSnapshot(
+            status="RUNNING",
+            model_name=self._active_model_display_name(),
+            precision=precision,
+            uptime_seconds=0,
+            model_load_time_ms=_float_metadata(metadata, "model_load_time_ms"),
+            warmup_time_ms=_float_metadata(metadata, "warmup_time_ms"),
+            total_load_time_ms=_float_metadata(metadata, "load_time_ms"),
+            model_device=_string_metadata(metadata, "device"),
+            checkpoint=_string_metadata(metadata, "pretrained"),
+            num_tokens=_int_metadata(metadata, "num_tokens"),
+            resolution_level=_int_metadata(metadata, "resolution_level"),
+        )
+
+    def _refresh_uptime(self) -> None:
+        if self._run_started_at is None:
+            return
+        snapshot = self._performance_bar.snapshot.with_runtime_counters(
+            uptime_seconds=int(time.monotonic() - self._run_started_at),
+            source_frames_seen=self._counters.source_frames_seen,
+            frames_submitted=self._counters.frames_submitted,
+            results_received=self._counters.results_received,
+            results_rendered=self._counters.results_rendered,
+            dropped_before_inference=self._counters.dropped_before_inference,
+            dropped_before_render=self._counters.dropped_before_render,
+            submit_rejected=self._counters.submit_rejected,
+            inference_errors=self._counters.inference_errors,
+        )
+        self._performance_bar.update_snapshot(snapshot)
 
     def _active_model_display_name(self, model_id: str | None = None) -> str:
         metadata_name = str(self._active_model_metadata.get("display_name", ""))
@@ -730,33 +919,14 @@ class InferenceController(QObject):
             self._header.set_status(BadgeKind.RECOMMENDED, "MOGE-2")
 
     def _update_inference_fps(self) -> None:
-        now = time.monotonic()
-        if self._fps_window_start is None:
-            self._fps_window_start = now
-            self._fps_window_count = 1
-            return
-        self._fps_window_count += 1
-        elapsed = now - self._fps_window_start
-        if elapsed >= 1.0:
-            self._last_inference_fps = self._fps_window_count / elapsed
-            self._fps_window_start = now
-            self._fps_window_count = 0
+        self._last_inference_fps = self._inference_rate.mark(time.monotonic())
 
     def _update_render_fps(self) -> None:
-        now = time.monotonic()
-        if self._render_fps_window_start is None:
-            self._render_fps_window_start = now
-            self._render_fps_window_count = 1
-            return
-        self._render_fps_window_count += 1
-        elapsed = now - self._render_fps_window_start
-        if elapsed >= 1.0:
-            self._last_render_fps = self._render_fps_window_count / elapsed
-            self._render_fps_window_start = now
-            self._render_fps_window_count = 0
+        self._last_render_fps = self._render_rate.mark(time.monotonic())
 
     def _reset_pipeline_runtime(self) -> None:
         self._pipeline_timer.stop()
+        self._uptime_timer.stop()
         self._pending_source_frame = None
         self._pending_render = None
         self._inference_in_flight = False
@@ -764,14 +934,15 @@ class InferenceController(QObject):
         self._last_submit_at = None
         self._last_render_at = None
         self._recent_frames.clear()
+        self._submitted_at_by_frame.clear()
+        self._source_timestamp_by_frame.clear()
 
         self._run_started_at = None
-        self._fps_window_start = None
-        self._fps_window_count = 0
+        self._inference_rate.reset()
+        self._render_rate.reset()
         self._last_inference_fps = None
-        self._render_fps_window_start = None
-        self._render_fps_window_count = 0
         self._last_render_fps = None
+        self._counters.reset()
 
     # -- Worker recovery --------------------------------------------------
 
@@ -834,6 +1005,31 @@ class InferenceController(QObject):
     @property
     def state_machine(self) -> StateMachine:
         return self._state_machine
+
+
+
+def _float_metadata(metadata: dict[str, object], key: str) -> float | None:
+    value = metadata.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _int_metadata(metadata: dict[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
+def _string_metadata(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _aligned_mask(mask: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray | None:

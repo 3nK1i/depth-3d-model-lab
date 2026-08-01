@@ -103,6 +103,12 @@ def test_adapter_returns_metric_direct_geometry_with_bounded_points() -> None:
     assert result.points.shape[0] * result.points.shape[1] <= 1_000
     assert result.intrinsics is not None and result.intrinsics.shape == (3, 3)
     assert result.precision == "FP32"
+    assert result.preprocess_ms is not None and result.preprocess_ms >= 0.0
+    assert result.postprocess_ms is not None and result.postprocess_ms >= 0.0
+    assert result.worker_total_ms is not None
+    assert result.worker_total_ms >= result.latency_ms
+    assert result.vram_allocated_gib is None
+    assert result.vram_reserved_gib is None
 
     fake = _FakeMoGeModel.last_instance
     assert fake is not None and fake.last_image is not None
