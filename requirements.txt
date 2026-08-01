@@ -1,6 +1,6 @@
 # EIA TECH - Depth & 3D Model Lab
-# Base application dependencies through Phase 4.
-# Real model dependencies remain isolated in requirements/models-*.txt.
+# Base application dependencies.
+# Optional real-model dependencies remain isolated in requirements/models-*.txt.
 
 PyQt6>=6.7,<6.9
 numpy>=1.26,<3

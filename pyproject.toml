@@ -16,6 +16,9 @@ dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
 ]
+moge2 = [
+    "moge @ git+https://github.com/microsoft/MoGe.git",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

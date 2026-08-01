@@ -70,6 +70,7 @@ class ResolvedProfile:
             "device": self.device,
             "precision": self.precision.value,
             "pretrained": self.spec.model_repo,
+            "model_label": self.spec.model_label,
             "resolution_level": self.spec.resolution_level,
             "num_tokens": self.spec.num_tokens,
             "point_budget": self.spec.point_budget,

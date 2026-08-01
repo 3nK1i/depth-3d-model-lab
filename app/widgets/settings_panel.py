@@ -1,10 +1,11 @@
 """Right settings sidebar and hardware-aware model profile controls.
 
 The three independent accordion cards preserve the Phase 4 layout. Phase 5
-Step 1 replaces the MODEL card's static GPU presets with a real startup
+replaces the MODEL card's static GPU presets with a real startup
 hardware snapshot and a typed Efficient/Balanced/Ultra resolver. The
-resolved config is exposed through :attr:`model_runtime_config`; no model is
-loaded from this widget and no CUDA tensors are allocated in the UI process.
+resolved config is exposed through :attr:`model_runtime_config`; model loading
+still happens only in the worker and no CUDA tensors are allocated in the UI
+process.
 """
 
 from __future__ import annotations
@@ -34,6 +35,11 @@ from core.hardware.profiles import (
     ResolvedProfile,
     resolve_profile,
 )
+from core.models.catalog import (
+    MOGE2_DISPLAY_LABEL,
+    MOGE2_MODEL_ID,
+    MOCK_MODEL_ID,
+)
 
 SIDEBAR_MIN_WIDTH = 320
 SIDEBAR_PREFERRED_WIDTH = 348
@@ -61,6 +67,7 @@ class SettingsPanel(QFrame):
     """Scrollable MODEL / DEPTH SETTINGS / RENDER SETTINGS cards."""
 
     compute_profile_changed = pyqtSignal(object)  # ResolvedProfile
+    model_selection_changed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -81,6 +88,7 @@ class SettingsPanel(QFrame):
 
         self._build_ui()
         self._initialize_compute_profile()
+        self._initialize_model_selection()
 
     def sizeHint(self):  # noqa: N802 - Qt override
         hint = super().sizeHint()
@@ -133,17 +141,16 @@ class SettingsPanel(QFrame):
     def _build_model_card(self) -> CollapsibleSettingsCard:
         card = CollapsibleSettingsCard("MODEL", uppercase_labels=True)
 
-        # Step 1 still executes the development mock. Keep the active-model
-        # control truthful and non-interactive until the real MoGe-2 adapter is
-        # registered in Step 2. The rows below describe the resolved MoGe-2
-        # runtime profile that Step 2 will consume.
-        self._model_combo = SettingsComboBox(["Development Mock"])
-        self._model_combo.setEnabled(False)
+        self._model_combo = SettingsComboBox()
+        self._model_combo.addItem(MOGE2_DISPLAY_LABEL, MOGE2_MODEL_ID)
+        self._model_combo.addItem("Development Mock", MOCK_MODEL_ID)
+        self._model_combo.currentIndexChanged.connect(self._on_model_selected)
         self._model_combo.setToolTip(
-            "Active adapter: Development Mock. "
-            "The resolved MoGe-2 configuration below becomes active in Step 2."
+            "Choose the adapter to load in the isolated inference worker. "
+            "MoGe-2 is the default; the development mock remains available "
+            "only for lifecycle diagnostics."
         )
-        self._model_badge = StatusBadge("MOCK ACTIVE")
+        self._model_badge = StatusBadge("READY")
         card.add_wide_row(self._model_combo, self._model_badge)
 
         self._gpu_profile = SettingsComboBox()
@@ -233,6 +240,82 @@ class SettingsPanel(QFrame):
         card.add_toggle_row("VSync", self._vsync_toggle)
         return card
 
+    # -- Active-model lifecycle -------------------------------------------
+
+    def _initialize_model_selection(self) -> None:
+        loader = getattr(self._app_settings, "load_last_model_id", None)
+        saved = loader() if callable(loader) else None
+        model_id = saved if saved in {MOGE2_MODEL_ID, MOCK_MODEL_ID} else MOGE2_MODEL_ID
+        index = self._model_combo.findData(model_id)
+        _set_combo_index_blocked(self._model_combo, max(index, 0))
+        self._refresh_model_badge()
+
+    def _on_model_selected(self, _index: int) -> None:
+        saver = getattr(self._app_settings, "save_last_model_id", None)
+        if callable(saver):
+            saver(self.selected_model_id)
+        self._refresh_model_badge()
+        self.model_selection_changed.emit(self.selected_model_id)
+
+    def _refresh_model_badge(self) -> None:
+        if self.selected_model_id == MOCK_MODEL_ID:
+            self._model_badge.setText("DEV ONLY")
+            self._model_badge.setToolTip(
+                "Synthetic depth used only to test the runtime lifecycle."
+            )
+            return
+        if self.resolved_profile.downgraded:
+            self._model_badge.setText("SAFE FALLBACK")
+        elif self._hardware_info.cuda_ready:
+            self._model_badge.setText("GPU READY")
+        else:
+            self._model_badge.setText("CPU MODE")
+
+        tooltip_parts = [self._hardware_info.details]
+        if self.resolved_profile.warning:
+            tooltip_parts.append(f"Profile: {self.resolved_profile.warning}")
+        self._model_badge.setToolTip("\n".join(v for v in tooltip_parts if v))
+
+    def set_model_controls_locked(self, locked: bool) -> None:
+        """Prevent config/model changes while a worker model is loaded."""
+        self._model_combo.setEnabled(not locked)
+        self._gpu_profile.setEnabled(not locked)
+
+    def set_model_loading(self) -> None:
+        self._model_badge.setText("LOADING")
+        self.set_model_controls_locked(True)
+
+    def set_model_loaded(self, metadata: dict | None) -> None:
+        metadata = metadata or {}
+        if self.selected_model_id == MOCK_MODEL_ID:
+            self._model_badge.setText("MOCK ACTIVE")
+        elif bool(metadata.get("is_metric")):
+            self._model_badge.setText("METRIC READY")
+        else:
+            self._model_badge.setText("READY")
+        details = [
+            str(metadata.get("display_name", "")),
+            str(metadata.get("device", "")),
+            str(metadata.get("precision", "")),
+        ]
+        self._model_badge.setToolTip(" · ".join(v for v in details if v))
+        self.set_model_controls_locked(True)
+
+    def set_model_unloaded(self) -> None:
+        self.set_model_controls_locked(False)
+        self._refresh_model_badge()
+
+    def set_model_error(
+        self,
+        message: str,
+        *,
+        label: str = "ERROR",
+        unlock_controls: bool = True,
+    ) -> None:
+        self._model_badge.setText(label)
+        self._model_badge.setToolTip(message)
+        self.set_model_controls_locked(not unlock_controls)
+
     # -- Hardware/profile lifecycle ---------------------------------------
 
     def _populate_profile_combo(self) -> None:
@@ -292,18 +375,23 @@ class SettingsPanel(QFrame):
         profile_tooltip = "\n".join(part for part in tooltip_parts if part)
         self._gpu_profile.setToolTip(profile_tooltip)
 
-        if resolved.downgraded:
-            self._model_badge.setText("SAFE FALLBACK")
-        elif self._hardware_info.cuda_ready:
-            self._model_badge.setText("GPU READY")
-        else:
-            self._model_badge.setText("CPU MODE")
-        self._model_badge.setToolTip(profile_tooltip)
+        self._refresh_model_badge()
+        if self.selected_model_id == MOGE2_MODEL_ID:
+            self._model_badge.setToolTip(profile_tooltip)
 
         if emit_signal:
             self.compute_profile_changed.emit(resolved)
 
     # -- Public API: hardware/model profile -------------------------------
+
+    @property
+    def selected_model_id(self) -> str:
+        value = self._model_combo.currentData()
+        return str(value) if value else MOGE2_MODEL_ID
+
+    @property
+    def selected_model_label(self) -> str:
+        return self._model_combo.currentText()
 
     @property
     def hardware_info(self) -> HardwareInfo:

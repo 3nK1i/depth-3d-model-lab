@@ -1,8 +1,4 @@
-"""Point-cloud filtering: invalid geometry removal and edge filtering.
-
-Applied after projection, before sampling — invalid points (NaN/Inf,
-non-positive depth) must never reach the renderer or an export file.
-"""
+"""Point-cloud validity and depth-edge filtering."""
 
 from __future__ import annotations
 
@@ -10,48 +6,41 @@ import numpy as np
 
 
 def valid_mask(points: np.ndarray, depth: np.ndarray) -> np.ndarray:
-    """Boolean (H, W) mask: True where the point is finite and in front
-    of the camera (depth > 0)."""
-    finite = np.isfinite(points).all(axis=-1)
-    positive_depth = depth > 0
-    return finite & positive_depth
+    """True where point coordinates and positive depth are finite."""
+    return (
+        np.isfinite(points).all(axis=-1)
+        & np.isfinite(depth)
+        & (depth > 0)
+    )
 
 
 def remove_invalid(
-    points: np.ndarray, colors: np.ndarray, depth: np.ndarray
+    points: np.ndarray,
+    colors: np.ndarray,
+    depth: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Flatten to (N, 3)/(N, 3) and drop every invalid point.
-
-    Takes the dense (H, W, 3) grids from projection/colorization and
-    returns flat arrays ready for :mod:`core.geometry.sampling` — this
-    is the one place the grid becomes a flat point list.
-    """
     mask = valid_mask(points, depth)
-    flat_points = points[mask]
-    flat_colors = colors[mask]
-    return flat_points, flat_colors
+    return points[mask], colors[mask]
 
 
 def edge_filter_mask(depth: np.ndarray, strength: float) -> np.ndarray:
-    """Boolean (H, W) mask suppressing pixels at sharp depth
-    discontinuities ("flying pixels" at object edges).
-
-    ``strength`` in [0, 1]: 0 disables filtering entirely (mask is all
-    True); higher values reject a wider gradient-magnitude band. Uses a
-    simple finite-difference gradient rather than a full edge detector —
-    adequate for suppressing the worst flying-pixel artifacts without
-    extra dependencies.
-    """
+    """Suppress sharp depth discontinuities without propagating NaN/Inf."""
+    depth_array = np.asarray(depth, dtype=np.float32)
+    finite = np.isfinite(depth_array) & (depth_array > 0)
+    if not finite.any():
+        return np.zeros(depth_array.shape, dtype=bool)
     if strength <= 0:
-        return np.ones(depth.shape, dtype=bool)
+        return finite
 
-    grad_y, grad_x = np.gradient(depth.astype(np.float32))
-    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    fill_value = float(np.median(depth_array[finite]))
+    safe_depth = np.where(finite, depth_array, fill_value)
+    grad_y, grad_x = np.gradient(safe_depth)
+    gradient_magnitude = np.hypot(grad_x, grad_y)
 
-    depth_scale = max(float(np.nanmax(depth)) - float(np.nanmin(depth)), 1e-6)
+    finite_values = depth_array[finite]
+    depth_scale = max(float(finite_values.max() - finite_values.min()), 1e-6)
     normalized_gradient = gradient_magnitude / depth_scale
 
-    # strength=1.0 -> reject anything above ~5% of the depth range's
-    # gradient per pixel; strength=0.1 -> a much more permissive 50%.
+    strength = min(max(float(strength), 0.0), 1.0)
     threshold = 0.5 * (1.0 - strength) + 0.05 * strength
-    return normalized_gradient <= threshold
+    return finite & np.isfinite(normalized_gradient) & (normalized_gradient <= threshold)

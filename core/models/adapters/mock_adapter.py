@@ -20,11 +20,10 @@ from typing import Any
 import numpy as np
 
 from core.models.base import BaseGeometryModel
+from core.models.catalog import MOCK_DISPLAY_LABEL, MOCK_MODEL_ID
 from core.models.result import GeometryResult
 from core.runtime.messages import FrameRequest
 
-MOCK_MODEL_ID = "development-mock"
-MOCK_DISPLAY_LABEL = "DEVELOPMENT MOCK \u2014 NOT AI OUTPUT"
 
 
 class SimulatedOOMError(Exception):

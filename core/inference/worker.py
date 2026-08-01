@@ -1,34 +1,25 @@
-"""Inference worker process entry point (spec §12, §13).
+"""Spawn-safe inference worker process.
 
-Runs in a separate ``multiprocessing`` process, never a thread — a
-thread cannot be safely force-stopped if a CUDA call hangs, but a
-process can be terminated by the OS as a last resort (the "Restart
-Worker" path). This module deliberately knows nothing about sessions
-being "active" — that check happens entirely on the UI side, per spec
-§13 ("the UI must ignore results when result.session_id !=
-active_session_id"). The worker just processes whatever frame arrives
-and tags the result with the same ids it received; staleness is the
-caller's problem to filter, not the worker's to track.
-
-STOP does not unload the model (spec §13: "keep the model loaded for
-fast restart") — only UNLOAD_MODEL and SHUTDOWN release it.
+The worker owns every model and CUDA allocation. Results are latest-only: a
+large geometry result is never allowed to queue behind obsolete results.
 """
 
 from __future__ import annotations
 
 import queue
+import time
 from multiprocessing.connection import Connection
 from multiprocessing.queues import Queue as MPQueue
 
 from core.models.adapters.mock_adapter import MockGeometryModel
+from core.models.adapters.moge2_adapter import Moge2GeometryModel
 from core.models.base import BaseGeometryModel
+from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
 from core.runtime.messages import Ack, Command, CommandType, FrameRequest, InferenceResult
 
-# Registry of buildable model adapters by id. Real adapters (MoGe-2,
-# Depth Anything V2, ...) register here starting in Phase 5; the worker
-# dispatch logic above never needs to change when they're added.
 _MODEL_REGISTRY: dict[str, type[BaseGeometryModel]] = {
-    "development-mock": MockGeometryModel,
+    MOGE2_MODEL_ID: Moge2GeometryModel,
+    MOCK_MODEL_ID: MockGeometryModel,
 }
 
 
@@ -45,40 +36,65 @@ def worker_main(
     frame_queue: MPQueue,
     result_queue: MPQueue,
 ) -> None:
-    """The worker process's whole lifetime. Returns (process exits)
-    only after a SHUTDOWN command."""
+    """Run until a SHUTDOWN command is received."""
     active_model: BaseGeometryModel | None = None
     active_model_id: str | None = None
-    paused = True  # nothing runs until a LOAD_MODEL + RESUME/frames arrive
+    paused = True
 
     while True:
         if control_conn.poll(timeout=0.02):
             command: Command = control_conn.recv()
 
             if command.type == CommandType.LOAD_MODEL:
+                load_started = time.perf_counter()
                 try:
                     if active_model is not None:
                         active_model.unload()
                     active_model = _build_model(command.model_id)
                     config = command.config or {}
                     active_model.load(
-                        device=config.get("device", "cpu"),
-                        precision=config.get("precision", "fp32"),
+                        device=str(config.get("device", "cpu")),
+                        precision=str(config.get("precision", "fp32")),
                         config=config,
                     )
                     active_model.warmup()
                     active_model_id = command.model_id
-                    control_conn.send(Ack(command.type, True))
-                except Exception as exc:  # noqa: BLE001 - report any load failure, never crash silently
+                    metadata = active_model.get_metadata()
+                    load_time_ms = (time.perf_counter() - load_started) * 1000.0
+                    control_conn.send(
+                        Ack(
+                            command.type,
+                            True,
+                            model_id=active_model_id,
+                            metadata=metadata,
+                            load_time_ms=load_time_ms,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 - report, never crash silently
+                    if active_model is not None:
+                        try:
+                            active_model.unload()
+                        except Exception:  # noqa: BLE001
+                            pass
                     active_model = None
                     active_model_id = None
-                    control_conn.send(Ack(command.type, False, str(exc)))
+                    control_conn.send(
+                        Ack(
+                            command.type,
+                            False,
+                            str(exc),
+                            model_id=command.model_id,
+                            load_time_ms=(time.perf_counter() - load_started) * 1000.0,
+                        )
+                    )
 
             elif command.type == CommandType.UNLOAD_MODEL:
                 if active_model is not None:
                     active_model.unload()
                 active_model = None
                 active_model_id = None
+                _drain(frame_queue)
+                _drain(result_queue)
                 control_conn.send(Ack(command.type, True))
 
             elif command.type == CommandType.PAUSE:
@@ -93,11 +109,14 @@ def worker_main(
             elif command.type == CommandType.STOP:
                 paused = True
                 _drain(frame_queue)
+                _drain(result_queue)
                 control_conn.send(Ack(command.type, True))
 
             elif command.type == CommandType.SHUTDOWN:
                 if active_model is not None:
                     active_model.unload()
+                _drain(frame_queue)
+                _drain(result_queue)
                 control_conn.send(Ack(command.type, True))
                 return
 
@@ -111,18 +130,29 @@ def worker_main(
 
         try:
             result = active_model.infer(frame)
-            result_queue.put(
+            _put_latest(
+                result_queue,
                 InferenceResult(
                     session_id=result.session_id,
                     frame_id=result.frame_id,
-                    model_id=active_model_id or "",
+                    model_id=active_model_id or result.model_id,
                     depth=result.depth,
                     latency_ms=result.latency_ms,
+                    points=result.points,
+                    normals=result.normals,
+                    intrinsics=result.intrinsics,
+                    valid_mask=result.valid_mask,
+                    point_stride=result.point_stride,
                     is_metric=result.is_metric,
-                )
+                    model_name=result.model_name,
+                    precision=result.precision,
+                    vram_used_gib=result.vram_used_gib,
+                    vram_total_gib=result.vram_total_gib,
+                ),
             )
-        except Exception as exc:  # noqa: BLE001 - never let a bad frame kill the worker
-            result_queue.put(
+        except Exception as exc:  # noqa: BLE001 - never let a bad frame kill worker
+            _put_latest(
+                result_queue,
                 InferenceResult(
                     session_id=frame.session_id,
                     frame_id=frame.frame_id,
@@ -130,8 +160,23 @@ def worker_main(
                     depth=None,
                     latency_ms=0.0,
                     error=str(exc),
-                )
+                ),
             )
+
+
+def _put_latest(q: MPQueue, item: InferenceResult) -> None:
+    """Replace any obsolete result before publishing the newest one."""
+    _drain(q)
+    try:
+        q.put_nowait(item)
+    except queue.Full:
+        # A feeder-thread race can make ``empty then put`` briefly report Full.
+        # Drop the old item one more time; never block the CUDA worker.
+        _drain(q)
+        try:
+            q.put_nowait(item)
+        except queue.Full:
+            pass
 
 
 def _drain(q: MPQueue) -> None:

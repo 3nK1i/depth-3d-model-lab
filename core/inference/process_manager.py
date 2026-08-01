@@ -28,7 +28,7 @@ from core.runtime.watchdog import DEFAULT_TIMEOUT_MS, CommandWatchdog
 
 _POLL_INTERVAL_MS = 20
 _FRAME_QUEUE_SIZE = 1
-_RESULT_QUEUE_SIZE = 4
+_RESULT_QUEUE_SIZE = 1
 
 
 class InferenceProcessManager(QObject):
@@ -127,7 +127,14 @@ class InferenceProcessManager(QObject):
         worker to drain its queue and pause."""
         self._send(Command(type=CommandType.STOP, session_id=session_id), watch=True)
 
-    def submit_frame(self, session_id: int, frame_id: int, image) -> bool:
+    def submit_frame(
+        self,
+        session_id: int,
+        frame_id: int,
+        image,
+        *,
+        point_budget: int | None = None,
+    ) -> bool:
         """Submit one frame without ever allowing a queue backlog.
 
         Returns ``True`` only when the frame was accepted. The UI-side
@@ -141,7 +148,9 @@ class InferenceProcessManager(QObject):
         except queue_module.Empty:
             pass
         try:
-            self._frame_queue.put_nowait(FrameRequest(session_id, frame_id, image))
+            self._frame_queue.put_nowait(
+                FrameRequest(session_id, frame_id, image, point_budget=point_budget)
+            )
         except queue_module.Full:
             return False
         return True

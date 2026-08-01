@@ -1,0 +1,5 @@
+# Optional official MoGe-2 runtime.
+# Install inside the same environment as the application:
+#   python -m pip install -r requirements/models-moge2.txt
+
+moge @ git+https://github.com/microsoft/MoGe.git

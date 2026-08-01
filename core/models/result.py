@@ -1,9 +1,9 @@
-"""Unified per-frame geometry result, shared by every model adapter.
+"""Unified per-frame geometry result shared by every model adapter.
 
-Lives worker-process-side. For models that return points/normals/
-intrinsics directly, those fields are populated; for depth-only models,
-they stay None and Phase 4's projection code derives points from depth
-+ a virtual FOV (spec §9).
+The worker-local result can carry either a depth-only prediction or a direct
+point map. Direct point maps may already be regularly sampled to a bounded
+point budget; ``point_stride`` records that sampling so the UI can align RGB,
+depth and masks without guessing.
 """
 
 from __future__ import annotations
@@ -26,6 +26,11 @@ class GeometryResult:
     intrinsics: np.ndarray | None = None
     confidence: np.ndarray | None = None
     valid_mask: np.ndarray | None = None
+    point_stride: int = 1
     latency_ms: float = 0.0
     is_metric: bool = False
     model_id: str = ""
+    model_name: str = ""
+    precision: str = ""
+    vram_used_gib: float | None = None
+    vram_total_gib: float | None = None
