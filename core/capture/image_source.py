@@ -1,9 +1,10 @@
-"""Static image source: loads one file and emits it once.
+"""Static image source: loads one file and keeps it ready until disconnect.
 
 Unlike video/camera/RTSP, there is no acquisition loop — a single frame
-is read and emitted, then the source goes idle. Re-emitting on demand
-(e.g. after a display-mode change) is done via :meth:`resend`, not by
-re-reading the file each time.
+is read and emitted once. The source remains CONNECTED because the loaded
+image can be re-emitted on demand via :meth:`resend` without touching disk.
+An explicit :meth:`~core.capture.base_source.BaseSource.stop` transitions it
+to STOPPED when the user disconnects.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ class ImageSource(BaseSource):
         self._last_image = image
         self._set_status(SourceStatus.CONNECTED)
         self._emit_frame(image)
-        # No loop: a static image needs no ongoing acquisition thread.
-        self._set_status(SourceStatus.STOPPED)
+        # No acquisition loop is needed, but the loaded image remains a
+        # valid connected source until the user explicitly disconnects.
 
     def resend(self) -> None:
         """Re-emit the already-loaded image without touching disk again."""

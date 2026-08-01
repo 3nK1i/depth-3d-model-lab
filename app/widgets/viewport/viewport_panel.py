@@ -26,6 +26,7 @@ layering is what makes both fill the complete surface.
 from __future__ import annotations
 
 import math
+from enum import Enum
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
@@ -51,6 +52,15 @@ OVERLAY_MARGIN = 14
 CARD_MARGIN = 10
 TOOLBAR_WIDTH = 42
 RENDER_CARD_WIDTH = 162
+
+class ViewportStatus(Enum):
+    """Runtime state displayed in the viewport header."""
+
+    IDLE = "IDLE"
+    LIVE = "LIVE"
+    PAUSED = "PAUSED"
+    RESULT_READY = "RESULT READY"
+    ERROR = "ERROR"
 
 
 class _AxisIndicator(QWidget):
@@ -138,6 +148,7 @@ class _ViewportHeader(QWidget):
         )
         self._status_text = QLabel("IDLE")
         self._status_text.setObjectName("viewportStatus")
+        self._status = ViewportStatus.IDLE
 
         row.addWidget(dot)
         row.addWidget(title)
@@ -146,27 +157,36 @@ class _ViewportHeader(QWidget):
         row.addWidget(self._status_text)
         row.addStretch(1)
 
-    def set_live(self, is_live: bool) -> None:
-        if is_live:
-            self._status_dot.setText("●")
-            self._status_dot.setStyleSheet(
-                f"color: {PALETTE.accent}; font-size: 9px; background: transparent;"
-            )
-            self._status_text.setText("LIVE")
-            self._status_text.setStyleSheet(
-                f"color: {PALETTE.viewport_text}; font-size: 11px; "
-                f"font-weight: 600; background: transparent;"
-            )
+    def set_status(self, status: ViewportStatus) -> None:
+        self._status = status
+        if status is ViewportStatus.IDLE:
+            dot, color = "○", PALETTE.viewport_text_dim
+        elif status is ViewportStatus.PAUSED:
+            dot, color = "●", PALETTE.footer_status_amber_fg
+        elif status is ViewportStatus.RESULT_READY:
+            dot, color = "●", PALETTE.footer_status_green_fg
+        elif status is ViewportStatus.ERROR:
+            dot, color = "●", PALETTE.footer_status_red_fg
         else:
-            self._status_dot.setText("○")
-            self._status_dot.setStyleSheet(
-                f"color: {PALETTE.viewport_text_dim}; font-size: 9px; background: transparent;"
-            )
-            self._status_text.setText("IDLE")
-            self._status_text.setStyleSheet(
-                f"color: {PALETTE.viewport_text_dim}; font-size: 11px; "
-                f"font-weight: 600; background: transparent;"
-            )
+            dot, color = "●", PALETTE.accent
+
+        self._status_dot.setText(dot)
+        self._status_dot.setStyleSheet(
+            f"color: {color}; font-size: 9px; background: transparent;"
+        )
+        self._status_text.setText(status.value)
+        self._status_text.setStyleSheet(
+            f"color: {color}; font-size: 11px; "
+            f"font-weight: 600; background: transparent;"
+        )
+
+    def set_live(self, is_live: bool) -> None:
+        """Backward-compatible boolean API."""
+        self.set_status(ViewportStatus.LIVE if is_live else ViewportStatus.IDLE)
+
+    @property
+    def status(self) -> ViewportStatus:
+        return self._status
 
 
 class _ToolOverlay(QFrame):
@@ -721,8 +741,16 @@ class ViewportPanel(QFrame):
     def set_idle_message_visible(self, visible: bool) -> None:
         self._canvas.set_idle_visible(visible)
 
+    def set_status(self, status: ViewportStatus) -> None:
+        self._header.set_status(status)
+
     def set_live(self, is_live: bool) -> None:
+        """Backward-compatible boolean API."""
         self._header.set_live(is_live)
+
+    @property
+    def status(self) -> ViewportStatus:
+        return self._header.status
 
     def set_axis_visible(self, visible: bool) -> None:
         """Show or hide the single bottom-left orientation indicator."""

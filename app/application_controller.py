@@ -212,7 +212,8 @@ class ApplicationController(QObject):
         source.start()
 
     def _on_frame_ready(self, frame: SourceFrame) -> None:
-        self._record_capture_frame()
+        if self.is_stream_source:
+            self._record_capture_frame()
         self._latest_preview_frame = frame
 
         # Static images should appear immediately. Continuous sources are
@@ -231,7 +232,10 @@ class ApplicationController(QObject):
         self._latest_preview_frame = None
         pixmap = ndarray_to_qpixmap(frame.image)
         self._original_view.set_frame(pixmap)
-        self._original_view.set_live(True)
+        if isinstance(self._active_source, ImageSource):
+            self._original_view.set_ready()
+        else:
+            self._original_view.set_live(True)
 
     def _record_capture_frame(self) -> None:
         now = time.monotonic()
@@ -250,12 +254,8 @@ class ApplicationController(QObject):
 
     def _on_status_changed(self, status: SourceStatus) -> None:
         self._source_bar.set_connection_enum(_STATUS_TO_CONNECTION_STATE[status])
-        # STOPPED does not imply "nothing to show": ImageSource reaches
-        # STOPPED right after successfully emitting its one frame (there
-        # is no ongoing loop to keep alive), so clearing "live" there
-        # would immediately hide an image that just loaded correctly.
-        # An explicit disconnect already clears it directly; only a real
-        # ERROR should clear it here.
+        # Explicit disconnect clears the preview directly. A real source
+        # error is the only asynchronous state that should mark it idle.
         if status is SourceStatus.ERROR:
             self._original_view.set_live(False)
 
@@ -280,5 +280,7 @@ class ApplicationController(QObject):
 
     @property
     def capture_fps(self) -> float | None:
-        """Most recently measured source frame rate, or ``None`` until ready."""
+        """Measured FPS for continuous sources; unavailable for images."""
+        if not self.is_stream_source:
+            return None
         return self._last_capture_fps

@@ -9,7 +9,14 @@ import pytest
 
 from app.main_window import MainWindow
 from app.widgets.mode_tabs import AppMode
+from app.widgets.performance_snapshot import PerformanceSnapshot
+from app.widgets.viewport.viewport_panel import ViewportStatus
+from core.capture.base_source import SourceStatus
+from core.capture.camera_source import CameraSource
 from core.capture.frame import SourceFrame
+from core.capture.image_source import ImageSource
+from core.capture.rtsp_source import RtspSource
+from core.capture.video_source import VideoSource
 from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
 from core.runtime.messages import Ack, CommandType, InferenceResult
 from core.runtime.state_machine import ApplicationState
@@ -110,8 +117,10 @@ def test_pause_resume_has_one_valid_state_transition(window, qtbot):
 
     qtbot.mouseClick(toolbar._pause_resume_btn, _left_button())
     assert controller.state_machine.state is ApplicationState.PAUSED
+    assert window._viewport_panel.status is ViewportStatus.PAUSED
     qtbot.mouseClick(toolbar._pause_resume_btn, _left_button())
     assert controller.state_machine.state is ApplicationState.RUNNING
+    assert window._viewport_panel.status is ViewportStatus.LIVE
 
 
 def test_restart_from_model_ready_reuses_loaded_model(window, qtbot, monkeypatch):
@@ -230,6 +239,127 @@ def test_continuous_preview_paints_only_the_latest_frame(window, monkeypatch):
     assert presented_values == []
     window._controller._present_latest_preview()
     assert presented_values == [20]
+
+
+def test_image_preview_is_ready_connected_and_has_no_camera_fps(window, monkeypatch):
+    from PyQt6.QtGui import QPixmap
+
+    source = ImageSource("unused.png")
+    window._controller._active_source = source
+    monkeypatch.setattr(
+        "app.application_controller.ndarray_to_qpixmap",
+        lambda _image: QPixmap(1, 1),
+    )
+
+    window._controller._on_status_changed(SourceStatus.CONNECTED)
+    window._controller._on_frame_ready(
+        SourceFrame(np.zeros((8, 8, 3), dtype=np.uint8), frame_id=0)
+    )
+
+    assert window._source_bar._connection_badge.text() == "CONNECTED"
+    assert window._original_view.activity_text == "READY"
+    assert window._controller.capture_fps is None
+
+
+def test_static_image_finishes_in_result_ready_state(window, qtbot, monkeypatch):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    window._controller._active_source = ImageSource("unused.png")
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    assert controller.state_machine.state is ApplicationState.RUNNING
+
+    monkeypatch.setattr(controller, "_update_geometry", lambda *_a, **_k: 174_801)
+    controller._pending_render = (
+        InferenceResult(
+            session_id=controller._session.active_session_id,
+            frame_id=0,
+            model_id=MOGE2_MODEL_ID,
+            depth=np.ones((24, 32), dtype=np.float32),
+            latency_ms=64.2,
+            vram_used_gib=0.6,
+            vram_total_gib=6.0,
+        ),
+        np.zeros((24, 32, 3), dtype=np.uint8),
+    )
+
+    controller._try_render_latest_result()
+
+    assert controller.state_machine.state is ApplicationState.RESULT_READY
+    assert window._viewport_panel.status is ViewportStatus.RESULT_READY
+    assert window._performance_bar._status_cell._badge.text() == "RESULT READY"
+    assert window._performance_bar._cam_fps._value.text() == "—"
+    assert window._performance_bar._points._value.text() == "174,801"
+    assert toolbar._start_btn.isEnabled()
+    assert not toolbar._pause_resume_btn.isEnabled()
+    assert not toolbar._stop_btn.isEnabled()
+
+
+@pytest.mark.parametrize("source_kind", ["video", "camera", "rtsp"])
+def test_stream_sources_remain_running_after_each_result(
+    window, qtbot, monkeypatch, source_kind
+):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    sources = {
+        "video": VideoSource("unused.mp4"),
+        "camera": CameraSource(0),
+        "rtsp": RtspSource("rtsp://127.0.0.1/example"),
+    }
+    window._controller._active_source = sources[source_kind]
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+
+    monkeypatch.setattr(controller, "_update_geometry", lambda *_a, **_k: 73_728)
+    controller._pending_render = (
+        InferenceResult(
+            session_id=controller._session.active_session_id,
+            frame_id=0,
+            model_id=MOGE2_MODEL_ID,
+            depth=np.ones((24, 32), dtype=np.float32),
+            latency_ms=40.0,
+        ),
+        np.zeros((24, 32, 3), dtype=np.uint8),
+    )
+
+    controller._try_render_latest_result()
+
+    assert controller.state_machine.state is ApplicationState.RUNNING
+    assert window._viewport_panel.status is ViewportStatus.LIVE
+    assert toolbar._pause_resume_btn.isEnabled()
+    assert toolbar._stop_btn.isEnabled()
+
+
+def test_stop_preserves_last_metrics_and_visible_result(window, qtbot):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+
+    window._performance_bar.update_snapshot(
+        PerformanceSnapshot(
+            status="RUNNING",
+            latency_ms=64.2,
+            point_count=174_801,
+            model_name="MoGe-2 ViT-S Normal",
+            precision="FP16",
+        )
+    )
+    controller._point_cloud_canvas._has_points = True
+
+    qtbot.mouseClick(toolbar._stop_btn, _left_button())
+
+    assert controller.state_machine.state is ApplicationState.MODEL_READY
+    assert window._viewport_panel.status is ViewportStatus.RESULT_READY
+    assert window._performance_bar._points._value.text() == "174,801"
+    assert window._performance_bar._latency._value.text() == "64.2 ms"
+    assert window._performance_bar._status_cell._badge.text() == "MODEL READY"
 
 
 def _left_button():

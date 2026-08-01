@@ -30,6 +30,7 @@ class OriginalSourceView(QFrame):
         super().__init__(parent)
         self.setObjectName("panel")
         self._is_live = False
+        self._activity_text = "IDLE"
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -93,10 +94,26 @@ class OriginalSourceView(QFrame):
         self._display.setText("No source connected")
 
     def set_live(self, is_live: bool) -> None:
-        self._is_live = is_live
-        self._live_label.setText("● LIVE" if is_live else "○ IDLE")
+        """Show LIVE for continuous sources, or IDLE when inactive."""
+        if is_live:
+            self._set_activity("LIVE", active=True)
+        else:
+            self._set_activity("IDLE", active=False)
+
+    def set_ready(self) -> None:
+        """Show READY for a loaded static image source."""
+        self._set_activity("READY", active=True)
+
+    def _set_activity(self, text: str, *, active: bool) -> None:
+        self._is_live = text == "LIVE"
+        self._activity_text = text
+        self._live_label.setText(f"● {text}" if active else f"○ {text}")
         self._live_label.setStyleSheet(
             "color: #2ecc71; font-weight: 700; font-size: 11px;"
-            if is_live
+            if active
             else "color: #5f6169; font-size: 11px;"
         )
+
+    @property
+    def activity_text(self) -> str:
+        return self._activity_text

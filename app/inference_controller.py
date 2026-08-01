@@ -23,7 +23,7 @@ from app.widgets.performance_bar import PerformanceBar
 from app.widgets.performance_snapshot import PerformanceSnapshot
 from app.widgets.runtime_toolbar import RuntimeToolbar
 from app.widgets.settings_panel import SettingsPanel
-from app.widgets.viewport.viewport_panel import ViewportPanel
+from app.widgets.viewport.viewport_panel import ViewportPanel, ViewportStatus
 from app.widgets.viewport.vispy_canvas import PointCloudCanvas
 from core.capture.frame import SourceFrame
 from core.geometry.colors import apply_colormap
@@ -56,6 +56,7 @@ _STATE_TO_FOOTER_BADGE: dict[ApplicationState, tuple[BadgeKind, str]] = {
     ApplicationState.SOURCE_READY: (BadgeKind.COMPATIBLE, "SOURCE READY"),
     ApplicationState.LOADING_MODEL: (BadgeKind.LOADING, "LOADING MODEL"),
     ApplicationState.MODEL_READY: (BadgeKind.COMPATIBLE, "MODEL READY"),
+    ApplicationState.RESULT_READY: (BadgeKind.RECOMMENDED, "RESULT READY"),
     ApplicationState.RUNNING: (BadgeKind.RECOMMENDED, "RUNNING"),
     ApplicationState.PAUSED: (BadgeKind.EXPERIMENTAL, "PAUSED"),
     ApplicationState.STOPPING: (BadgeKind.EXPERIMENTAL, "STOPPING"),
@@ -178,7 +179,7 @@ class InferenceController(QObject):
         self._depth_view.clear_frame()
         self._point_cloud_canvas.clear_points()
         self._viewport_panel.invalidate_camera()
-        self._viewport_panel.set_live(False)
+        self._viewport_panel.set_status(ViewportStatus.IDLE)
         self._performance_bar.reset_metrics()
         self._reset_pipeline_runtime()
         self._state_machine.transition_to(ApplicationState.DISCONNECTED)
@@ -187,7 +188,10 @@ class InferenceController(QObject):
     def _on_start_clicked(self) -> None:
         # Stop keeps the worker model resident for a fast restart.
         if (
-            self._state_machine.state == ApplicationState.MODEL_READY
+            self._state_machine.state in (
+                ApplicationState.MODEL_READY,
+                ApplicationState.RESULT_READY,
+            )
             and self._model_loaded
             and self._process_manager.is_running
         ):
@@ -196,7 +200,10 @@ class InferenceController(QObject):
 
         load_state = (
             ApplicationState.SWITCHING_MODEL
-            if self._state_machine.state == ApplicationState.MODEL_READY
+            if self._state_machine.state in (
+                ApplicationState.MODEL_READY,
+                ApplicationState.RESULT_READY,
+            )
             else ApplicationState.LOADING_MODEL
         )
         self._state_machine.transition_to(load_state)
@@ -225,7 +232,10 @@ class InferenceController(QObject):
 
     def _begin_running_session(self) -> None:
         """Start a fresh session using the model already resident in the worker."""
-        if self._state_machine.state != ApplicationState.MODEL_READY:
+        if self._state_machine.state not in (
+            ApplicationState.MODEL_READY,
+            ApplicationState.RESULT_READY,
+        ):
             return
 
         self._session.start_new_session()
@@ -234,7 +244,7 @@ class InferenceController(QObject):
         self._process_manager.resume()
         self._state_machine.transition_to(ApplicationState.RUNNING)
         self._run_started_at = time.monotonic()
-        self._viewport_panel.set_live(True)
+        self._viewport_panel.set_status(ViewportStatus.LIVE)
         self._set_active_model_header()
         self._pipeline_timer.start()
         self._apply_button_states()
@@ -247,7 +257,7 @@ class InferenceController(QObject):
             self._process_manager.pause()
             self._state_machine.transition_to(ApplicationState.PAUSED)
             self._runtime_toolbar.set_paused_label(is_paused=True)
-            self._viewport_panel.set_live(False)
+            self._viewport_panel.set_status(ViewportStatus.PAUSED)
             self._pipeline_timer.stop()
             self._pending_source_frame = None
             self._pending_render = None
@@ -255,7 +265,7 @@ class InferenceController(QObject):
             self._process_manager.resume()
             self._state_machine.transition_to(ApplicationState.RUNNING)
             self._runtime_toolbar.set_paused_label(is_paused=False)
-            self._viewport_panel.set_live(True)
+            self._viewport_panel.set_status(ViewportStatus.LIVE)
             self._set_active_model_header()
             self._pipeline_timer.start()
             self._app_controller.resend_current_frame()
@@ -273,9 +283,13 @@ class InferenceController(QObject):
         self._reset_pipeline_runtime()
         self._process_manager.stop(session_id=stopped_session_id)
         self._runtime_toolbar.set_paused_label(is_paused=False)
-        self._viewport_panel.set_live(False)
-        self._performance_bar.reset_metrics()
-        # Model and last geometry remain loaded/visible for fast restart.
+        self._viewport_panel.set_status(
+            ViewportStatus.RESULT_READY
+            if self._point_cloud_canvas.has_points
+            else ViewportStatus.IDLE
+        )
+        # Preserve the last result and its metrics for inspection. Only an
+        # explicit source disconnect clears the panels and footer.
         self._state_machine.transition_to(ApplicationState.MODEL_READY)
         self._set_active_model_header()
 
@@ -429,7 +443,7 @@ class InferenceController(QObject):
         self._session.invalidate()
         self._reset_pipeline_runtime()
         self._process_manager.pause()
-        self._viewport_panel.set_live(False)
+        self._viewport_panel.set_status(ViewportStatus.ERROR)
         self._settings_panel.set_model_error(
             message,
             label="INFERENCE ERROR",
@@ -465,6 +479,23 @@ class InferenceController(QObject):
         self._last_render_at = time.monotonic()
         self._update_render_fps()
         self._update_performance_snapshot(result, point_count=point_count)
+
+        if not self._app_controller.is_stream_source:
+            self._complete_static_result()
+
+    def _complete_static_result(self) -> None:
+        """Finish one-shot image inference while keeping the result visible."""
+        if self._state_machine.state != ApplicationState.RUNNING:
+            return
+
+        self._session.invalidate()
+        self._reset_pipeline_runtime()
+        self._process_manager.pause()
+        self._runtime_toolbar.set_paused_label(is_paused=False)
+        self._state_machine.transition_to(ApplicationState.RESULT_READY)
+        self._viewport_panel.set_status(ViewportStatus.RESULT_READY)
+        self._set_active_model_header()
+        self._apply_button_states()
 
     # -- Geometry ---------------------------------------------------------
 
@@ -758,6 +789,7 @@ class InferenceController(QObject):
             label="WORKER ERROR",
         )
         self._header.set_status(BadgeKind.NOT_RECOMMENDED, "WORKER ERROR")
+        self._viewport_panel.set_status(ViewportStatus.ERROR)
         self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
         self._apply_button_states()
 

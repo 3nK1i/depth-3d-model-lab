@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import pytest
 
+from PyQt6.QtCore import QPoint, QRect
+
 from app.main_window import MainWindow
 from app.widgets.viewport.viewport_panel import (
     RENDER_CARD_WIDTH,
     TOOLBAR_WIDTH,
     ViewportPanel,
+    ViewportStatus,
 )
 
 
@@ -50,10 +53,19 @@ def test_toolbar_width_within_spec(panel: ViewportPanel):
 
 def test_overlays_sit_inside_the_canvas(panel: ViewportPanel):
     canvas = panel._canvas.geometry()
+
     for overlay in (panel._tools, panel._render_card, panel._header, panel._axis):
-        geo = overlay.geometry()
+        # Overlay widgets live inside small content-sized host widgets, so
+        # overlay.geometry() is expressed in the host's local coordinates.
+        # Map each overlay into ViewportPanel coordinates before comparing it
+        # with the canvas rectangle, which is already panel-relative.
+        top_left = overlay.mapTo(panel, QPoint(0, 0))
+        geo = QRect(top_left, overlay.size())
+
         assert geo.left() >= canvas.left()
         assert geo.right() <= canvas.right()
+        assert geo.top() >= canvas.top()
+        assert geo.bottom() <= canvas.bottom()
 
 
 def test_camera_is_fitted_once_not_per_frame(panel: ViewportPanel):
@@ -66,8 +78,19 @@ def test_camera_is_fitted_once_not_per_frame(panel: ViewportPanel):
     assert panel.camera_initialized is False
 
 
-def test_live_status_toggles(panel: ViewportPanel):
+def test_viewport_runtime_statuses(panel: ViewportPanel):
     panel.set_live(True)
+    assert panel.status is ViewportStatus.LIVE
     assert panel._header._status_text.text() == "LIVE"
+
+    panel.set_status(ViewportStatus.PAUSED)
+    assert panel.status is ViewportStatus.PAUSED
+    assert panel._header._status_text.text() == "PAUSED"
+
+    panel.set_status(ViewportStatus.RESULT_READY)
+    assert panel.status is ViewportStatus.RESULT_READY
+    assert panel._header._status_text.text() == "RESULT READY"
+
     panel.set_live(False)
+    assert panel.status is ViewportStatus.IDLE
     assert panel._header._status_text.text() == "IDLE"

@@ -19,6 +19,7 @@ class ApplicationState(Enum):
     SOURCE_READY = "source_ready"
     LOADING_MODEL = "loading_model"
     MODEL_READY = "model_ready"
+    RESULT_READY = "result_ready"
     RUNNING = "running"
     PAUSED = "paused"
     STOPPING = "stopping"
@@ -58,8 +59,19 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.SHUTTING_DOWN,
         }
     ),
+    ApplicationState.RESULT_READY: frozenset(
+        {
+            ApplicationState.RUNNING,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.DISCONNECTED,
+            ApplicationState.RECONNECTING,
+            ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
+        }
+    ),
     ApplicationState.RUNNING: frozenset(
         {
+            ApplicationState.RESULT_READY,
             ApplicationState.PAUSED,
             ApplicationState.STOPPING,
             ApplicationState.RECONNECTING,
@@ -151,11 +163,16 @@ def button_states_for(state: ApplicationState) -> ButtonStates:
         ApplicationState.SOURCE_READY,
         ApplicationState.LOADING_MODEL,
         ApplicationState.MODEL_READY,
+        ApplicationState.RESULT_READY,
     ):
         return ButtonStates(
             connect_enabled=False,
             disconnect_enabled=True,
-            start_enabled=(state == ApplicationState.MODEL_READY or state == ApplicationState.SOURCE_READY),
+            start_enabled=state in (
+                ApplicationState.SOURCE_READY,
+                ApplicationState.MODEL_READY,
+                ApplicationState.RESULT_READY,
+            ),
             pause_resume_enabled=False,
             stop_enabled=False,
         )
