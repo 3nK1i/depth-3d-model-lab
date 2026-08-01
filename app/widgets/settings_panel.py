@@ -69,6 +69,17 @@ class SettingsPanel(QFrame):
     compute_profile_changed = pyqtSignal(object)  # ResolvedProfile
     model_selection_changed = pyqtSignal(str)
 
+    # Live viewport/depth settings. These signals let the controller refresh
+    # an already displayed static result immediately, without running the AI
+    # model again.
+    depth_visual_changed = pyqtSignal()
+    geometry_settings_changed = pyqtSignal()
+    temporal_smoothing_changed = pyqtSignal(float)
+    background_changed = pyqtSignal(str)
+    grid_visibility_changed = pyqtSignal(bool)
+    axes_visibility_changed = pyqtSignal(bool)
+    point_budget_changed = pyqtSignal(int)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -193,21 +204,29 @@ class SettingsPanel(QFrame):
         card = CollapsibleSettingsCard("DEPTH SETTINGS", accent_marker=True)
 
         self._colormap = SettingsComboBox(["Turbo", "Inferno", "Magma", "Viridis", "Greyscale"])
+        self._colormap.currentTextChanged.connect(
+            lambda _text: self.depth_visual_changed.emit()
+        )
         card.add_control_row("Colormap", self._colormap)
 
         self._min_depth_slider = SettingsSlider(0, 100, 1)
         min_box = ValueBox()
         self._bindings.append(SliderValueBinding(self._min_depth_slider, min_box, _fmt_metres))
+        self._min_depth_slider.valueChanged.connect(self._emit_depth_and_geometry_changed)
         card.add_slider_row("Min Depth", self._min_depth_slider, min_box)
 
         self._max_depth_slider = SettingsSlider(0, 200, 80)
         max_box = ValueBox()
         self._bindings.append(SliderValueBinding(self._max_depth_slider, max_box, _fmt_metres))
+        self._max_depth_slider.valueChanged.connect(self._emit_depth_and_geometry_changed)
         card.add_slider_row("Max Depth", self._max_depth_slider, max_box)
 
         self._edge_filter_slider = SettingsSlider(0, 100, 60)
         edge_box = ValueBox()
         self._bindings.append(SliderValueBinding(self._edge_filter_slider, edge_box, _fmt_ratio))
+        self._edge_filter_slider.valueChanged.connect(
+            lambda _value: self.geometry_settings_changed.emit()
+        )
         card.add_slider_row("Edge Filtering", self._edge_filter_slider, edge_box)
 
         self._temporal_smoothing_slider = SettingsSlider(0, 100, 40)
@@ -215,9 +234,23 @@ class SettingsPanel(QFrame):
         self._bindings.append(
             SliderValueBinding(self._temporal_smoothing_slider, smoothing_box, _fmt_ratio)
         )
+        self._temporal_smoothing_slider.valueChanged.connect(
+            lambda value: self.temporal_smoothing_changed.emit(value / 100.0)
+        )
+        self._temporal_smoothing_slider.setToolTip(
+            "Exponential smoothing for consecutive video/camera/RTSP depth and "
+            "geometry maps. Static images are never temporally blended."
+        )
         card.add_slider_row("Temporal Smoothing", self._temporal_smoothing_slider, smoothing_box)
 
         self._bg_removal = make_toggle(True)
+        self._bg_removal.setToolTip(
+            "When enabled, use the model validity mask and the selected min/max "
+            "depth range to remove invalid and out-of-range geometry."
+        )
+        self._bg_removal.toggled_changed.connect(
+            lambda _checked: self._emit_depth_and_geometry_changed()
+        )
         card.add_toggle_row("Background Removal", self._bg_removal)
         return card
 
@@ -225,20 +258,42 @@ class SettingsPanel(QFrame):
         card = CollapsibleSettingsCard("RENDER SETTINGS", accent_marker=True)
 
         self._background = SettingsComboBox(["Dark", "Black", "White", "Transparent"])
+        self._background.currentTextChanged.connect(
+            lambda text: self.background_changed.emit(text.lower())
+        )
         card.add_control_row("Background", self._background)
 
         self._grid_toggle = make_toggle(True)
+        self._grid_toggle.toggled_changed.connect(self.grid_visibility_changed.emit)
         card.add_toggle_row("Grid", self._grid_toggle)
 
         self._axes_toggle = make_toggle(True)
+        self._axes_toggle.toggled_changed.connect(self.axes_visibility_changed.emit)
         card.add_toggle_row("Axes", self._axes_toggle)
 
         self._point_budget = SettingsComboBox(["500K", "1M", "250K", "100K"])
+        self._point_budget.currentIndexChanged.connect(self._emit_point_budget_changed)
         card.add_control_row("Point Budget", self._point_budget)
 
+        # The Qt/OpenGL swap interval is selected when the SceneCanvas is
+        # constructed. Runtime switching is deliberately not exposed because
+        # recreating the canvas would destroy the live camera/visual state.
         self._vsync_toggle = make_toggle(True)
+        self._vsync_toggle.setEnabled(False)
+        self._vsync_toggle.setToolTip(
+            "VSync is enabled when the VisPy canvas is created. Runtime switching "
+            "is disabled to preserve the OpenGL context and current 3D view."
+        )
         card.add_toggle_row("VSync", self._vsync_toggle)
         return card
+
+    def _emit_depth_and_geometry_changed(self, _value: object | None = None) -> None:
+        self.depth_visual_changed.emit()
+        self.geometry_settings_changed.emit()
+
+    def _emit_point_budget_changed(self, _index: int) -> None:
+        self.point_budget_changed.emit(self.point_budget)
+        self.geometry_settings_changed.emit()
 
     # -- Active-model lifecycle -------------------------------------------
 
@@ -363,7 +418,9 @@ class SettingsPanel(QFrame):
 
         live_cap = _LIVE_POINT_BUDGET_CAPS[resolved.effective]
         self._point_budget.setToolTip(
-            "Maximum point count for a static image. "
+            "Maximum point count for a static image. Lower budgets resample the "
+            "cached result immediately; requesting more points than the worker "
+            "returned takes effect on the next inference. "
             f"Continuous video/camera/RTSP rendering is safety-capped at "
             f"{_point_budget_label(live_cap)} for the "
             f"{resolved.effective.display_name} profile to keep the UI responsive."
@@ -433,6 +490,10 @@ class SettingsPanel(QFrame):
     @property
     def background_removal_enabled(self) -> bool:
         return self._bg_removal.isChecked()
+
+    @property
+    def background_name(self) -> str:
+        return self._background.currentText().strip().lower()
 
     @property
     def grid_visible(self) -> bool:

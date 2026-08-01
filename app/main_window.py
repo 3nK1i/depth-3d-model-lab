@@ -49,8 +49,12 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()
+        self._viewport_focus_mode = False
+        self._saved_main_splitter_sizes: list[int] | None = None
+        self._saved_left_splitter_sizes: list[int] | None = None
 
         self._build_ui()
+        self._viewport_panel.fullscreen_requested.connect(self._toggle_viewport_focus)
         self._sync_header_hardware()
 
         self._controller = ApplicationController(
@@ -64,6 +68,9 @@ class MainWindow(QMainWindow):
             self._depth_view,
             self._viewport_panel,
             self._settings_panel,
+        )
+        self._inference_controller.viewport_escape_requested.connect(
+            self._exit_viewport_focus
         )
         self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
         self._restore_layout()
@@ -87,7 +94,8 @@ class MainWindow(QMainWindow):
         self._mode_tabs = ModeTabs()
         outer.addWidget(self._mode_tabs)
 
-        outer.addWidget(self._build_page(), stretch=1)
+        self._page = self._build_page()
+        outer.addWidget(self._page, stretch=1)
 
     def _build_page(self) -> QWidget:
         """The Live 3D page: source bar, main body and footer as siblings.
@@ -104,7 +112,8 @@ class MainWindow(QMainWindow):
         )
         layout.setSpacing(PAGE_SPACING)
 
-        layout.addWidget(self._build_control_row(), stretch=0)
+        self._control_row = self._build_control_row()
+        layout.addWidget(self._control_row, stretch=0)
         layout.addWidget(self._build_main_splitter(), stretch=1)
 
         self._performance_bar = PerformanceBar()
@@ -191,6 +200,63 @@ class MainWindow(QMainWindow):
         )
         self._header.update_cuda_status(cuda_label)
 
+    # -- Viewport focus mode ----------------------------------------------
+
+    def _toggle_viewport_focus(self) -> None:
+        self._set_viewport_focus_mode(not self._viewport_focus_mode)
+
+    def _exit_viewport_focus(self) -> None:
+        if self._viewport_focus_mode:
+            self._set_viewport_focus_mode(False)
+
+    def _set_viewport_focus_mode(self, enabled: bool) -> None:
+        """Maximize only the 3D viewport while preserving the window state.
+
+        This is an in-window focus mode rather than an operating-system
+        fullscreen toggle. It avoids recreating the VisPy/OpenGL surface and
+        restores the user's splitter proportions exactly.
+        """
+        enabled = bool(enabled)
+        if enabled == self._viewport_focus_mode:
+            self._viewport_panel.set_fullscreen_active(enabled)
+            return
+
+        if enabled:
+            self._saved_main_splitter_sizes = self._main_splitter.sizes()
+            self._saved_left_splitter_sizes = self._left_splitter.sizes()
+
+            self._header.hide()
+            self._mode_tabs.hide()
+            self._control_row.hide()
+            self._top_splitter.hide()
+            self._settings_panel.hide()
+            self._performance_bar.hide()
+
+            self._main_splitter.setSizes([1, 0])
+            self._left_splitter.setSizes([0, 1])
+        else:
+            self._header.show()
+            self._mode_tabs.show()
+            self._control_row.show()
+            self._top_splitter.show()
+            self._settings_panel.show()
+            self._performance_bar.show()
+
+            if self._saved_main_splitter_sizes:
+                self._main_splitter.setSizes(self._saved_main_splitter_sizes)
+            if self._saved_left_splitter_sizes:
+                self._left_splitter.setSizes(self._saved_left_splitter_sizes)
+
+        self._viewport_focus_mode = enabled
+        self._viewport_panel.set_fullscreen_active(enabled)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._viewport_focus_mode and event.key() == Qt.Key.Key_Escape:
+            self._set_viewport_focus_mode(False)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # -- Persistence ------------------------------------------------------
 
     def _restore_layout(self) -> None:
@@ -222,6 +288,8 @@ class MainWindow(QMainWindow):
         self._settings.sync()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override signature
+        if self._viewport_focus_mode:
+            self._set_viewport_focus_mode(False)
         self._inference_controller.shutdown()
         self._controller.disconnect_active_source()
         self._save_layout()

@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import time
 from collections import OrderedDict
+from dataclasses import replace
 
 import numpy as np
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
 
 from app.application_controller import ApplicationController
@@ -30,6 +31,7 @@ from core.geometry.colors import apply_colormap
 from core.geometry.filtering import edge_filter_mask, remove_invalid, valid_mask
 from core.geometry.projection import depth_to_points
 from core.geometry.sampling import adaptive_stride, enforce_point_budget, stride_for_point_budget
+from core.geometry.temporal import TemporalGeometrySmoother
 from core.inference.process_manager import InferenceProcessManager
 from core.models.catalog import (
     MOGE2_DISPLAY_LABEL,
@@ -78,6 +80,8 @@ def _ndarray_to_qpixmap_rgb(rgb: np.ndarray) -> QPixmap:
 
 class InferenceController(QObject):
     """Drive model lifecycle, live backpressure, and geometry rendering."""
+
+    viewport_escape_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -129,9 +133,21 @@ class InferenceController(QObject):
         self._submitted_at_by_frame: "OrderedDict[int, float]" = OrderedDict()
         self._source_timestamp_by_frame: "OrderedDict[int, float]" = OrderedDict()
 
+        # The most recently rendered result is retained so display controls can
+        # refresh a static image immediately without another model inference.
+        self._cached_raw_result: InferenceResult | None = None
+        self._cached_render_result: InferenceResult | None = None
+        self._cached_rgb: np.ndarray | None = None
+        self._temporal_smoother = TemporalGeometrySmoother()
+
         self._pipeline_timer = QTimer(self)
         self._pipeline_timer.setInterval(_PIPELINE_TICK_MS)
         self._pipeline_timer.timeout.connect(self._on_pipeline_tick)
+
+        self._settings_refresh_timer = QTimer(self)
+        self._settings_refresh_timer.setSingleShot(True)
+        self._settings_refresh_timer.setInterval(40)
+        self._settings_refresh_timer.timeout.connect(self._rerender_cached_result)
 
         self._uptime_timer = QTimer(self)
         self._uptime_timer.setInterval(500)
@@ -140,6 +156,10 @@ class InferenceController(QObject):
         # Created once; only its data buffers are updated per result.
         self._point_cloud_canvas = PointCloudCanvas(self)
         self._viewport_panel.attach_canvas(self._point_cloud_canvas.native)
+        self._point_cloud_canvas.escape_pressed.connect(
+            self.viewport_escape_requested.emit
+        )
+        self._initialize_viewport_controls()
 
         self._state_machine.state_changed.connect(self._on_state_changed)
         self._process_manager.result_ready.connect(self._on_result_ready)
@@ -154,8 +174,45 @@ class InferenceController(QObject):
         runtime_toolbar.stop_clicked.connect(self._on_stop_clicked)
         viewport_panel.reset_view_clicked.connect(self._on_reset_view_clicked)
         viewport_panel.fit_requested.connect(self._on_fit_view_clicked)
+        viewport_panel.tool_changed.connect(self._point_cloud_canvas.set_interaction_mode)
+        viewport_panel.point_size_changed.connect(self._point_cloud_canvas.set_point_size)
+        viewport_panel.smoothing_changed.connect(self._point_cloud_canvas.set_smoothing)
+        viewport_panel.density_changed.connect(self._schedule_cached_geometry_refresh)
+        viewport_panel.render_mode_changed.connect(self._schedule_cached_geometry_refresh)
+
+        settings_panel.depth_visual_changed.connect(self._schedule_cached_geometry_refresh)
+        settings_panel.geometry_settings_changed.connect(self._schedule_cached_geometry_refresh)
+        settings_panel.temporal_smoothing_changed.connect(self._on_temporal_smoothing_changed)
+        settings_panel.background_changed.connect(self._on_background_changed)
+        settings_panel.grid_visibility_changed.connect(self._point_cloud_canvas.set_grid_visible)
+        settings_panel.axes_visibility_changed.connect(viewport_panel.set_axis_visible)
+        settings_panel.point_budget_changed.connect(self._schedule_cached_geometry_refresh)
 
         self._apply_button_states()
+
+    def _initialize_viewport_controls(self) -> None:
+        """Apply the visible control state to the freshly created canvas."""
+        self._point_cloud_canvas.set_interaction_mode(self._viewport_panel.active_tool)
+        self._point_cloud_canvas.set_point_size(self._viewport_panel.point_size)
+        self._point_cloud_canvas.set_smoothing(self._viewport_panel.smoothing)
+        self._on_background_changed(self._settings_panel.background_name)
+        self._point_cloud_canvas.set_grid_visible(self._settings_panel.grid_visible)
+        self._viewport_panel.set_axis_visible(self._settings_panel.axes_visible)
+        self._viewport_panel.set_surface_normals_available(False)
+
+    def _on_background_changed(self, background: str) -> None:
+        self._point_cloud_canvas.set_background(background)
+        self._viewport_panel.set_light_background(background == "white")
+
+    def _schedule_cached_geometry_refresh(self, *_args: object) -> None:
+        if self._cached_render_result is None and self._cached_raw_result is None:
+            return
+        self._settings_refresh_timer.start()
+
+    def _on_temporal_smoothing_changed(self, _strength: float) -> None:
+        # Do not repeatedly blend the already displayed frame. The new
+        # strength takes effect on the next continuous-source result.
+        self._temporal_smoother.reset()
 
     # -- Runtime toolbar handlers ----------------------------------------
 
@@ -178,6 +235,7 @@ class InferenceController(QObject):
         self._requested_model_id = None
         self._active_model_id = None
         self._active_model_metadata.clear()
+        self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_unloaded()
 
         self._app_controller.disconnect_active_source()
@@ -186,6 +244,7 @@ class InferenceController(QObject):
         self._viewport_panel.invalidate_camera()
         self._viewport_panel.set_status(ViewportStatus.IDLE)
         self._performance_bar.reset_metrics()
+        self._clear_cached_geometry()
         self._reset_pipeline_runtime()
         self._state_machine.transition_to(ApplicationState.DISCONNECTED)
         self._apply_button_states()
@@ -244,6 +303,7 @@ class InferenceController(QObject):
             return
 
         self._session.start_new_session()
+        self._clear_cached_geometry()
         self._reset_pipeline_runtime()
         self._viewport_panel.invalidate_camera()
         self._process_manager.resume()
@@ -422,6 +482,11 @@ class InferenceController(QObject):
         if ack.warmup_time_ms is not None:
             self._active_model_metadata["warmup_time_ms"] = ack.warmup_time_ms
         self._settings_panel.set_model_loaded(self._active_model_metadata)
+        outputs = self._active_model_metadata.get("outputs", {})
+        normals_available = bool(
+            isinstance(outputs, dict) and outputs.get("normals", False)
+        )
+        self._viewport_panel.set_surface_normals_available(normals_available)
         self._set_active_model_header()
 
         if self._state_machine.state in (
@@ -436,6 +501,7 @@ class InferenceController(QObject):
         self._model_loaded = False
         self._active_model_id = None
         self._active_model_metadata.clear()
+        self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_error(message, label="LOAD FAILED")
         self._header.set_status(BadgeKind.NOT_RECOMMENDED, "LOAD FAILED")
 
@@ -522,8 +588,10 @@ class InferenceController(QObject):
 
         result, rgb = self._pending_render
         self._pending_render = None
+        self._cached_raw_result = result
+        self._cached_rgb = rgb
         try:
-            geometry = self._update_geometry(result, rgb)
+            geometry = self._update_geometry(result, rgb, apply_temporal=True)
             if isinstance(geometry, int):  # compatibility with focused test doubles
                 geometry = GeometryTiming(point_count=geometry)
         except Exception as exc:  # noqa: BLE001 - renderer errors must be visible
@@ -577,21 +645,39 @@ class InferenceController(QObject):
         self,
         result: InferenceResult,
         rgb: np.ndarray | None,
+        *,
+        apply_temporal: bool = True,
     ) -> GeometryTiming:
         """Render geometry and return measured UI-side stage timings."""
         total_started = time.perf_counter()
-        depth = result.depth
+        effective_result = self._prepare_render_result(
+            result,
+            apply_temporal=apply_temporal,
+        )
+        self._cached_render_result = effective_result
+
+        depth = effective_result.depth
         if depth is None or depth.ndim != 2:
             raise ValueError("Expected a two-dimensional depth map.")
 
         settings = self._settings_panel
+        near = settings.min_depth_m
+        far = max(settings.max_depth_m, near + 0.1)
         depth_started = time.perf_counter()
-        full_valid_mask = _aligned_mask(result.valid_mask, depth.shape)
+
+        finite_depth_mask = np.isfinite(depth) & (depth > 0.0)
+        model_valid_mask = _aligned_mask(effective_result.valid_mask, depth.shape)
+        full_valid_mask = finite_depth_mask.copy()
+        if settings.background_removal_enabled:
+            if model_valid_mask is not None:
+                full_valid_mask &= model_valid_mask
+            full_valid_mask &= (depth >= near) & (depth <= far)
+
         depth_rgb = apply_colormap(
             depth,
             colormap_name=settings.colormap_name,
-            near=settings.min_depth_m,
-            far=settings.max_depth_m,
+            near=near,
+            far=far,
             valid_mask=full_valid_mask,
         )
         self._depth_view.set_depth_frame(_ndarray_to_qpixmap_rgb(depth_rgb))
@@ -603,12 +689,16 @@ class InferenceController(QObject):
             if self._app_controller.is_stream_source
             else settings.point_budget
         )
-        density_ratio = max(self._viewport_panel.density_ratio, 0.02)
-        density_stride = max(1, round(1.0 / density_ratio))
+        density_ratio = float(np.clip(self._viewport_panel.density_ratio, 0.01, 1.0))
+        # Density is enforced after validity/edge filtering so 50% means
+        # approximately half of the points that would otherwise be rendered.
+        # The input stride remains available for temporary interaction-time
+        # decimation and live point-budget protection.
+        density_stride = 1
 
-        if result.points is not None:
+        if effective_result.points is not None:
             points_grid, sampled_depth, sampled_colors, sampled_mask = self._direct_geometry_inputs(
-                result,
+                effective_result,
                 rgb,
                 depth_rgb,
                 full_valid_mask,
@@ -616,7 +706,7 @@ class InferenceController(QObject):
             )
         else:
             points_grid, sampled_depth, sampled_colors, sampled_mask = self._depth_geometry_inputs(
-                result,
+                effective_result,
                 rgb,
                 depth_rgb,
                 full_valid_mask,
@@ -634,10 +724,11 @@ class InferenceController(QObject):
             sampled_colors,
             np.where(mask, sampled_depth, 0.0),
         )
+        density_budget = max(1, int(round(flat_points.shape[0] * density_ratio)))
         flat_points, flat_colors = enforce_point_budget(
             flat_points,
             flat_colors,
-            point_budget,
+            min(point_budget, density_budget),
         )
 
         geometry_cpu_ms = (time.perf_counter() - geometry_started) * 1000.0
@@ -663,6 +754,80 @@ class InferenceController(QObject):
             canvas_update_ms=canvas_update_ms,
             total_ms=(time.perf_counter() - total_started) * 1000.0,
         )
+
+    def _prepare_render_result(
+        self,
+        result: InferenceResult,
+        *,
+        apply_temporal: bool,
+    ) -> InferenceResult:
+        if (
+            not apply_temporal
+            or not self._app_controller.is_stream_source
+            or result.depth is None
+        ):
+            return result
+
+        signature = (
+            result.model_id,
+            result.depth.shape,
+            max(1, int(result.point_stride)),
+            None if result.points is None else result.points.shape,
+            None if result.normals is None else result.normals.shape,
+        )
+        smoothed = self._temporal_smoother.apply(
+            depth=result.depth,
+            points=result.points,
+            normals=result.normals,
+            strength=self._settings_panel.temporal_smoothing,
+            signature=signature,
+        )
+        return replace(
+            result,
+            depth=smoothed.depth,
+            points=smoothed.points,
+            normals=smoothed.normals,
+        )
+
+    def _rerender_cached_result(self) -> None:
+        """Refresh the visible depth/geometry using cached model outputs."""
+        result = self._cached_render_result or self._cached_raw_result
+        if result is None or result.depth is None:
+            return
+
+        try:
+            geometry = self._update_geometry(
+                result,
+                self._cached_rgb,
+                apply_temporal=False,
+            )
+        except Exception:  # noqa: BLE001 - retain the last valid visual
+            logger.exception("Cached geometry refresh failed")
+            return
+
+        point_budget = (
+            self._settings_panel.live_point_budget
+            if self._app_controller.is_stream_source
+            else self._settings_panel.point_budget
+        )
+        snapshot = replace(
+            self._performance_bar.snapshot,
+            point_count=geometry.point_count,
+            geometry_ms=geometry.total_ms,
+            geometry_cpu_ms=geometry.geometry_cpu_ms,
+            depth_view_ms=geometry.depth_view_ms,
+            canvas_update_ms=geometry.canvas_update_ms,
+            point_stride=max(1, int(result.point_stride)),
+            point_budget=point_budget,
+        )
+        self._performance_bar.update_snapshot(snapshot)
+
+    def _clear_cached_geometry(self) -> None:
+        self._settings_refresh_timer.stop()
+        self._cached_raw_result = None
+        self._cached_render_result = None
+        self._cached_rgb = None
+        self._temporal_smoother.reset()
 
     def _direct_geometry_inputs(
         self,
@@ -943,6 +1108,7 @@ class InferenceController(QObject):
         self._last_inference_fps = None
         self._last_render_fps = None
         self._counters.reset()
+        self._temporal_smoother.reset()
 
     # -- Worker recovery --------------------------------------------------
 
@@ -954,6 +1120,8 @@ class InferenceController(QObject):
         self._model_loaded = False
         self._active_model_id = None
         self._active_model_metadata.clear()
+        self._viewport_panel.set_surface_normals_available(False)
+        self._clear_cached_geometry()
         self._reset_pipeline_runtime()
         self._settings_panel.set_model_error(
             "The inference worker process crashed.",
@@ -970,7 +1138,9 @@ class InferenceController(QObject):
         self._model_loaded = False
         self._active_model_id = None
         self._active_model_metadata.clear()
+        self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_unloaded()
+        self._clear_cached_geometry()
         self._reset_pipeline_runtime()
 
     # -- Button state application ----------------------------------------
@@ -998,6 +1168,7 @@ class InferenceController(QObject):
         if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
             self._stop_inference()
         self._pipeline_timer.stop()
+        self._settings_refresh_timer.stop()
         self._process_manager.shutdown()
         self._settings_panel.set_model_unloaded()
         self._point_cloud_canvas.close()

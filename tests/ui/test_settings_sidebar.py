@@ -101,3 +101,8 @@ def test_card_collapses_and_expands(sidebar, qtbot):
     assert not card._body.isVisible()
     card._header._on_clicked()
     assert card._body.isVisible()
+
+def test_vsync_is_enabled_at_canvas_creation_and_not_runtime_toggleable(sidebar):
+    assert sidebar._vsync_toggle.isChecked()
+    assert not sidebar._vsync_toggle.isEnabled()
+    assert "VisPy canvas is created" in sidebar._vsync_toggle.toolTip()

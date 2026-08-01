@@ -59,6 +59,13 @@ def _moge_ack() -> Ack:
             "is_metric": True,
             "precision": "FP16",
             "device": "cuda:0",
+            "outputs": {
+                "depth": True,
+                "points": True,
+                "normals": True,
+                "intrinsics": True,
+                "valid_mask": True,
+            },
         },
         load_time_ms=100.0,
         model_load_time_ms=70.0,

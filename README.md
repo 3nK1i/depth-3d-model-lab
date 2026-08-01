@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-3 are implemented:
+Phases 1-4 and Phase 5 Steps 1-3.1 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -17,6 +17,9 @@ Phases 1-4 and Phase 5 Steps 1-3 are implemented:
 - Sliding-window capture, inference and 3D update rates
 - Explicit CUDA allocated, reserved, peak and device-wide VRAM telemetry
 - Model load/warm-up timing and latest-frame drop/backpressure diagnostics
+- Functional Select, Orbit, Pan, Zoom, Fit and viewport-focus controls
+- Immediate RGB/depth/normal recoloring and point-style updates from cached results
+- Live temporal smoothing, background removal and immediate render-setting updates
 
 ## Requirements
 
@@ -60,6 +63,21 @@ python main.py
 Select a source, choose **MoGe-2** in the MODEL card, connect the source, then press **Start Inference**. The optional **Development Mock** remains available when testing the UI without model weights.
 
 Hover over the footer metrics for exact definitions and timing/VRAM breakdowns. The **LATENCY** value is end-to-end from worker submission to the completed depth/3D update; the tooltip also shows the model forward pass, worker preprocessing/postprocessing, UI geometry time and source-to-render age. The **VRAM USAGE** value is PyTorch reserved memory, with allocated, peak-reserved and device-wide usage listed in its tooltip. The MODEL info button shows checkpoint, device, precision, token count, load time and warm-up time.
+
+## Viewport controls
+
+The left viewport toolbar provides explicit **Select**, **Orbit**, **Pan**, **Zoom**, **Fit** and **Maximize viewport** actions. Press `Esc` to leave viewport-focus mode.
+
+The floating render card updates an already displayed static result without rerunning MoGe-2:
+
+- **RGB Points**, **Depth Colors** and **Surface Normals** recolor immediately
+- **Point Size** and marker **Smoothing** update the current VisPy visual immediately
+- **Density** resamples the cached point cloud immediately
+- **Reset View** restores and fits the camera
+
+**Mesh (Poisson)** remains disabled until the dedicated reconstruction phase adds threaded mesh generation. **VSync** is enabled when the VisPy canvas is created and is shown as a locked setting because changing the swap interval would require recreating the OpenGL surface.
+
+The right sidebar's colormap, depth range, edge filtering, background removal, background color, grid, axes and point budget all apply immediately to the cached result. Temporal smoothing affects only consecutive video, camera and RTSP frames; static images are never temporally blended.
 
 ## Tests
 

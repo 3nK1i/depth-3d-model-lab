@@ -139,8 +139,9 @@ class _ViewportHeader(QWidget):
 
         dot = QLabel("●")
         dot.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px; background: transparent;")
-        title = QLabel("3D VIEWPORT")
-        title.setObjectName("viewportTitle")
+        self._title = QLabel("3D VIEWPORT")
+        self._title.setObjectName("viewportTitle")
+        self._light_background = False
 
         self._status_dot = QLabel("○")
         self._status_dot.setStyleSheet(
@@ -151,7 +152,7 @@ class _ViewportHeader(QWidget):
         self._status = ViewportStatus.IDLE
 
         row.addWidget(dot)
-        row.addWidget(title)
+        row.addWidget(self._title)
         row.addSpacing(10)
         row.addWidget(self._status_dot)
         row.addWidget(self._status_text)
@@ -160,7 +161,8 @@ class _ViewportHeader(QWidget):
     def set_status(self, status: ViewportStatus) -> None:
         self._status = status
         if status is ViewportStatus.IDLE:
-            dot, color = "○", PALETTE.viewport_text_dim
+            dot = "○"
+            color = "#5a6470" if self._light_background else PALETTE.viewport_text_dim
         elif status is ViewportStatus.PAUSED:
             dot, color = "●", PALETTE.footer_status_amber_fg
         elif status is ViewportStatus.RESULT_READY:
@@ -180,6 +182,15 @@ class _ViewportHeader(QWidget):
             f"font-weight: 600; background: transparent;"
         )
 
+    def set_light_background(self, enabled: bool) -> None:
+        self._light_background = bool(enabled)
+        title_color = "#20242a" if self._light_background else PALETTE.viewport_text
+        self._title.setStyleSheet(
+            f"color: {title_color}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.5px; background: transparent;"
+        )
+        self.set_status(self._status)
+
     def set_live(self, is_live: bool) -> None:
         """Backward-compatible boolean API."""
         self.set_status(ViewportStatus.LIVE if is_live else ViewportStatus.IDLE)
@@ -197,11 +208,12 @@ class _ToolOverlay(QFrame):
     fullscreen_requested = pyqtSignal()
 
     TOOLS = (
-        ("cursor", "select", "Select"),
-        ("orbit", "orbit", "Rotate / Orbit"),
-        ("pan", "pan", "Pan"),
-        ("zoom", "zoom", "Zoom"),
+        ("cursor", "select", "Select / lock camera"),
+        ("orbit", "orbit", "Rotate / orbit with left drag"),
+        ("pan", "pan", "Pan with left drag"),
+        ("zoom", "zoom", "Zoom with vertical drag"),
     )
+    DEFAULT_TOOL = "orbit"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -215,24 +227,43 @@ class _ToolOverlay(QFrame):
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        first: IconButton | None = None
+        self._tool_buttons: dict[str, IconButton] = {}
         for icon_name, tool_id, tooltip in self.TOOLS:
             btn = IconButton(icon_name, size=32, icon_size=16, tooltip=tooltip, checkable=True)
             btn.clicked.connect(lambda _c, t=tool_id: self.tool_changed.emit(t))
             self._group.addButton(btn)
+            self._tool_buttons[tool_id] = btn
             col.addWidget(btn)
-            if first is None:
-                first = btn
-        if first is not None:
-            first.setChecked(True)
+        self._tool_buttons[self.DEFAULT_TOOL].setChecked(True)
 
         fit_btn = IconButton("fit", size=32, icon_size=16, tooltip="Fit scene to view")
         fit_btn.clicked.connect(self.fit_requested.emit)
         col.addWidget(fit_btn)
 
-        full_btn = IconButton("fullscreen", size=32, icon_size=16, tooltip="Full screen")
-        full_btn.clicked.connect(self.fullscreen_requested.emit)
-        col.addWidget(full_btn)
+        self._fullscreen_btn = IconButton(
+            "fullscreen",
+            size=32,
+            icon_size=16,
+            tooltip="Maximize the 3D viewport",
+            checkable=True,
+        )
+        self._fullscreen_btn.clicked.connect(self.fullscreen_requested.emit)
+        col.addWidget(self._fullscreen_btn)
+
+    @property
+    def active_tool(self) -> str:
+        for tool_id, button in self._tool_buttons.items():
+            if button.isChecked():
+                return tool_id
+        return self.DEFAULT_TOOL
+
+    def set_fullscreen_active(self, active: bool) -> None:
+        self._fullscreen_btn.setChecked(active)
+        self._fullscreen_btn.setToolTip(
+            "Restore the full application layout"
+            if active
+            else "Maximize the 3D viewport"
+        )
 
 
 class _CardSlider(QWidget):
@@ -293,6 +324,9 @@ class _RenderModeCard(QFrame):
     """Compact floating render-mode card (top-right, sized to its content)."""
 
     render_mode_changed = pyqtSignal(str)
+    point_size_changed = pyqtSignal(float)
+    density_changed = pyqtSignal(float)
+    smoothing_changed = pyqtSignal(float)
     reset_view_clicked = pyqtSignal()
 
     MODES = ("RGB Points", "Depth Colors", "Surface Normals", "Mesh (Poisson)")
@@ -315,9 +349,11 @@ class _RenderModeCard(QFrame):
 
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
+        self._mode_buttons: dict[str, QRadioButton] = {}
         self._current_render_mode = self.MODES[0]
         for i, mode in enumerate(self.MODES):
             radio = QRadioButton(mode)
+            self._mode_buttons[mode] = radio
             if i == 0:
                 radio.setChecked(True)
             radio.toggled.connect(
@@ -325,6 +361,13 @@ class _RenderModeCard(QFrame):
             )
             self._mode_group.addButton(radio)
             col.addWidget(radio)
+
+        mesh_button = self._mode_buttons["Mesh (Poisson)"]
+        mesh_button.setEnabled(False)
+        mesh_button.setToolTip(
+            "Poisson mesh reconstruction is intentionally disabled until the "
+            "dedicated reconstruction phase adds Open3D meshing off the UI thread."
+        )
 
         col.addSpacing(2)
         self._point_size = _CardSlider(
@@ -338,6 +381,20 @@ class _RenderModeCard(QFrame):
         )
         for widget in (self._point_size, self._density, self._smoothing):
             col.addWidget(widget)
+
+        self._point_size.value_changed.connect(
+            lambda value: self.point_size_changed.emit(value / 10.0)
+        )
+        self._density.value_changed.connect(
+            lambda value: self.density_changed.emit(value / 100.0)
+        )
+        self._smoothing.setToolTip(
+            "Controls VisPy point-marker antialiasing. This is a visual setting "
+            "and does not alter the inferred geometry."
+        )
+        self._smoothing.value_changed.connect(
+            lambda value: self.smoothing_changed.emit(value / 100.0)
+        )
 
         col.addSpacing(2)
         reset_btn = QPushButton("  Reset View")
@@ -365,6 +422,21 @@ class _RenderModeCard(QFrame):
     @property
     def smoothing(self) -> float:
         return self._smoothing.slider.value() / 100.0
+
+    def set_surface_normals_available(self, available: bool) -> None:
+        button = self._mode_buttons["Surface Normals"]
+        button.setEnabled(available)
+        button.setToolTip(
+            "Color points using the model-predicted surface normals."
+            if available
+            else "The active model does not provide surface normals."
+        )
+        if not available and self._current_render_mode == "Surface Normals":
+            self._mode_buttons["RGB Points"].setChecked(True)
+
+    @property
+    def mesh_enabled(self) -> bool:
+        return self._mode_buttons["Mesh (Poisson)"].isEnabled()
 
 
 class PerspectiveFloorGrid:
@@ -634,6 +706,9 @@ class ViewportPanel(QFrame):
     """3D viewport card: full-bleed canvas with floating overlay controls."""
 
     render_mode_changed = pyqtSignal(str)
+    point_size_changed = pyqtSignal(float)
+    density_changed = pyqtSignal(float)
+    smoothing_changed = pyqtSignal(float)
     reset_view_clicked = pyqtSignal()
     tool_changed = pyqtSignal(str)
     fit_requested = pyqtSignal()
@@ -686,6 +761,9 @@ class ViewportPanel(QFrame):
 
         self._render_card = _RenderModeCard()
         self._render_card.render_mode_changed.connect(self.render_mode_changed.emit)
+        self._render_card.point_size_changed.connect(self.point_size_changed.emit)
+        self._render_card.density_changed.connect(self.density_changed.emit)
+        self._render_card.smoothing_changed.connect(self.smoothing_changed.emit)
         self._render_card.reset_view_clicked.connect(self._on_reset_view)
         self._render_host = _OverlayHost(
             self._render_card,
@@ -744,6 +822,15 @@ class ViewportPanel(QFrame):
     def set_status(self, status: ViewportStatus) -> None:
         self._header.set_status(status)
 
+    def set_light_background(self, enabled: bool) -> None:
+        self._light_background = bool(enabled)
+        title_color = "#20242a" if self._light_background else PALETTE.viewport_text
+        self._title.setStyleSheet(
+            f"color: {title_color}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.5px; background: transparent;"
+        )
+        self.set_status(self._status)
+
     def set_live(self, is_live: bool) -> None:
         """Backward-compatible boolean API."""
         self._header.set_live(is_live)
@@ -755,6 +842,9 @@ class ViewportPanel(QFrame):
     def set_axis_visible(self, visible: bool) -> None:
         """Show or hide the single bottom-left orientation indicator."""
         self._axis_host.setVisible(visible)
+
+    def set_light_background(self, enabled: bool) -> None:
+        self._header.set_light_background(enabled)
 
     @property
     def canvas_surface(self) -> _CanvasSurface:
@@ -775,3 +865,13 @@ class ViewportPanel(QFrame):
     @property
     def smoothing(self) -> float:
         return self._render_card.smoothing
+
+    @property
+    def active_tool(self) -> str:
+        return self._tools.active_tool
+
+    def set_surface_normals_available(self, available: bool) -> None:
+        self._render_card.set_surface_normals_available(available)
+
+    def set_fullscreen_active(self, active: bool) -> None:
+        self._tools.set_fullscreen_active(active)
