@@ -69,6 +69,7 @@ class ApplicationController(QObject):
         self._original_view = original_view
         self._parent_widget = parent_widget
         self._active_source: BaseSource | None = None
+        self._shutdown_started = False
 
         # High-rate cameras can deliver 60-100+ decoded frames per second.
         # Converting every one to a QPixmap in the GUI thread would starve
@@ -105,6 +106,8 @@ class ApplicationController(QObject):
         RTSP create their source object here. Returning ``False`` prevents the
         runtime state machine from claiming SOURCE READY for an empty field.
         """
+        if self._shutdown_started:
+            return False
         source_type = self._source_bar.active_type
         if source_type is SourceType.CAMERA:
             return self._start_camera()
@@ -214,6 +217,8 @@ class ApplicationController(QObject):
         video, camera, or RTSP object belongs to the previous type. Clearing it
         first prevents combinations such as VIDEO + an old image + CONNECTED.
         """
+        if self._shutdown_started:
+            return
         self.disconnect_active_source()
         self.source_type_changed.emit(source_type)
 
@@ -224,6 +229,9 @@ class ApplicationController(QObject):
     # -- Source lifecycle plumbing ------------------------------------------
 
     def _replace_active_source(self, source: BaseSource) -> None:
+        if self._shutdown_started:
+            source.stop()
+            return
         if self._active_source is not None:
             self._active_source.stop()
 
@@ -236,6 +244,8 @@ class ApplicationController(QObject):
         source.start()
 
     def _on_frame_ready(self, frame: SourceFrame) -> None:
+        if self._shutdown_started:
+            return
         if self.is_stream_source:
             self._record_capture_frame()
         self._latest_preview_frame = frame
@@ -250,6 +260,8 @@ class ApplicationController(QObject):
         self.frame_captured.emit(frame)
 
     def _present_latest_preview(self) -> None:
+        if self._shutdown_started:
+            return
         frame = self._latest_preview_frame
         if frame is None:
             return
@@ -277,6 +289,8 @@ class ApplicationController(QObject):
         self._last_capture_fps = None
 
     def _on_status_changed(self, status: SourceStatus) -> None:
+        if self._shutdown_started:
+            return
         self._source_bar.set_connection_enum(_STATUS_TO_CONNECTION_STATE[status])
         # Explicit disconnect clears the preview directly. A real source
         # error is the only asynchronous state that should mark it idle.
@@ -284,7 +298,19 @@ class ApplicationController(QObject):
             self._original_view.set_live(False)
 
     def _on_error(self, message: str) -> None:
+        if self._shutdown_started:
+            return
         logger.error("Source error: %s", message)
+
+    def shutdown(self) -> None:
+        """Stop capture activity and the one-shot device probe exactly once."""
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        self._preview_timer.stop()
+        self.disconnect_active_source()
+        if not self._enumerator.stop():
+            logger.warning("Camera enumeration thread did not stop before timeout.")
 
     @property
     def active_source(self) -> BaseSource | None:

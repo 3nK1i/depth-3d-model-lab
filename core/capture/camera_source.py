@@ -7,6 +7,7 @@ source knows nothing about inference state at all.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 
 import cv2
 
@@ -90,15 +91,19 @@ class CameraSource(BaseSource):
         self._rotate_degrees = degrees % 360
 
 
-def enumerate_cameras(max_index: int = 8) -> list[int]:
+def enumerate_cameras(
+    max_index: int = 8,
+    should_stop: Callable[[], bool] | None = None,
+) -> list[int]:
     """Probe device indices 0..max_index-1 and return the ones that open.
 
-    A simple, synchronous probe — fine to call from the UI thread since
-    it is only used for the (infrequent) device-list refresh action, not
-    the acquisition loop itself.
+    The helper is synchronous and is normally called by
+    :class:`CameraEnumerator` on its one-shot background thread.
     """
     found: list[int] = []
     for index in range(max_index):
+        if should_stop is not None and should_stop():
+            break
         capture = cv2.VideoCapture(index)
         if capture.isOpened():
             found.append(index)
@@ -129,7 +134,33 @@ class CameraEnumerator(QObject):
         self._thread.start()
 
     def _run(self) -> None:
-        found = enumerate_cameras(self._max_index)
-        self.devices_found.emit(found)
-        if self._thread is not None:
-            self._thread.quit()
+        thread = self._thread
+        found = enumerate_cameras(
+            self._max_index,
+            should_stop=(
+                thread.isInterruptionRequested
+                if thread is not None
+                else None
+            ),
+        )
+        if thread is None or not thread.isInterruptionRequested():
+            self.devices_found.emit(found)
+        if thread is not None:
+            thread.quit()
+
+    def stop(self, timeout_ms: int = 5_000) -> bool:
+        """Request cancellation and wait for the one-shot probe to finish.
+
+        The current OpenCV device open may take a moment, but interruption is
+        checked before every subsequent device. ``QThread.terminate()`` is
+        deliberately never used.
+        """
+        thread = self._thread
+        if thread is None:
+            return True
+        thread.requestInterruption()
+        thread.quit()
+        finished = thread.wait(max(0, int(timeout_ms)))
+        if finished:
+            self._thread = None
+        return bool(finished)

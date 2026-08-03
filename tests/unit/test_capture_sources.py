@@ -162,3 +162,26 @@ def test_rtsp_gives_bounded_error_after_reconnect_limit(monkeypatch) -> None:
     assert statuses.count(SourceStatus.RECONNECTING) == 2
     assert statuses[-1] is SourceStatus.ERROR
     assert errors == ["RTSP connection failed after 2 attempts"]
+
+
+def test_camera_enumeration_honors_cancellation_between_devices(monkeypatch) -> None:
+    opened: list[int] = []
+    captures: dict[int, _Capture] = {}
+
+    def _open(index: int):
+        opened.append(index)
+        capture = _Capture(opened=True)
+        captures[index] = capture
+        return capture
+
+    monkeypatch.setattr("core.capture.camera_source.cv2.VideoCapture", _open)
+    checks = 0
+
+    def _should_stop() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 2
+
+    assert enumerate_cameras(8, should_stop=_should_stop) == [0, 1]
+    assert opened == [0, 1]
+    assert all(capture.released for capture in captures.values())

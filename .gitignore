@@ -12,3 +12,6 @@ logs/*.log.*
 
 # Local Qt settings are stored outside the repository via QSettings.
 .DS_Store
+
+# Local lifecycle/memory stress reports.
+outputs/stress/

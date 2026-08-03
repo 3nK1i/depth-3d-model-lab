@@ -336,6 +336,6 @@ class MainWindow(QMainWindow):
         if self._focus_target is not None:
             self._set_focus_target(None)
         self._inference_controller.shutdown()
-        self._controller.disconnect_active_source()
+        self._controller.shutdown()
         self._save_layout()
         super().closeEvent(event)

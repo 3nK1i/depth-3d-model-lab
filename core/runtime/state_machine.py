@@ -34,9 +34,16 @@ class ApplicationState(Enum):
 # transition not listed here is rejected — invalid transitions are a
 # programming error, not something to silently allow.
 _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
-    ApplicationState.DISCONNECTED: frozenset({ApplicationState.CONNECTING}),
+    ApplicationState.DISCONNECTED: frozenset(
+        {ApplicationState.CONNECTING, ApplicationState.SHUTTING_DOWN}
+    ),
     ApplicationState.CONNECTING: frozenset(
-        {ApplicationState.SOURCE_READY, ApplicationState.ERROR, ApplicationState.DISCONNECTED}
+        {
+            ApplicationState.SOURCE_READY,
+            ApplicationState.ERROR,
+            ApplicationState.DISCONNECTED,
+            ApplicationState.SHUTTING_DOWN,
+        }
     ),
     ApplicationState.SOURCE_READY: frozenset(
         {
@@ -56,6 +63,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.RECOVERING_WORKER,
             ApplicationState.ERROR,
             ApplicationState.SOURCE_READY,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.MODEL_READY: frozenset(
@@ -88,6 +96,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.RECOVERING_WORKER,
             ApplicationState.RECONNECTING,
             ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.PAUSED: frozenset(
@@ -96,6 +105,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.STOPPING,
             ApplicationState.RECOVERING_WORKER,
             ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.STOPPING: frozenset(
@@ -103,6 +113,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.MODEL_READY,
             ApplicationState.RECOVERING_WORKER,
             ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.SWITCHING_MODEL: frozenset(
@@ -111,6 +122,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.RECOVERING_WORKER,
             ApplicationState.ERROR,
             ApplicationState.SOURCE_READY,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.RECOVERING_WORKER: frozenset(
@@ -129,6 +141,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.MODEL_READY,
             ApplicationState.DISCONNECTED,
             ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
         }
     ),
     ApplicationState.ERROR: frozenset(

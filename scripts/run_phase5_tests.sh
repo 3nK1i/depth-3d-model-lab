@@ -33,15 +33,22 @@ case "$MODE" in
   integration)
     pytest -q tests/integration
     ;;
+  stress)
+    pytest -q tests/stress
+    ;;
+  all)
+    pytest -q tests/unit tests/ui tests/integration tests/stress
+    ;;
   coverage)
-    pytest --cov=app --cov=core --cov-report=term-missing --cov-report=html tests
+    pytest --cov=app --cov=core --cov-report=term-missing --cov-report=html \
+      tests/unit tests/ui tests/integration
     echo "Coverage report: htmlcov/index.html"
     ;;
   full)
     pytest -q tests/unit tests/ui tests/integration
     ;;
   *)
-    echo "Usage: $0 {smoke|unit|ui|integration|coverage|full}" >&2
+    echo "Usage: $0 {smoke|unit|ui|integration|stress|full|all|coverage}" >&2
     exit 2
     ;;
 esac

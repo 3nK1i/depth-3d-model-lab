@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-4.1 are implemented:
+Phases 1-4 and Phase 5 Steps 1-4.3 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -22,6 +22,8 @@ Phases 1-4 and Phase 5 Steps 1-4.1 are implemented:
 - Live temporal smoothing, background removal and immediate render-setting updates
 - Functional floating Original Source inspection toolbar with save, rotate, fit, grid and focus actions
 - Synchronized Depth Map colormap/range controls with panel focus mode
+- Structured failure classification with bounded worker crash/timeout/OOM recovery
+- Repeated lifecycle, restart, shutdown and memory-stability stress tooling
 
 ## Requirements
 
@@ -137,11 +139,71 @@ checkpoint downloads and warm-up do not create false worker failures. A
 separate result watchdog detects a submitted frame that never returns, then
 terminates and recreates only the inference worker while preserving the source.
 
+## Lifecycle stress and shutdown hardening
+
+Worker restarts now use fresh pipes and latest-only queues, reap dead children,
+and escalate from cooperative shutdown to terminate/kill only when a worker does
+not exit. Every spawn has a diagnostic generation number and the process manager
+exposes the current worker PID and restart count for reports. Intentional
+shutdown suppresses crash callbacks and is safe while the application is
+loading, warming up, running, paused, switching models or recovering a worker.
+Late acknowledgements and results are ignored after shutdown starts. The camera
+device probe is cooperatively cancelled and joined during application close, so a
+fast close cannot leave a capture-enumeration thread behind.
+
+The longer stress pack is deliberately separate from the normal regression
+suite:
+
+```bash
+./scripts/run_phase5_tests.sh stress
+./scripts/run_phase5_tests.sh all
+```
+
+Dependency-free Development Mock lifecycle loop:
+
+```bash
+python scripts/run_lifecycle_stress.py --cycles 10 --frames-per-cycle 2
+```
+
+Repeated forced worker-crash/restart loop:
+
+```bash
+python scripts/run_worker_recovery_stress.py --cycles 5
+```
+
+Memory stability with Development Mock:
+
+```bash
+python scripts/run_memory_stress.py --model mock --cycles 10
+```
+
+Real MoGe-2 load/infer/unload VRAM validation on the detected safe profile:
+
+```bash
+python scripts/run_memory_stress.py \
+  --model moge2 \
+  --profile auto \
+  --cycles 5
+```
+
+Add `--strict-device-vram` only when other GPU processes are stable. JSON reports
+are written under `outputs/stress/`. Device-wide VRAM may vary when
+Xorg, GNOME, browsers or other CUDA applications are active; allocator reserved
+memory after unload and repeated tail drift are the stronger model-lifecycle
+signals.
+
 ## Tests
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest -q
+./scripts/run_phase5_tests.sh smoke
+./scripts/run_phase5_tests.sh unit
+./scripts/run_phase5_tests.sh ui
+./scripts/run_phase5_tests.sh integration
+./scripts/run_phase5_tests.sh full
 ```
+
+`full` keeps the regular development loop fast and excludes `tests/stress`. Use
+`stress` for the repeated process loops or `all` for the complete pack.
 
 ## Project structure
 
@@ -153,5 +215,5 @@ core/models/         Unified model adapters and model catalog
 core/geometry/       Depth, direct points, filtering and sampling
 core/runtime/        State machine, sessions and watchdog
 requirements/        Optional model dependency groups
-tests/               Unit, UI and integration tests
+tests/               Unit, UI, integration and explicit stress tests
 ```

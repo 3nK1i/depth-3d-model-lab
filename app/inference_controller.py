@@ -145,6 +145,7 @@ class InferenceController(QObject):
         self._last_failure: FailureInfo | None = None
         self._worker_recovery_attempts = 0
         self._recovery_in_progress = False
+        self._shutdown_started = False
 
         self._inference_rate = RateMeter(window_seconds=2.0)
         self._render_rate = RateMeter(window_seconds=2.0)
@@ -326,6 +327,8 @@ class InferenceController(QObject):
         auto_start: bool,
         switching: bool,
     ) -> None:
+        if self._shutdown_started:
+            return
         self._requested_model_id = model_id
         self._requested_model_config = dict(config)
         self._last_failure = None
@@ -358,6 +361,8 @@ class InferenceController(QObject):
         *,
         auto_start: bool,
     ) -> None:
+        if self._shutdown_started:
+            return
         if self._state_machine.state not in (
             ApplicationState.SOURCE_READY,
             ApplicationState.MODEL_READY,
@@ -395,6 +400,8 @@ class InferenceController(QObject):
         )
 
     def _on_model_stage_changed(self, event: ModelStageEvent) -> None:
+        if self._shutdown_started:
+            return
         if event.stage is ModelStage.LOADING_WEIGHTS:
             self._model_lifecycle.transition_to(ModelLifecycleState.LOADING, strict=False)
             self._settings_panel.set_model_stage("LOADING", event.message)
@@ -496,6 +503,8 @@ class InferenceController(QObject):
         self._apply_button_states()
 
     def _on_start_clicked(self) -> None:
+        if self._shutdown_started:
+            return
         # A direct user retry starts a fresh recovery budget. Automatic worker
         # recovery never loops indefinitely.
         self._worker_recovery_attempts = 0
@@ -709,6 +718,8 @@ class InferenceController(QObject):
 
     def _on_inference_result_timeout(self) -> None:
         """Recover when a submitted frame never returns from the worker."""
+        if self._shutdown_started:
+            return
         if (
             self._state_machine.state is not ApplicationState.RUNNING
             or not self._inference_in_flight
@@ -725,6 +736,8 @@ class InferenceController(QObject):
     # -- Worker signal handlers ------------------------------------------
 
     def _on_ack_received(self, ack: Ack) -> None:
+        if self._shutdown_started:
+            return
         if ack.command_type is CommandType.UNLOAD_MODEL:
             if not ack.success:
                 failure = ack.failure or classify_failure(
@@ -873,6 +886,8 @@ class InferenceController(QObject):
         return ApplicationState.MODEL_READY if model_ready else ApplicationState.SOURCE_READY
 
     def _on_result_ready(self, result: InferenceResult) -> None:
+        if self._shutdown_started:
+            return
         if not self._session.is_current(result.session_id):
             self._counters.stale_results_ignored += 1
             return
@@ -1489,6 +1504,8 @@ class InferenceController(QObject):
     # -- Worker recovery --------------------------------------------------
 
     def _on_worker_unresponsive(self, command_type: CommandType) -> None:
+        if self._shutdown_started:
+            return
         failure = timeout_failure(command_type.value)
         logger.warning("%s", failure.message)
 
@@ -1503,6 +1520,8 @@ class InferenceController(QObject):
         self._recover_worker(failure, reload_request=reload_request)
 
     def _on_worker_crashed(self) -> None:
+        if self._shutdown_started:
+            return
         if self._state_machine.state is ApplicationState.SHUTTING_DOWN:
             return
         failure = crashed_worker_failure(self._process_manager.last_exitcode)
@@ -1533,6 +1552,8 @@ class InferenceController(QObject):
         reload_request: tuple[str, dict[str, object]] | None,
     ) -> None:
         """Restart a failed worker once while preserving the capture source."""
+        if self._shutdown_started:
+            return
         self._last_failure = failure
         if self._recovery_in_progress:
             return
@@ -1597,6 +1618,8 @@ class InferenceController(QObject):
 
     def restart_worker(self) -> None:
         """Explicitly restart the worker while preserving the current source."""
+        if self._shutdown_started:
+            return
         failure = crashed_worker_failure(self._process_manager.last_exitcode)
         self._worker_recovery_attempts = 0
         self._recover_worker(failure, reload_request=None)
@@ -1652,17 +1675,38 @@ class InferenceController(QObject):
         )
 
     def shutdown(self) -> None:
-        """Called from MainWindow.closeEvent for a clean app exit."""
-        if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
-            self._stop_inference()
+        """Stop all asynchronous runtime work and close the worker exactly once.
+
+        Shutdown can begin while a model is loading, inference is running, a
+        switch is in progress, or worker recovery is active.  We therefore do
+        not enqueue an additional Stop command; the worker's SHUTDOWN command
+        owns final model cleanup and the process manager supplies terminate/kill
+        fallbacks. Late acknowledgements/results are ignored by the guards on
+        the asynchronous handlers.
+        """
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+        self._state_machine.transition_to(
+            ApplicationState.SHUTTING_DOWN,
+            strict=False,
+        )
+        self._session.invalidate()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
         self._pipeline_timer.stop()
         self._inference_watchdog_timer.stop()
         self._settings_refresh_timer.stop()
+        self._uptime_timer.stop()
+        self._reset_pipeline_runtime()
         self._process_manager.shutdown()
         self._model_lifecycle.reset()
         self._model_loaded = False
+        self._requested_model_id = None
+        self._requested_model_config.clear()
         self._active_model_id = None
         self._active_model_config_signature = None
+        self._active_model_metadata.clear()
         self._last_failure = None
         self._recovery_in_progress = False
         self._settings_panel.set_model_unloaded()
