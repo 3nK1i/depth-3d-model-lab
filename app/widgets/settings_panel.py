@@ -48,13 +48,6 @@ SIDEBAR_PADDING_H = 0
 SIDEBAR_PADDING_V = 0
 CARD_GAP = 8
 
-_LIVE_POINT_BUDGET_CAPS: dict[ComputeProfile, int] = {
-    ComputeProfile.EFFICIENT: 100_000,
-    ComputeProfile.BALANCED: 250_000,
-    ComputeProfile.ULTRA: 500_000,
-}
-
-
 def _fmt_metres(v: int) -> str:
     return f"{v / 10:.1f} m"
 
@@ -450,7 +443,7 @@ class SettingsPanel(QFrame):
         if budget_index >= 0:
             _set_combo_index_blocked(self._point_budget, budget_index)
 
-        live_cap = _LIVE_POINT_BUDGET_CAPS[resolved.effective]
+        live_cap = resolved.spec.live_point_budget
         self._point_budget.setToolTip(
             "Maximum point count for a static image. Lower budgets resample the "
             "cached result immediately; requesting more points than the worker "
@@ -461,6 +454,12 @@ class SettingsPanel(QFrame):
         )
 
         tooltip_parts = [self._hardware_info.details]
+        tooltip_parts.append(
+            "Auto tuning: "
+            f"{resolved.spec.model_label}, {resolved.precision.display_name}, "
+            f"level {resolved.spec.resolution_level}, {resolved.spec.num_tokens} tokens, "
+            f"{resolved.spec.warmup_runs} warm-up run(s)."
+        )
         if resolved.warning:
             tooltip_parts.append(f"Profile: {resolved.warning}")
         profile_tooltip = "\n".join(part for part in tooltip_parts if part)
@@ -576,7 +575,7 @@ class SettingsPanel(QFrame):
     @property
     def live_point_budget(self) -> int:
         """Safe point-cloud cap for continuous video/camera/RTSP sources."""
-        cap = _LIVE_POINT_BUDGET_CAPS[self.resolved_profile.effective]
+        cap = self.resolved_profile.spec.live_point_budget
         return min(self.point_budget, cap)
 
 

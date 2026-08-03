@@ -107,7 +107,9 @@ class HardwareInfo:
     def details(self) -> str:
         lines = [f"Device: {self.name}", f"Backend: {self.device}"]
         if self.total_memory_gib is not None:
-            lines.append(f"VRAM: {self.total_memory_gib:.1f} GB")
+            lines.append(f"VRAM: {self.total_memory_gib:.1f} GB total")
+        if self.free_memory_gib is not None:
+            lines.append(f"Startup free VRAM: {self.free_memory_gib:.1f} GB")
         if self.compute_capability is not None:
             major, minor = self.compute_capability
             lines.append(f"Compute capability: {major}.{minor}")
@@ -222,6 +224,7 @@ def _hardware_from_nvidia(
         warnings.append("PyTorch architecture compatibility could not be confirmed.")
 
     capability_major = gpu.compute_capability[0] if gpu.compute_capability else 0
+    supports_bf16 = _runtime_bf16_support(torch_meta.module, gpu.index, capability_major)
     return HardwareInfo(
         backend=AcceleratorBackend.CUDA,
         device=f"cuda:{gpu.index}",
@@ -231,7 +234,7 @@ def _hardware_from_nvidia(
         free_memory_bytes=gpu.free_memory_bytes,
         compute_capability=gpu.compute_capability,
         supports_fp16=capability_major >= 5,
-        supports_bf16=capability_major >= 8,
+        supports_bf16=supports_bf16,
         torch_available=torch_meta.available,
         torch_cuda_available=torch_meta.cuda_available,
         torch_version=torch_meta.version,
@@ -391,6 +394,35 @@ def _torch_build_compatibility(
         return True
     return None
 
+
+
+def _runtime_bf16_support(torch: Any | None, device_index: int, capability_major: int) -> bool:
+    """Confirm BF16 through PyTorch when possible, with a capability fallback."""
+
+    if capability_major < 8:
+        return False
+    if torch is None:
+        return True
+    cuda = getattr(torch, "cuda", None)
+    checker = getattr(cuda, "is_bf16_supported", None)
+    if not callable(checker):
+        return True
+    try:
+        device_context = getattr(cuda, "device", None)
+        context = device_context(device_index) if callable(device_context) else None
+        if context is None:
+            try:
+                return bool(checker(including_emulation=False))
+            except TypeError:
+                return bool(checker())
+        with context:
+            try:
+                return bool(checker(including_emulation=False))
+            except TypeError:
+                return bool(checker())
+    except Exception as exc:  # noqa: BLE001 - capability discovery is best effort
+        logger.info("PyTorch BF16 capability query failed: %s", exc)
+        return True
 
 def _mib_to_bytes(value: str) -> int | None:
     cleaned = value.strip()

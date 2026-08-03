@@ -10,6 +10,7 @@ from core.hardware.profiles import (
     available_precisions,
     recommended_profile,
     resolve_profile,
+    profile_is_safe,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "available_precisions",
     "recommended_profile",
     "resolve_profile",
+    "profile_is_safe",
 ]

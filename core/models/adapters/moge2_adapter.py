@@ -11,7 +11,7 @@ import gc
 import logging
 import time
 import warnings
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Iterator
 
 import numpy as np
@@ -27,6 +27,7 @@ _DEFAULT_NUM_TOKENS = 1200
 _DEFAULT_RESOLUTION_LEVEL = 5
 _DEFAULT_POINT_BUDGET = 250_000
 _DEFAULT_WARMUP_SIZE = 256
+_DEFAULT_WARMUP_RUNS = 1
 
 _HF_PUBLIC_ADVISORY = "You are sending unauthenticated requests to the HF Hub"
 _HF_LOGGER_NAMES = (
@@ -116,6 +117,13 @@ class Moge2GeometryModel(BaseGeometryModel):
         self._resolution_level = _DEFAULT_RESOLUTION_LEVEL
         self._point_budget = _DEFAULT_POINT_BUDGET
         self._warmup_size = _DEFAULT_WARMUP_SIZE
+        self._warmup_runs = _DEFAULT_WARMUP_RUNS
+        self._allow_tf32 = False
+        self._tf32_enabled = False
+        self._matmul_precision = "high"
+        self._enable_native_sdpa = True
+        self._native_sdpa_enabled = False
+        self._hardware_tier = "efficient"
         self._local_files_only = False
 
     def load(self, device: str, precision: str, config: dict[str, Any]) -> None:
@@ -156,7 +164,17 @@ class Moge2GeometryModel(BaseGeometryModel):
             64,
             int(config.get("warmup_size", _DEFAULT_WARMUP_SIZE)),
         )
+        self._warmup_runs = min(4, max(1, int(config.get("warmup_runs", _DEFAULT_WARMUP_RUNS))))
+        self._allow_tf32 = bool(config.get("allow_tf32", False))
+        self._matmul_precision = str(config.get("matmul_precision", "high")).lower()
+        if self._matmul_precision not in {"highest", "high", "medium"}:
+            raise MoGeConfigurationError(
+                f"Unsupported float32 matmul precision: {self._matmul_precision!r}."
+            )
+        self._enable_native_sdpa = bool(config.get("enable_native_sdpa", True))
+        self._hardware_tier = str(config.get("hardware_tier", config.get("profile", "efficient")))
         self._local_files_only = bool(config.get("local_files_only", False))
+        self._configure_torch_runtime()
 
         hf_kwargs: dict[str, Any] = {"token": False}
         if self._local_files_only:
@@ -169,12 +187,18 @@ class Moge2GeometryModel(BaseGeometryModel):
             if self._precision == "bf16":
                 if self._device.type != "cuda":
                     raise MoGeConfigurationError("BF16 is enabled only for CUDA in this app.")
+                if not self._bf16_supported():
+                    raise MoGeConfigurationError(
+                        "BF16 was requested, but the active CUDA/PyTorch runtime does not support it."
+                    )
                 model = model.to(dtype=torch.bfloat16)
             model.eval()
             # Native SDPA is an official optional optimization. Keep loading
             # robust on older MoGe versions that do not expose the method.
-            if hasattr(model, "enable_pytorch_native_sdpa"):
+            self._native_sdpa_enabled = False
+            if self._enable_native_sdpa and hasattr(model, "enable_pytorch_native_sdpa"):
                 model.enable_pytorch_native_sdpa()
+                self._native_sdpa_enabled = True
         except Exception as exc:  # noqa: BLE001 - enrich model/download errors
             self._release_model()
             if self._is_cuda_oom(exc):
@@ -193,7 +217,8 @@ class Moge2GeometryModel(BaseGeometryModel):
             dtype=np.uint8,
         )
         try:
-            self._infer_model(dummy)
+            for _ in range(self._warmup_runs):
+                self._infer_model(dummy)
         except Exception as exc:  # noqa: BLE001
             if self._is_cuda_oom(exc):
                 raise self._oom_error(exc) from exc
@@ -264,6 +289,13 @@ class Moge2GeometryModel(BaseGeometryModel):
             "precision": self.precision_label,
             "num_tokens": self._num_tokens,
             "resolution_level": self._resolution_level,
+            "point_budget": self._point_budget,
+            "warmup_size": self._warmup_size,
+            "warmup_runs": self._warmup_runs,
+            "hardware_tier": self._hardware_tier,
+            "allow_tf32": self._tf32_enabled,
+            "matmul_precision": self._matmul_precision,
+            "native_sdpa": self._native_sdpa_enabled,
             "is_metric": True,
             "outputs": {
                 "depth": True,
@@ -310,18 +342,96 @@ class Moge2GeometryModel(BaseGeometryModel):
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
             start_event.record()
-            output = self._model.infer(image, **kwargs)
+            output = self._run_model_inference(image, kwargs)
             end_event.record()
             torch.cuda.synchronize(self._device)
             latency_ms = float(start_event.elapsed_time(end_event))
         else:
             started = time.perf_counter()
-            output = self._model.infer(image, **kwargs)
+            output = self._run_model_inference(image, kwargs)
             latency_ms = (time.perf_counter() - started) * 1000.0
 
         if not isinstance(output, dict):
             raise RuntimeError("MoGe-2 returned an unexpected non-dictionary output.")
         return output, latency_ms, preprocess_ms
+
+    def _run_model_inference(self, image: Any, kwargs: dict[str, Any]) -> Any:
+        torch = self._torch
+        assert torch is not None
+        assert self._model is not None
+        assert self._device is not None
+
+        inference_mode = getattr(torch, "inference_mode", None)
+        inference_context = inference_mode() if callable(inference_mode) else nullcontext()
+        autocast_context = nullcontext()
+        if self._device.type == "cuda" and self._precision == "bf16":
+            autocast = getattr(torch, "autocast", None)
+            if callable(autocast):
+                autocast_context = autocast(device_type="cuda", dtype=torch.bfloat16)
+
+        with inference_context:
+            with autocast_context:
+                return self._model.infer(image, **kwargs)
+
+    def _configure_torch_runtime(self) -> None:
+        """Apply safe per-worker backend tuning for the resolved profile."""
+
+        torch = self._torch
+        if torch is None:
+            return
+        setter = getattr(torch, "set_float32_matmul_precision", None)
+        if callable(setter):
+            try:
+                setter(self._matmul_precision)
+            except Exception:  # noqa: BLE001 - optional runtime optimization
+                pass
+
+        if self._device is None or self._device.type != "cuda":
+            return
+        capability_major = 0
+        try:
+            capability = torch.cuda.get_device_capability(self._device)
+            capability_major = int(capability[0])
+        except Exception:  # noqa: BLE001 - leave TF32 disabled when uncertain
+            pass
+        tf32_supported = capability_major >= 8
+        checker = getattr(torch.cuda, "is_tf32_supported", None)
+        if callable(checker):
+            try:
+                tf32_supported = bool(checker())
+            except Exception:  # noqa: BLE001 - capability fallback remains valid
+                pass
+        enabled = bool(self._allow_tf32 and tf32_supported)
+        self._tf32_enabled = enabled
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = enabled
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            torch.backends.cudnn.allow_tf32 = enabled
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _bf16_supported(self) -> bool:
+        torch = self._torch
+        if torch is None or self._device is None or self._device.type != "cuda":
+            return False
+        checker = getattr(torch.cuda, "is_bf16_supported", None)
+        if callable(checker):
+            try:
+                device_context = getattr(torch.cuda, "device", None)
+                context = device_context(self._device) if callable(device_context) else nullcontext()
+                with context:
+                    try:
+                        return bool(checker(including_emulation=False))
+                    except TypeError:
+                        return bool(checker())
+            except Exception:  # noqa: BLE001
+                return False
+        try:
+            return int(torch.cuda.get_device_capability(self._device)[0]) >= 8
+        except Exception:  # noqa: BLE001
+            return False
 
     def _image_to_tensor(self, bgr_image: np.ndarray):
         if bgr_image.ndim != 3 or bgr_image.shape[2] != 3:

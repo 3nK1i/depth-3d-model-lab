@@ -69,6 +69,10 @@ def test_model_tooltip_exposes_load_and_warmup_details() -> None:
         checkpoint="Ruicheng/moge-2-vits-normal",
         num_tokens=1200,
         resolution_level=5,
+        hardware_tier="efficient",
+        warmup_runs=1,
+        tf32_enabled=False,
+        native_sdpa_enabled=True,
         model_load_time_ms=100.0,
         warmup_time_ms=20.0,
         total_load_time_ms=120.0,
@@ -76,5 +80,9 @@ def test_model_tooltip_exposes_load_and_warmup_details() -> None:
     tooltip = snapshot.model_tooltip()
     assert "cuda:0" in tooltip
     assert "Ruicheng/moge-2-vits-normal" in tooltip
+    assert "Hardware tier: Efficient" in tooltip
+    assert "Warm-up runs: 1" in tooltip
+    assert "TF32 enabled: False" in tooltip
+    assert "Native SDPA enabled: True" in tooltip
     assert "Warm-up: 20.0 ms" in tooltip
     assert "Total load + warm-up: 120.0 ms" in tooltip

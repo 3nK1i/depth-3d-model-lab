@@ -4,12 +4,13 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-4.3 are implemented:
+Phases 1-4 and Phase 5 Steps 1-5 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
 - Latest-frame live-stream backpressure
-- Hardware-aware Efficient, Balanced and Ultra profiles
+- Hardware-aware Efficient, Balanced and Ultra profiles with total/free-VRAM safety gates
+- Automatic RTX 2060 and RTX 5090 tuning with no source or config edits
 - Development mock adapter for lifecycle diagnostics
 - MoGe-2 metric depth, direct point maps, normals, mask and intrinsics
 - Interactive VisPy point-cloud viewport
@@ -24,6 +25,7 @@ Phases 1-4 and Phase 5 Steps 1-4.3 are implemented:
 - Synchronized Depth Map colormap/range controls with panel focus mode
 - Structured failure classification with bounded worker crash/timeout/OOM recovery
 - Repeated lifecycle, restart, shutdown and memory-stability stress tooling
+- Simulated cross-GPU tuning matrix for hardware that is not currently available
 
 ## Requirements
 
@@ -50,11 +52,39 @@ python -m pip install -r requirements/models-moge2.txt
 
 The first MoGe-2 start downloads the selected checkpoint from Hugging Face. The automatic RTX 2060 profile selects `Ruicheng/moge-2-vits-normal`; larger GPUs resolve to the Balanced or Ultra variant.
 
-## Hardware check
+## Hardware check and automatic tuning
+
+Inspect the current machine:
 
 ```bash
-python scripts/check_hardware.py
+python scripts/check_hardware.py --assert-ready
 ```
+
+The resolver uses CUDA readiness, compute capability, total VRAM and startup
+free VRAM. It does not require a product-specific config file. The default
+tiers are:
+
+- **RTX 2060 / 6 GB class:** Efficient, ViT-S, FP16, level 5, 250K static / 100K live points
+- **8-19 GB class:** Balanced, ViT-B, FP16, level 7, 500K static / 250K live points
+- **RTX 5090 / >=20 GB class:** Ultra, ViT-L, FP16, level 9, 1M static / 500K live points
+
+FP16 remains the automatic high-end default because it is the established MoGe
+execution path. BF16 support is detected and reported but is not selected
+implicitly. TF32 is enabled only on supported Balanced/Ultra CUDA devices, and
+native SDPA is enabled when the installed MoGe version exposes it.
+
+The RTX 5090 path can be validated without owning the card:
+
+```bash
+python scripts/check_hardware.py --simulate rtx2060
+python scripts/check_hardware.py --simulate rtx5090
+python scripts/check_hardware.py --simulate rtx5090-pressure
+```
+
+The pressure simulation proves that a 32 GB device temporarily falls back to
+Balanced when less than 16 GB is free at startup. When the same repository is
+launched later on an RTX 5090 with a compatible CUDA-enabled PyTorch build, Auto
+selects Ultra without editing code or configuration.
 
 ## Run
 
@@ -96,6 +126,19 @@ The **Original Source** toolbar is overlaid on the media surface and contains on
 The **Depth Map** footer mirrors the sidebar colormap, minimum depth and maximum depth values. Changes made in either location update the other and immediately rerender the cached depth/geometry result. The redundant settings-gear placeholder has been removed; the remaining fullscreen action focuses the Depth panel and exits with `Esc`.
 
 Public MoGe-2 checkpoints continue to load anonymously with `token=False`. The application suppresses only Hugging Face's harmless anonymous-rate-limit advisory while preserving real network, repository, cache and authentication errors.
+
+## Phase 5 hardware tuning
+
+Profile tuning is serialized into the worker load command and recorded in the
+MODEL tooltip. The worker applies one or two profile-specific warm-up passes,
+`torch.inference_mode()`, safe float32 matmul precision, optional TF32 and
+optional native SDPA. Point-cloud rendering remains independently capped for
+live sources so a fast GPU cannot overwhelm the Qt/VisPy UI thread.
+
+Auto selection also considers startup free VRAM. A manual tier that exceeds the
+current safe memory envelope is downgraded with a `SAFE FALLBACK` badge instead
+of predictably producing an OOM. Unknown future NVIDIA GPUs follow the same
+capability and memory rules rather than a hard-coded product-name list.
 
 ## Model lifecycle
 

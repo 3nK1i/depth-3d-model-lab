@@ -21,6 +21,7 @@ class _FakeMoGeModel:
         self.sdpa_called = False
         self.last_image: torch.Tensor | None = None
         self.last_kwargs: dict[str, object] = {}
+        self.infer_calls = 0
 
     @classmethod
     def from_pretrained(cls, _repo: str, **_kwargs):
@@ -44,6 +45,7 @@ class _FakeMoGeModel:
         self.sdpa_called = True
 
     def infer(self, image: torch.Tensor, **kwargs):
+        self.infer_calls += 1
         self.last_image = image.detach().cpu().clone()
         self.last_kwargs = dict(kwargs)
         _, height, width = image.shape
@@ -136,6 +138,10 @@ def test_load_metadata_and_warmup_are_runtime_ready() -> None:
     assert metadata["outputs"]["points"] is True
     assert metadata["outputs"]["normals"] is True
     assert metadata["precision"] == "FP32"
+    assert metadata["warmup_size"] == 64
+    assert metadata["warmup_runs"] == 1
+    assert metadata["native_sdpa"] is True
+    assert metadata["matmul_precision"] == "high"
 
     fake = _FakeMoGeModel.last_instance
     assert fake is not None
@@ -175,3 +181,49 @@ def test_public_hub_advisory_filter_preserves_real_errors(caplog) -> None:
     messages = [record.getMessage() for record in caplog.records]
     assert not any(_HF_PUBLIC_ADVISORY in message for message in messages)
     assert any("real checkpoint download error" in message for message in messages)
+
+
+def test_profile_tuning_controls_warmup_runs_and_native_sdpa() -> None:
+    adapter = Moge2GeometryModel(model_class=_FakeMoGeModel, torch_module=torch)
+    adapter.load(
+        device="cpu",
+        precision="fp32",
+        config={
+            "pretrained": "fake/moge-2-vitl-normal",
+            "model_label": "MoGe-2 ViT-L Normal",
+            "num_tokens": 2500,
+            "resolution_level": 9,
+            "point_budget": 1_000_000,
+            "warmup_size": 64,
+            "warmup_runs": 2,
+            "allow_tf32": True,
+            "matmul_precision": "high",
+            "enable_native_sdpa": False,
+            "hardware_tier": "ultra",
+        },
+    )
+    adapter.warmup()
+
+    fake = _FakeMoGeModel.last_instance
+    assert fake is not None
+    assert fake.infer_calls == 2
+    assert fake.sdpa_called is False
+    metadata = adapter.get_metadata()
+    assert metadata["hardware_tier"] == "ultra"
+    assert metadata["warmup_runs"] == 2
+    assert metadata["allow_tf32"] is False  # CPU cannot actually enable TF32.
+    assert metadata["native_sdpa"] is False
+
+
+def test_invalid_matmul_precision_is_rejected() -> None:
+    adapter = Moge2GeometryModel(model_class=_FakeMoGeModel, torch_module=torch)
+    try:
+        adapter.load(
+            device="cpu",
+            precision="fp32",
+            config={"matmul_precision": "fastest"},
+        )
+    except RuntimeError as exc:
+        assert "matmul precision" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Invalid matmul precision unexpectedly succeeded")

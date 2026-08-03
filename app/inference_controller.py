@@ -1393,6 +1393,10 @@ class InferenceController(QObject):
                 checkpoint=_string_metadata(metadata, "pretrained"),
                 num_tokens=_int_metadata(metadata, "num_tokens"),
                 resolution_level=_int_metadata(metadata, "resolution_level"),
+                hardware_tier=_string_metadata(metadata, "hardware_tier"),
+                warmup_runs=_int_metadata(metadata, "warmup_runs"),
+                tf32_enabled=_bool_metadata(metadata, "allow_tf32"),
+                native_sdpa_enabled=_bool_metadata(metadata, "native_sdpa"),
                 source_frames_seen=self._counters.source_frames_seen,
                 frames_submitted=self._counters.frames_submitted,
                 results_received=self._counters.results_received,
@@ -1438,6 +1442,10 @@ class InferenceController(QObject):
             checkpoint=_string_metadata(metadata, "pretrained"),
             num_tokens=_int_metadata(metadata, "num_tokens"),
             resolution_level=_int_metadata(metadata, "resolution_level"),
+            hardware_tier=_string_metadata(metadata, "hardware_tier"),
+            warmup_runs=_int_metadata(metadata, "warmup_runs"),
+            tf32_enabled=_bool_metadata(metadata, "allow_tf32"),
+            native_sdpa_enabled=_bool_metadata(metadata, "native_sdpa"),
         )
 
     def _refresh_uptime(self) -> None:
@@ -1731,6 +1739,11 @@ def _float_metadata(metadata: dict[str, object], key: str) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _bool_metadata(metadata: dict[str, object], key: str) -> bool | None:
+    value = metadata.get(key)
+    return value if isinstance(value, bool) else None
 
 
 def _int_metadata(metadata: dict[str, object], key: str) -> int | None:

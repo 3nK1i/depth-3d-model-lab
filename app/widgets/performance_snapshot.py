@@ -126,6 +126,10 @@ class PerformanceSnapshot:
     checkpoint: str | None = None
     num_tokens: int | None = None
     resolution_level: int | None = None
+    hardware_tier: str | None = None
+    warmup_runs: int | None = None
+    tf32_enabled: bool | None = None
+    native_sdpa_enabled: bool | None = None
 
     # Latest-frame/backpressure diagnostics.
     source_frames_seen: int = 0
@@ -280,6 +284,14 @@ class PerformanceSnapshot:
                 (
                     f"Resolution level: {self.resolution_level}"
                     if self.resolution_level is not None
+                    else None
+                ),
+                f"Hardware tier: {self.hardware_tier.capitalize()}" if self.hardware_tier else None,
+                f"Warm-up runs: {self.warmup_runs}" if self.warmup_runs is not None else None,
+                f"TF32 enabled: {self.tf32_enabled}" if self.tf32_enabled is not None else None,
+                (
+                    f"Native SDPA enabled: {self.native_sdpa_enabled}"
+                    if self.native_sdpa_enabled is not None
                     else None
                 ),
                 _ms_line("Model load", self.model_load_time_ms),

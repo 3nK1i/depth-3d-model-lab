@@ -79,6 +79,9 @@ def test_5090_auto_profile_is_ultra(qtbot) -> None:
     assert panel.model_runtime_config["pretrained"] == "Ruicheng/moge-2-vitl-normal"
     assert panel.point_budget == 1_000_000
     assert panel.live_point_budget == 500_000
+    assert panel.model_runtime_config["warmup_size"] == 512
+    assert panel.model_runtime_config["warmup_runs"] == 2
+    assert panel.model_runtime_config["allow_tf32"] is True
 
 
 def test_unsafe_manual_selection_uses_safe_fallback(qtbot) -> None:
@@ -108,3 +111,30 @@ def test_mock_selection_is_persisted_and_marked_development_only(qtbot) -> None:
     assert not panel._model_combo.isEnabled()
     panel.set_model_unloaded()
     assert panel._model_combo.isEnabled()
+
+
+def test_5090_auto_profile_downgrades_under_startup_memory_pressure(qtbot) -> None:
+    hardware = _gpu("NVIDIA GeForce RTX 5090", 32.0, (12, 0))
+    pressured = HardwareInfo(
+        backend=hardware.backend,
+        device=hardware.device,
+        device_index=hardware.device_index,
+        name=hardware.name,
+        total_memory_bytes=hardware.total_memory_bytes,
+        free_memory_bytes=int(10.0 * 1024**3),
+        compute_capability=hardware.compute_capability,
+        supports_fp16=hardware.supports_fp16,
+        supports_bf16=hardware.supports_bf16,
+        torch_available=hardware.torch_available,
+        torch_cuda_available=hardware.torch_cuda_available,
+        torch_version=hardware.torch_version,
+        torch_cuda_version=hardware.torch_cuda_version,
+        compiled_architectures=hardware.compiled_architectures,
+        torch_build_compatible=hardware.torch_build_compatible,
+    )
+    panel = SettingsPanel(hardware_info=pressured, app_settings=_MemorySettings())
+    qtbot.addWidget(panel)
+
+    assert panel.resolved_profile.effective is ComputeProfile.BALANCED
+    assert panel.model_runtime_config["pretrained"] == "Ruicheng/moge-2-vitb-normal"
+    assert panel.live_point_budget == 250_000
