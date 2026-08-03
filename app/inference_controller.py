@@ -39,7 +39,18 @@ from core.models.catalog import (
     MOCK_DISPLAY_LABEL,
     MOCK_MODEL_ID,
 )
-from core.runtime.messages import Ack, CommandType, InferenceResult
+from core.runtime.messages import (
+    Ack,
+    CommandType,
+    InferenceResult,
+    ModelStage,
+    ModelStageEvent,
+)
+from core.runtime.model_lifecycle import (
+    ModelLifecycle,
+    ModelLifecycleState,
+    model_config_signature,
+)
 from core.runtime.session import SessionTracker
 from core.runtime.state_machine import ApplicationState, StateMachine
 from core.runtime.telemetry import GeometryTiming, RateMeter, RuntimeCounters
@@ -109,10 +120,15 @@ class InferenceController(QObject):
             parent=self,
         )
         self._session = SessionTracker()
+        self._model_lifecycle = ModelLifecycle()
         self._model_loaded = False
         self._requested_model_id: str | None = None
+        self._requested_model_config: dict[str, object] = {}
         self._active_model_id: str | None = None
+        self._active_model_config_signature: tuple | None = None
         self._active_model_metadata: dict[str, object] = {}
+        self._pending_model_request: tuple[str, dict[str, object]] | None = None
+        self._auto_start_after_load = False
         self._run_started_at: float | None = None
 
         self._inference_rate = RateMeter(window_seconds=2.0)
@@ -164,8 +180,10 @@ class InferenceController(QObject):
         self._state_machine.state_changed.connect(self._on_state_changed)
         self._process_manager.result_ready.connect(self._on_result_ready)
         self._process_manager.ack_received.connect(self._on_ack_received)
+        self._process_manager.model_stage_changed.connect(self._on_model_stage_changed)
         self._process_manager.worker_unresponsive.connect(self._on_worker_unresponsive)
         self._process_manager.worker_crashed.connect(self._on_worker_crashed)
+        application_controller.source_type_changed.connect(self._on_source_type_changed)
 
         runtime_toolbar.connect_clicked.connect(self._on_connect_clicked)
         runtime_toolbar.disconnect_clicked.connect(self._on_disconnect_clicked)
@@ -190,8 +208,12 @@ class InferenceController(QObject):
         settings_panel.grid_visibility_changed.connect(self._point_cloud_canvas.set_grid_visible)
         settings_panel.axes_visibility_changed.connect(viewport_panel.set_axis_visible)
         settings_panel.point_budget_changed.connect(self._schedule_cached_geometry_refresh)
+        settings_panel.model_selection_changed.connect(self._on_model_selection_changed)
+        settings_panel.compute_profile_changed.connect(self._on_compute_profile_changed)
 
         self._apply_button_states()
+        self._sync_model_controls_for_state()
+        self._sync_source_controls_for_state()
 
     def _initialize_viewport_controls(self) -> None:
         """Apply the visible control state to the freshly created canvas."""
@@ -225,11 +247,196 @@ class InferenceController(QObject):
         # strength takes effect on the next continuous-source result.
         self._temporal_smoother.reset()
 
+    # -- Model selection and lifecycle -----------------------------------
+
+    def _selected_model_request(self) -> tuple[str, dict[str, object]]:
+        model_id = self._settings_panel.selected_model_id
+        if model_id == MOGE2_MODEL_ID:
+            return model_id, dict(self._settings_panel.model_runtime_config)
+        if model_id == MOCK_MODEL_ID:
+            return model_id, {
+                "device": "cpu",
+                "precision": "fp32",
+                "latency_ms": _MOCK_LATENCY_MS,
+            }
+        raise ValueError(f"Unknown model selection: {model_id!r}")
+
+    def _selected_model_matches_active(self) -> bool:
+        if not self._model_loaded or self._active_model_id is None:
+            return False
+        try:
+            model_id, config = self._selected_model_request()
+        except ValueError:
+            return False
+        return (
+            model_id == self._active_model_id
+            and model_config_signature(config) == self._active_model_config_signature
+        )
+
+    def _on_model_selection_changed(self, _model_id: str) -> None:
+        self._request_safe_model_switch_from_settings()
+
+    def _on_compute_profile_changed(self, _resolved_profile: object) -> None:
+        if self._settings_panel.selected_model_id == MOGE2_MODEL_ID:
+            self._request_safe_model_switch_from_settings()
+
+    def _request_safe_model_switch_from_settings(self) -> None:
+        if not self._model_loaded:
+            return
+        if self._state_machine.state not in (
+            ApplicationState.SOURCE_READY,
+            ApplicationState.MODEL_READY,
+            ApplicationState.RESULT_READY,
+        ):
+            return
+        if self._selected_model_matches_active():
+            return
+        try:
+            model_id, config = self._selected_model_request()
+        except ValueError as exc:
+            self._handle_model_load_failure(str(exc))
+            return
+        self._initiate_model_switch(model_id, config, auto_start=False)
+
+    def _begin_model_load(
+        self,
+        model_id: str,
+        config: dict[str, object],
+        *,
+        auto_start: bool,
+        switching: bool,
+    ) -> None:
+        self._requested_model_id = model_id
+        self._requested_model_config = dict(config)
+        self._auto_start_after_load = bool(auto_start)
+        self._pending_model_request = None
+        self._model_lifecycle.transition_to(ModelLifecycleState.LOADING, strict=False)
+
+        target_state = (
+            ApplicationState.SWITCHING_MODEL
+            if switching
+            else ApplicationState.LOADING_MODEL
+        )
+        if self._state_machine.state != target_state:
+            self._state_machine.transition_to(target_state)
+        self._settings_panel.set_model_stage(
+            "LOADING",
+            "Loading model weights in the isolated inference worker.",
+        )
+        self._header.set_status(BadgeKind.LOADING, "LOADING MODEL")
+        self._apply_button_states()
+
+        if not self._process_manager.is_running:
+            self._process_manager.start_worker()
+        self._process_manager.load_model(model_id, config)
+
+    def _initiate_model_switch(
+        self,
+        model_id: str,
+        config: dict[str, object],
+        *,
+        auto_start: bool,
+    ) -> None:
+        if self._state_machine.state not in (
+            ApplicationState.SOURCE_READY,
+            ApplicationState.MODEL_READY,
+            ApplicationState.RESULT_READY,
+        ):
+            return
+
+        self._pending_model_request = (model_id, dict(config))
+        self._auto_start_after_load = bool(auto_start)
+        self._model_lifecycle.transition_to(ModelLifecycleState.UNLOADING, strict=False)
+        self._state_machine.transition_to(ApplicationState.SWITCHING_MODEL)
+        self._settings_panel.set_model_stage(
+            "UNLOADING",
+            "Releasing the current model before loading the new selection.",
+        )
+        self._header.set_status(BadgeKind.LOADING, "UNLOADING MODEL")
+        self._session.invalidate()
+        self._reset_pipeline_runtime()
+        self._process_manager.unload_model()
+        self._apply_button_states()
+
+    def _load_pending_model_after_unload(self) -> None:
+        pending = self._pending_model_request
+        if pending is None:
+            self._settings_panel.set_model_unloaded()
+            self._sync_model_controls_for_state()
+            return
+        model_id, config = pending
+        self._pending_model_request = None
+        self._begin_model_load(
+            model_id,
+            config,
+            auto_start=self._auto_start_after_load,
+            switching=True,
+        )
+
+    def _on_model_stage_changed(self, event: ModelStageEvent) -> None:
+        if event.stage is ModelStage.LOADING_WEIGHTS:
+            self._model_lifecycle.transition_to(ModelLifecycleState.LOADING, strict=False)
+            self._settings_panel.set_model_stage("LOADING", event.message)
+            self._header.set_status(BadgeKind.LOADING, "LOADING MODEL")
+        elif event.stage is ModelStage.WARMING_UP:
+            self._model_lifecycle.transition_to(ModelLifecycleState.WARMING_UP, strict=False)
+            self._settings_panel.set_model_stage("WARMING UP", event.message)
+            self._header.set_status(BadgeKind.LOADING, "WARMING UP")
+        elif event.stage is ModelStage.UNLOADING:
+            self._model_lifecycle.transition_to(ModelLifecycleState.UNLOADING, strict=False)
+            self._settings_panel.set_model_stage("UNLOADING", event.message)
+            self._header.set_status(BadgeKind.LOADING, "UNLOADING MODEL")
+
+    def _on_source_type_changed(self, _source_type: object) -> None:
+        """Clear source-specific output while preserving a resident model.
+
+        Source controls are locked during inference and model transitions, so
+        this normally runs from SOURCE_READY, MODEL_READY, RESULT_READY, or
+        DISCONNECTED. The model stays resident for a fast start after the next
+        source is configured.
+        """
+        if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
+            self._stop_inference()
+
+        self._session.invalidate()
+        self._depth_view.clear_frame()
+        self._point_cloud_canvas.clear_points()
+        self._viewport_panel.invalidate_camera()
+        self._viewport_panel.set_status(ViewportStatus.IDLE)
+        self._performance_bar.reset_metrics()
+        self._clear_cached_geometry()
+        self._reset_pipeline_runtime()
+
+        if self._state_machine.state is not ApplicationState.DISCONNECTED:
+            self._state_machine.transition_to(ApplicationState.DISCONNECTED, strict=False)
+        self._set_active_model_header()
+        self._apply_button_states()
+
+    def _update_header_vram_after_unload(self, metadata: dict[str, object]) -> None:
+        """Refresh device-wide VRAM from worker cleanup telemetry."""
+        used_gib = _float_metadata(metadata, "after_device_used_gib")
+        total_gib = _float_metadata(metadata, "total_gib")
+        if total_gib is None:
+            total_gib = self._settings_panel.hardware_info.total_memory_gib
+        if used_gib is None or total_gib is None:
+            return
+        self._header.update_gpu_status(
+            self._settings_panel.hardware_info.name,
+            max(0.0, used_gib),
+            max(0.0, total_gib),
+        )
+
     # -- Runtime toolbar handlers ----------------------------------------
 
     def _on_connect_clicked(self) -> None:
         self._state_machine.transition_to(ApplicationState.CONNECTING)
-        self._app_controller.connect_active_source()
+        connected = self._app_controller.connect_active_source()
+        # Only explicit False means the source is not configured. Legacy test
+        # doubles and third-party controllers may still return None.
+        if connected is False:
+            self._state_machine.transition_to(ApplicationState.DISCONNECTED)
+            self._apply_button_states()
+            return
         # Capture widgets expose the asynchronous source status independently.
         self._state_machine.transition_to(ApplicationState.SOURCE_READY)
         self._apply_button_states()
@@ -238,13 +445,17 @@ class InferenceController(QObject):
         if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
             self._stop_inference()
 
-        if self._model_loaded:
-            self._process_manager.unload_model()
+        # Shutdown performs a best-effort worker-side unload synchronously.
+        # Do not queue a separate asynchronous UNLOAD immediately before it.
         self._process_manager.shutdown()
 
+        self._model_lifecycle.reset()
         self._model_loaded = False
         self._requested_model_id = None
+        self._requested_model_config.clear()
+        self._pending_model_request = None
         self._active_model_id = None
+        self._active_model_config_signature = None
         self._active_model_metadata.clear()
         self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_unloaded()
@@ -261,53 +472,48 @@ class InferenceController(QObject):
         self._apply_button_states()
 
     def _on_start_clicked(self) -> None:
-        # Stop keeps the worker model resident for a fast restart.
+        try:
+            model_id, config = self._selected_model_request()
+        except ValueError as exc:
+            self._handle_model_load_failure(str(exc))
+            return
+
+        # Stop and static RESULT_READY keep the worker model resident. Reuse it
+        # only when both the adapter id and its resolved runtime config match.
         if (
             self._state_machine.state in (
+                ApplicationState.SOURCE_READY,
                 ApplicationState.MODEL_READY,
                 ApplicationState.RESULT_READY,
             )
-            and self._model_loaded
+            and self._selected_model_matches_active()
             and self._process_manager.is_running
         ):
             self._begin_running_session()
             return
 
-        load_state = (
-            ApplicationState.SWITCHING_MODEL
-            if self._state_machine.state in (
-                ApplicationState.MODEL_READY,
-                ApplicationState.RESULT_READY,
-            )
-            else ApplicationState.LOADING_MODEL
-        )
-        self._state_machine.transition_to(load_state)
-        self._settings_panel.set_model_loading()
-        self._header.set_status(BadgeKind.LOADING, "LOADING MODEL")
-        self._apply_button_states()
-
-        model_id = self._settings_panel.selected_model_id
-        self._requested_model_id = model_id
-        if model_id == MOGE2_MODEL_ID:
-            config = dict(self._settings_panel.model_runtime_config)
-        elif model_id == MOCK_MODEL_ID:
-            config = {
-                "device": "cpu",
-                "precision": "fp32",
-                "latency_ms": _MOCK_LATENCY_MS,
-            }
-        else:
-            self._handle_model_load_failure(f"Unknown model selection: {model_id!r}")
+        if self._model_loaded and self._state_machine.state in (
+            ApplicationState.SOURCE_READY,
+            ApplicationState.MODEL_READY,
+            ApplicationState.RESULT_READY,
+        ):
+            self._initiate_model_switch(model_id, config, auto_start=True)
             return
 
-        if not self._process_manager.is_running:
-            self._process_manager.start_worker()
-        self._process_manager.load_model(model_id, config)
-        # LOAD_MODEL ack advances MODEL_READY -> RUNNING.
+        self._begin_model_load(
+            model_id,
+            config,
+            auto_start=True,
+            switching=False,
+        )
+        # LOAD_MODEL ack advances to MODEL_READY and optionally RUNNING.
 
     def _begin_running_session(self) -> None:
         """Start a fresh session using the model already resident in the worker."""
+        if self._model_lifecycle.state is not ModelLifecycleState.READY:
+            return
         if self._state_machine.state not in (
+            ApplicationState.SOURCE_READY,
             ApplicationState.MODEL_READY,
             ApplicationState.RESULT_READY,
         ):
@@ -476,15 +682,45 @@ class InferenceController(QObject):
     # -- Worker signal handlers ------------------------------------------
 
     def _on_ack_received(self, ack: Ack) -> None:
-        if ack.command_type != CommandType.LOAD_MODEL:
+        if ack.command_type is CommandType.UNLOAD_MODEL:
+            if not ack.success:
+                self._handle_model_unload_failure(
+                    ack.message or "Model unloading failed."
+                )
+                return
+
+            self._model_lifecycle.transition_to(
+                ModelLifecycleState.UNLOADED,
+                strict=False,
+            )
+            self._update_header_vram_after_unload(dict(ack.metadata or {}))
+            self._model_loaded = False
+            self._active_model_id = None
+            self._active_model_config_signature = None
+            self._active_model_metadata.clear()
+            self._viewport_panel.set_surface_normals_available(False)
+            self._clear_cached_geometry()
+            self._depth_view.clear_frame()
+            self._point_cloud_canvas.clear_points()
+            self._viewport_panel.invalidate_camera()
+            self._viewport_panel.set_status(ViewportStatus.IDLE)
+            self._performance_bar.reset_metrics()
+            self._load_pending_model_after_unload()
+            return
+
+        if ack.command_type is not CommandType.LOAD_MODEL:
             return
 
         if not ack.success:
             self._handle_model_load_failure(ack.message or "Model loading failed.")
             return
 
+        self._model_lifecycle.transition_to(ModelLifecycleState.READY, strict=False)
         self._model_loaded = True
         self._active_model_id = ack.model_id or self._requested_model_id
+        self._active_model_config_signature = model_config_signature(
+            self._requested_model_config
+        )
         self._active_model_metadata = dict(ack.metadata or {})
         if ack.load_time_ms is not None:
             self._active_model_metadata["load_time_ms"] = ack.load_time_ms
@@ -505,13 +741,41 @@ class InferenceController(QObject):
             ApplicationState.SWITCHING_MODEL,
         ):
             self._state_machine.transition_to(ApplicationState.MODEL_READY)
-            self._begin_running_session()
+            should_start = self._auto_start_after_load
+            self._auto_start_after_load = False
+            self._sync_model_controls_for_state()
+            if should_start:
+                self._begin_running_session()
+
+    def _handle_model_unload_failure(self, message: str) -> None:
+        logger.error("Model unload failed: %s", message)
+        self._model_lifecycle.mark_failed()
+        self._model_loaded = False
+        self._active_model_id = None
+        self._active_model_config_signature = None
+        self._active_model_metadata.clear()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
+        self._viewport_panel.set_surface_normals_available(False)
+        self._settings_panel.set_model_error(message, label="UNLOAD FAILED")
+        self._header.set_status(BadgeKind.NOT_RECOMMENDED, "UNLOAD FAILED")
+        if self._state_machine.state is ApplicationState.SWITCHING_MODEL:
+            self._state_machine.transition_to(ApplicationState.SOURCE_READY)
+        else:
+            self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
+        self._performance_bar.set_status(BadgeKind.NOT_RECOMMENDED, "ERROR")
+        self._apply_button_states()
+        self._sync_model_controls_for_state()
 
     def _handle_model_load_failure(self, message: str) -> None:
         logger.error("Model load failed: %s", message)
+        self._model_lifecycle.mark_failed()
         self._model_loaded = False
         self._active_model_id = None
+        self._active_model_config_signature = None
         self._active_model_metadata.clear()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
         self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_error(message, label="LOAD FAILED")
         self._header.set_status(BadgeKind.NOT_RECOMMENDED, "LOAD FAILED")
@@ -528,6 +792,7 @@ class InferenceController(QObject):
             self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
         self._performance_bar.set_status(BadgeKind.NOT_RECOMMENDED, "ERROR")
         self._apply_button_states()
+        self._sync_model_controls_for_state()
 
     def _on_result_ready(self, result: InferenceResult) -> None:
         if not self._session.is_current(result.session_id):
@@ -1128,9 +1393,13 @@ class InferenceController(QObject):
 
     def _on_worker_crashed(self) -> None:
         logger.error("Inference worker process crashed")
+        self._model_lifecycle.mark_failed()
         self._model_loaded = False
         self._active_model_id = None
+        self._active_model_config_signature = None
         self._active_model_metadata.clear()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
         self._viewport_panel.set_surface_normals_available(False)
         self._clear_cached_geometry()
         self._reset_pipeline_runtime()
@@ -1146,9 +1415,13 @@ class InferenceController(QObject):
     def restart_worker(self) -> None:
         """Public entry point for a future Restart Worker UI action."""
         self._process_manager.restart_worker()
+        self._model_lifecycle.reset()
         self._model_loaded = False
         self._active_model_id = None
+        self._active_model_config_signature = None
         self._active_model_metadata.clear()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
         self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_unloaded()
         self._clear_cached_geometry()
@@ -1158,11 +1431,39 @@ class InferenceController(QObject):
 
     def _on_state_changed(self, _old_state, new_state) -> None:
         self._apply_button_states()
+        self._sync_model_controls_for_state()
+        self._sync_source_controls_for_state()
         kind, text = _STATE_TO_FOOTER_BADGE.get(
             new_state,
             (BadgeKind.NOT_INSTALLED, "IDLE"),
         )
         self._performance_bar.set_status(kind, text)
+
+    def _sync_model_controls_for_state(self) -> None:
+        locked = self._state_machine.state in {
+            ApplicationState.CONNECTING,
+            ApplicationState.LOADING_MODEL,
+            ApplicationState.RUNNING,
+            ApplicationState.PAUSED,
+            ApplicationState.STOPPING,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECONNECTING,
+            ApplicationState.SHUTTING_DOWN,
+        }
+        self._settings_panel.set_model_controls_locked(locked)
+
+    def _sync_source_controls_for_state(self) -> None:
+        locked = self._state_machine.state in {
+            ApplicationState.CONNECTING,
+            ApplicationState.LOADING_MODEL,
+            ApplicationState.RUNNING,
+            ApplicationState.PAUSED,
+            ApplicationState.STOPPING,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECONNECTING,
+            ApplicationState.SHUTTING_DOWN,
+        }
+        self._app_controller.set_source_controls_enabled(not locked)
 
     def _apply_button_states(self) -> None:
         buttons = self._state_machine.button_states
@@ -1181,8 +1482,16 @@ class InferenceController(QObject):
         self._pipeline_timer.stop()
         self._settings_refresh_timer.stop()
         self._process_manager.shutdown()
+        self._model_lifecycle.reset()
+        self._model_loaded = False
+        self._active_model_id = None
+        self._active_model_config_signature = None
         self._settings_panel.set_model_unloaded()
         self._point_cloud_canvas.close()
+
+    @property
+    def model_lifecycle_state(self) -> ModelLifecycleState:
+        return self._model_lifecycle.state
 
     @property
     def state_machine(self) -> StateMachine:

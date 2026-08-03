@@ -33,9 +33,12 @@ class BaseGeometryModel(ABC):
         """Run inference on one frame and return a populated result."""
 
     @abstractmethod
-    def unload(self) -> None:
-        """Release resources (GPU memory, file handles) before switching
-        models or shutting down."""
+    def unload(self) -> dict[str, Any] | None:
+        """Release resources before switching models or shutting down.
+
+        Implementations may return lightweight cleanup telemetry containing
+        only picklable primitives.
+        """
 
     @abstractmethod
     def get_metadata(self) -> dict[str, Any]:

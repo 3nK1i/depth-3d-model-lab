@@ -251,8 +251,8 @@ class Moge2GeometryModel(BaseGeometryModel):
                 raise self._oom_error(exc) from exc
             raise
 
-    def unload(self) -> None:
-        self._release_model()
+    def unload(self) -> dict[str, Any]:
+        return self._release_model()
 
     def get_metadata(self) -> dict[str, Any]:
         return {
@@ -457,11 +457,58 @@ class Moge2GeometryModel(BaseGeometryModel):
         if not self._loaded or self._model is None:
             raise RuntimeError("Moge2GeometryModel is not loaded.")
 
-    def _release_model(self) -> None:
+    def _release_model(self) -> dict[str, Any]:
+        """Release model references and return lightweight cleanup telemetry."""
+        started = time.perf_counter()
+        device = self._device
+        before_allocated, before_reserved, _, before_device_used, total = self._vram_usage()
+
+        torch = self._torch
+        if (
+            torch is not None
+            and device is not None
+            and getattr(device, "type", None) == "cuda"
+            and hasattr(torch, "cuda")
+        ):
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize(device)
+            except Exception:  # noqa: BLE001 - cleanup must remain best effort
+                pass
+
         self._loaded = False
+        model = self._model
         self._model = None
+        if model is not None:
+            del model
         gc.collect()
         self._clear_cuda_cache()
+        if (
+            torch is not None
+            and device is not None
+            and getattr(device, "type", None) == "cuda"
+            and hasattr(torch, "cuda")
+        ):
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats(device)
+            except Exception:  # noqa: BLE001 - cleanup remains best effort
+                pass
+
+        after_allocated, after_reserved, _, after_device_used, _ = self._vram_usage()
+        self._device = None
+        return {
+            "released": True,
+            "device": str(device) if device is not None else "",
+            "before_allocated_gib": before_allocated,
+            "before_reserved_gib": before_reserved,
+            "before_device_used_gib": before_device_used,
+            "after_allocated_gib": after_allocated,
+            "after_reserved_gib": after_reserved,
+            "after_device_used_gib": after_device_used,
+            "total_gib": total,
+            "cleanup_time_ms": (time.perf_counter() - started) * 1000.0,
+        }
 
     def _clear_cuda_cache(self) -> None:
         torch = self._torch

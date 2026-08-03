@@ -7,7 +7,12 @@ import queue
 import numpy as np
 
 from core.inference.process_manager import InferenceProcessManager
-from core.runtime.messages import CommandType, FrameRequest
+from core.runtime.messages import (
+    CommandType,
+    FrameRequest,
+    ModelStage,
+    ModelStageEvent,
+)
 
 
 class _FakeConnection:
@@ -20,6 +25,18 @@ class _FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _PollingConnection(_FakeConnection):
+    def __init__(self, items) -> None:
+        super().__init__()
+        self.items = list(items)
+
+    def poll(self, _timeout=0) -> bool:
+        return bool(self.items)
+
+    def recv(self):
+        return self.items.pop(0)
 
 
 class _ClosableQueue(queue.Queue):
@@ -94,3 +111,26 @@ def test_dispose_ipc_closes_and_clears_resources(qapp) -> None:
     assert manager._frame_queue is None
     assert manager._result_queue is None
     assert manager._process is None
+
+
+def test_unload_sends_command_and_starts_watchdog(qapp) -> None:
+    manager = InferenceProcessManager()
+    connection = _FakeConnection()
+    manager._parent_conn = connection
+
+    manager.unload_model()
+
+    assert connection.sent[-1].type is CommandType.UNLOAD_MODEL
+    assert manager._watchdog.is_watching
+    manager._watchdog.cancel()
+
+
+def test_poll_routes_model_stage_without_treating_it_as_ack(qtbot) -> None:
+    manager = InferenceProcessManager()
+    event = ModelStageEvent(ModelStage.WARMING_UP, "moge-2", "Priming kernels")
+    manager._parent_conn = _PollingConnection([event])
+
+    with qtbot.waitSignal(manager.model_stage_changed, timeout=500) as signal:
+        manager._poll()
+
+    assert signal.args == [event]

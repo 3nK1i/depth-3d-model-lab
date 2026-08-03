@@ -110,9 +110,15 @@ class MockGeometryModel(BaseGeometryModel):
             precision="FP32",
         )
 
-    def unload(self) -> None:
+    def unload(self) -> dict[str, Any]:
+        released_frames = self._frame_counter
         self._loaded = False
         self._frame_counter = 0
+        return {
+            "released": True,
+            "released_frames": released_frames,
+            "device": "cpu",
+        }
 
     def get_metadata(self) -> dict[str, Any]:
         return {

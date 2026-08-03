@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-3.2 are implemented:
+Phases 1-4 and Phase 5 Steps 1-4.1 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -20,7 +20,7 @@ Phases 1-4 and Phase 5 Steps 1-3.2 are implemented:
 - Functional Select, Orbit, Pan, Zoom, Fit and viewport-focus controls
 - Immediate RGB/depth/normal recoloring and point-style updates from cached results
 - Live temporal smoothing, background removal and immediate render-setting updates
-- Functional floating Original Source inspection toolbar with save, copy, rotate, fit, grid and focus actions
+- Functional floating Original Source inspection toolbar with save, rotate, fit, grid and focus actions
 - Synchronized Depth Map colormap/range controls with panel focus mode
 
 ## Requirements
@@ -86,7 +86,6 @@ The right sidebar's colormap, depth range, edge filtering, background removal, b
 The **Original Source** toolbar is overlaid on the media surface and contains only real actions:
 
 - save the current frame
-- copy the current frame to the clipboard
 - rotate the preview clockwise (display only)
 - focus the Source panel, with `Esc` to restore the full interface
 - toggle fit-to-panel versus 1:1 display
@@ -95,6 +94,27 @@ The **Original Source** toolbar is overlaid on the media surface and contains on
 The **Depth Map** footer mirrors the sidebar colormap, minimum depth and maximum depth values. Changes made in either location update the other and immediately rerender the cached depth/geometry result. The redundant settings-gear placeholder has been removed; the remaining fullscreen action focuses the Depth panel and exits with `Esc`.
 
 Public MoGe-2 checkpoints continue to load anonymously with `token=False`. The application suppresses only Hugging Face's harmless anonymous-rate-limit advisory while preserving real network, repository, cache and authentication errors.
+
+## Model lifecycle
+
+The model that lives in the spawned worker has an explicit lifecycle independent
+of source/runtime state:
+
+```text
+UNLOADED → LOADING → WARMING UP → READY → UNLOADING → UNLOADED
+                         ↘ FAILED ↗
+```
+
+When inference is stopped or a static result is ready, the MODEL and GPU Profile
+controls are unlocked. Changing the model or a load-affecting profile setting
+performs an acknowledged unload followed by a new load/warm-up in the same
+worker process. The connected image/video/camera/RTSP source is preserved.
+Per-frame/render settings such as Point Budget do not reload model weights.
+
+MoGe-2 unload synchronizes pending CUDA work, releases model references, runs
+garbage collection, clears the PyTorch allocator cache and returns cleanup
+telemetry to the UI process. Development Mock follows the same lifecycle
+contract so switching can be tested without CUDA or model downloads.
 
 ## Tests
 

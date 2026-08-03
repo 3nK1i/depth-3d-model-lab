@@ -83,3 +83,46 @@ def test_worker_can_restart_with_fresh_ipc(qtbot) -> None:
         assert manager._result_queue is not None
     finally:
         manager.shutdown(timeout_s=3.0)
+
+
+def test_worker_unloads_and_reloads_model_without_process_restart(qtbot) -> None:
+    manager = InferenceProcessManager(stop_timeout_ms=3_000)
+    try:
+        manager.start_worker()
+        qtbot.waitUntil(lambda: manager.is_running, timeout=5_000)
+        process = manager._process
+
+        _wait_for_ack(
+            qtbot,
+            manager,
+            lambda: manager.load_model(
+                MOCK_MODEL_ID,
+                {"device": "cpu", "precision": "fp32", "latency_ms": 0.0},
+            ),
+            CommandType.LOAD_MODEL,
+        )
+
+        unload_ack = _wait_for_ack(
+            qtbot,
+            manager,
+            manager.unload_model,
+            CommandType.UNLOAD_MODEL,
+        )
+        assert unload_ack.metadata and unload_ack.metadata["released"] is True
+        assert unload_ack.unload_time_ms is not None
+        assert manager._process is process
+        assert manager.is_running
+
+        reload_ack = _wait_for_ack(
+            qtbot,
+            manager,
+            lambda: manager.load_model(
+                MOCK_MODEL_ID,
+                {"device": "cpu", "precision": "fp32", "latency_ms": 0.0},
+            ),
+            CommandType.LOAD_MODEL,
+        )
+        assert reload_ack.model_id == MOCK_MODEL_ID
+        assert manager._process is process
+    finally:
+        manager.shutdown(timeout_s=3.0)

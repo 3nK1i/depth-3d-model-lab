@@ -21,6 +21,23 @@ class CommandType(Enum):
     SHUTDOWN = "shutdown"
 
 
+class ModelStage(Enum):
+    """Fine-grained worker progress for model lifecycle UI feedback."""
+
+    LOADING_WEIGHTS = "loading_weights"
+    WARMING_UP = "warming_up"
+    UNLOADING = "unloading"
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStageEvent:
+    """Progress event emitted before a potentially long worker operation."""
+
+    stage: ModelStage
+    model_id: str = ""
+    message: str = ""
+
+
 @dataclass(frozen=True, slots=True)
 class Command:
     """Sent from the UI process to the worker over the control pipe."""
@@ -36,7 +53,7 @@ class Ack:
     """Worker acknowledgement for a control command.
 
     ``load_time_ms`` remains the total load + warm-up duration for backward
-    compatibility. The two explicit fields provide the accurate breakdown.
+    compatibility. The explicit timing fields provide the accurate load, warm-up and unload breakdown.
     """
 
     command_type: CommandType
@@ -47,6 +64,7 @@ class Ack:
     load_time_ms: float | None = None
     model_load_time_ms: float | None = None
     warmup_time_ms: float | None = None
+    unload_time_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

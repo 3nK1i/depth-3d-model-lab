@@ -366,7 +366,12 @@ class SettingsPanel(QFrame):
         self._gpu_profile.setEnabled(not locked)
 
     def set_model_loading(self) -> None:
-        self._model_badge.setText("LOADING")
+        self.set_model_stage("LOADING", "Loading model weights.")
+
+    def set_model_stage(self, label: str, message: str = "") -> None:
+        """Display a worker lifecycle stage and lock unsafe controls."""
+        self._model_badge.setText(str(label).upper())
+        self._model_badge.setToolTip(message)
         self.set_model_controls_locked(True)
 
     def set_model_loaded(self, metadata: dict | None) -> None:
@@ -383,7 +388,7 @@ class SettingsPanel(QFrame):
             str(metadata.get("precision", "")),
         ]
         self._model_badge.setToolTip(" · ".join(v for v in details if v))
-        self.set_model_controls_locked(True)
+        # The controller unlocks these controls only in safe idle/result states.
 
     def set_model_unloaded(self) -> None:
         self.set_model_controls_locked(False)

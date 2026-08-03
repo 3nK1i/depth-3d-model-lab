@@ -145,7 +145,9 @@ def test_load_metadata_and_warmup_are_runtime_ready() -> None:
 
 def test_unload_prevents_further_inference() -> None:
     adapter = _adapter()
-    adapter.unload()
+    metadata = adapter.unload()
+    assert metadata["released"] is True
+    assert metadata["cleanup_time_ms"] >= 0.0
     image = np.zeros((8, 8, 3), dtype=np.uint8)
 
     try:

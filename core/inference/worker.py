@@ -10,12 +10,21 @@ import queue
 import time
 from multiprocessing.connection import Connection
 from multiprocessing.queues import Queue as MPQueue
+from typing import Any
 
 from core.models.adapters.mock_adapter import MockGeometryModel
 from core.models.adapters.moge2_adapter import Moge2GeometryModel
 from core.models.base import BaseGeometryModel
 from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
-from core.runtime.messages import Ack, Command, CommandType, FrameRequest, InferenceResult
+from core.runtime.messages import (
+    Ack,
+    Command,
+    CommandType,
+    FrameRequest,
+    InferenceResult,
+    ModelStage,
+    ModelStageEvent,
+)
 
 _MODEL_REGISTRY: dict[str, type[BaseGeometryModel]] = {
     MOGE2_MODEL_ID: Moge2GeometryModel,
@@ -51,7 +60,22 @@ def worker_main(
                 warmup_time_ms: float | None = None
                 try:
                     if active_model is not None:
+                        _send_stage(
+                            control_conn,
+                            ModelStage.UNLOADING,
+                            active_model_id or "",
+                            "Releasing the current model before loading the new selection.",
+                        )
                         active_model.unload()
+                        active_model = None
+                        active_model_id = None
+
+                    _send_stage(
+                        control_conn,
+                        ModelStage.LOADING_WEIGHTS,
+                        command.model_id,
+                        "Loading model weights and allocating runtime resources.",
+                    )
                     active_model = _build_model(command.model_id)
                     config = command.config or {}
 
@@ -63,6 +87,12 @@ def worker_main(
                     )
                     model_load_time_ms = (time.perf_counter() - load_started) * 1000.0
 
+                    _send_stage(
+                        control_conn,
+                        ModelStage.WARMING_UP,
+                        command.model_id,
+                        "Priming model kernels and caches with a warm-up inference.",
+                    )
                     warmup_started = time.perf_counter()
                     active_model.warmup()
                     warmup_time_ms = (time.perf_counter() - warmup_started) * 1000.0
@@ -102,13 +132,39 @@ def worker_main(
                     )
 
             elif command.type == CommandType.UNLOAD_MODEL:
-                if active_model is not None:
-                    active_model.unload()
-                active_model = None
-                active_model_id = None
-                _drain(frame_queue)
-                _drain(result_queue)
-                control_conn.send(Ack(command.type, True))
+                unload_started = time.perf_counter()
+                previous_model_id = active_model_id or ""
+                _send_stage(
+                    control_conn,
+                    ModelStage.UNLOADING,
+                    previous_model_id,
+                    "Releasing model resources and clearing allocator caches.",
+                )
+                metadata: dict[str, Any] = {}
+                success = True
+                message = ""
+                try:
+                    if active_model is not None:
+                        metadata = dict(active_model.unload() or {})
+                except Exception as exc:  # noqa: BLE001 - acknowledge cleanup failure
+                    success = False
+                    message = str(exc)
+                finally:
+                    active_model = None
+                    active_model_id = None
+                    paused = True
+                    _drain(frame_queue)
+                    _drain(result_queue)
+                control_conn.send(
+                    Ack(
+                        command.type,
+                        success,
+                        message,
+                        model_id=previous_model_id,
+                        metadata=metadata,
+                        unload_time_ms=(time.perf_counter() - unload_started) * 1000.0,
+                    )
+                )
 
             elif command.type == CommandType.PAUSE:
                 paused = True
@@ -126,11 +182,37 @@ def worker_main(
                 control_conn.send(Ack(command.type, True))
 
             elif command.type == CommandType.SHUTDOWN:
+                success = True
+                message = ""
+                metadata: dict[str, Any] = {}
+                unload_time_ms: float | None = None
                 if active_model is not None:
-                    active_model.unload()
+                    _send_stage(
+                        control_conn,
+                        ModelStage.UNLOADING,
+                        active_model_id or "",
+                        "Releasing model resources before worker shutdown.",
+                    )
+                    started = time.perf_counter()
+                    try:
+                        metadata = dict(active_model.unload() or {})
+                    except Exception as exc:  # noqa: BLE001
+                        success = False
+                        message = str(exc)
+                    unload_time_ms = (time.perf_counter() - started) * 1000.0
+                active_model = None
+                active_model_id = None
                 _drain(frame_queue)
                 _drain(result_queue)
-                control_conn.send(Ack(command.type, True))
+                control_conn.send(
+                    Ack(
+                        command.type,
+                        success,
+                        message,
+                        metadata=metadata,
+                        unload_time_ms=unload_time_ms,
+                    )
+                )
                 return
 
         if paused or active_model is None:
@@ -183,6 +265,15 @@ def worker_main(
                     error=str(exc),
                 ),
             )
+
+
+def _send_stage(
+    control_conn: Connection,
+    stage: ModelStage,
+    model_id: str,
+    message: str,
+) -> None:
+    control_conn.send(ModelStageEvent(stage=stage, model_id=model_id, message=message))
 
 
 def _put_latest(q: MPQueue, item: InferenceResult) -> None:

@@ -1,11 +1,11 @@
 # Depth & 3D Model Lab — Test Strategy
 
-Scope: Phase 5 Step 0 through Step 3.2.
+Scope: Phase 5 Step 0 through Step 4.1.
 
 The test pack is designed for the current architecture: PyQt6 UI, a spawned
 inference worker, Development Mock, MoGe-2, VisPy point rendering, hardware
 profiles, latest-frame backpressure, static-image lifecycle, telemetry, and
-viewport controls, media inspection toolbars, and synchronized depth controls.
+viewport controls, media inspection toolbars, synchronized depth controls, and explicit model unload/reload lifecycle.
 
 ## Principles
 
@@ -171,10 +171,24 @@ background removal, disabled Mesh/VSync placeholders, and temporal smoothing.
 - `tests/ui/test_view_content_states.py`
 - `tests/unit/test_moge2_adapter.py`
 
-Validates the floating Source toolbar geometry, truthful disabled states, save/copy,
-preview rotation, fit/1:1, grid, Source/Depth focus modes, bidirectional depth
+Validates the floating Source toolbar geometry, truthful disabled states, save, preview rotation, fit/1:1, grid, Source/Depth focus modes, bidirectional depth
 control synchronization, removal of the redundant gear placeholder, and scoped
 suppression of only the public Hugging Face rate-limit advisory.
+
+### Step 4.1 — Explicit model unload/reload lifecycle
+
+- `tests/unit/test_model_lifecycle.py`
+- `tests/unit/test_runtime_messages.py`
+- `tests/unit/test_mock_adapter.py`
+- `tests/unit/test_moge2_adapter.py`
+- `tests/ui/test_process_manager_unit.py`
+- `tests/ui/test_main_window_shell.py`
+- `tests/integration/test_inference_lifecycle.py`
+
+Validates UNLOADED/LOADING/WARMING UP/READY/UNLOADING/FAILED transitions,
+worker progress messages, acknowledged cleanup, same-process unload/reload,
+MoGe CUDA cleanup telemetry, Development Mock parity, safe MoGe↔Mock switching,
+source preservation, and no unnecessary reload when only point budget changes.
 
 ### Geometry export foundation
 

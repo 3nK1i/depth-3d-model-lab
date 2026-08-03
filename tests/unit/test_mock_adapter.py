@@ -53,7 +53,9 @@ def test_mock_requires_load_and_cannot_infer_after_unload() -> None:
         model.warmup()
 
     model.load("cpu", "fp32", {"latency_ms": 0.0})
-    model.unload()
+    metadata = model.unload()
+    assert metadata["released"] is True
+    assert metadata["device"] == "cpu"
     with pytest.raises(RuntimeError, match="before load"):
         model.infer(FrameRequest(1, 1, np.zeros((2, 2, 3), np.uint8)))
 

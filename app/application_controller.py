@@ -55,6 +55,7 @@ class ApplicationController(QObject):
     frame_captured = pyqtSignal(object)  # SourceFrame — for anything else
     # (e.g. Phase 3's InferenceController) that wants live frames without
     # this controller needing to know inference exists at all.
+    source_type_changed = pyqtSignal(object)  # SourceType after active-source cleanup
 
     def __init__(
         self,
@@ -87,6 +88,7 @@ class ApplicationController(QObject):
         source_bar.browse_image_clicked.connect(self._on_browse_image)
         source_bar.browse_video_clicked.connect(self._on_browse_video)
         source_bar.rtsp_test_clicked.connect(self._on_rtsp_test)
+        source_bar.source_type_changed.connect(self._on_source_type_changed)
 
         self._test_source: BaseSource | None = None
         self._enumerator = CameraEnumerator()
@@ -95,21 +97,27 @@ class ApplicationController(QObject):
 
     # -- Connect/Disconnect entry points, called from the runtime toolbar --
 
-    def connect_active_source(self) -> None:
-        """Connect whichever source type is currently selected.
+    def connect_active_source(self) -> bool:
+        """Connect the selected source and report whether it is configured.
 
-        Image/Video are normally started directly from Browse (spec §5A:
-        "run automatically after opening"); calling Connect while one of
-        them is already loaded simply re-sends the last frame.
+        Image and video files are opened from Browse. Their Connect action is
+        valid only when a matching source object already exists. Camera and
+        RTSP create their source object here. Returning ``False`` prevents the
+        runtime state machine from claiming SOURCE READY for an empty field.
         """
         source_type = self._source_bar.active_type
         if source_type is SourceType.CAMERA:
-            self._start_camera()
-        elif source_type is SourceType.RTSP:
-            self._start_rtsp()
-        else:
+            return self._start_camera()
+        if source_type is SourceType.RTSP:
+            return self._start_rtsp()
+        if source_type is SourceType.IMAGE:
+            if not isinstance(self._active_source, ImageSource):
+                return False
             self.resend_current_frame()
-        # VIDEO: nothing to do — Browse already started playback.
+            return True
+        if source_type is SourceType.VIDEO:
+            return isinstance(self._active_source, VideoSource)
+        return False
 
     def resend_current_frame(self) -> None:
         """Re-emit the active source's current frame without re-reading
@@ -158,13 +166,14 @@ class ApplicationController(QObject):
         self._source_bar.set_video_path_display(path)
         self._replace_active_source(VideoSource(path))
 
-    def _start_rtsp(self) -> None:
+    def _start_rtsp(self) -> bool:
         """Persistent RTSP connect — stays connected until Disconnect."""
         url = self._source_bar.rtsp_url()
         if not url:
-            return
+            return False
         logger.info("Connecting to RTSP stream: %s", sanitize_rtsp_url(url))
         self._replace_active_source(RtspSource(url))
+        return True
 
     def _on_rtsp_test(self) -> None:
         """Bounded connectivity probe: opens the stream just long enough
@@ -191,11 +200,26 @@ class ApplicationController(QObject):
         test_source.error_occurred.connect(self._on_error)
         test_source.start()
 
-    def _start_camera(self) -> None:
+    def _start_camera(self) -> bool:
         device_index, width, height, fps = self._source_bar.camera_config()
         self._replace_active_source(
             CameraSource(device_index, width=width, height=height, fps=fps)
         )
+        return True
+
+    def _on_source_type_changed(self, source_type: SourceType) -> None:
+        """Invalidate the previous source before exposing a new type.
+
+        A source selector is not merely a visual tab: any resident image,
+        video, camera, or RTSP object belongs to the previous type. Clearing it
+        first prevents combinations such as VIDEO + an old image + CONNECTED.
+        """
+        self.disconnect_active_source()
+        self.source_type_changed.emit(source_type)
+
+    def set_source_controls_enabled(self, enabled: bool) -> None:
+        """Lock source selection during unsafe runtime transitions."""
+        self._source_bar.set_source_controls_enabled(enabled)
 
     # -- Source lifecycle plumbing ------------------------------------------
 

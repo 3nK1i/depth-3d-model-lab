@@ -84,3 +84,12 @@ def test_button_states_are_centralized(
     assert buttons.pause_resume_enabled is pause
     assert buttons.stop_enabled is stop
     assert buttons.is_paused is is_paused
+
+
+def test_source_ready_can_run_with_a_resident_model_or_switch_it() -> None:
+    machine = StateMachine()
+    machine.transition_to(ApplicationState.CONNECTING)
+    machine.transition_to(ApplicationState.SOURCE_READY)
+
+    assert machine.can_transition_to(ApplicationState.RUNNING)
+    assert machine.can_transition_to(ApplicationState.SWITCHING_MODEL)

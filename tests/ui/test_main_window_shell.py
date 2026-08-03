@@ -448,3 +448,128 @@ def _left_button():
     from PyQt6.QtCore import Qt
 
     return Qt.MouseButton.LeftButton
+
+
+def test_loaded_model_can_switch_to_mock_without_disconnecting_source(
+    window, qtbot, monkeypatch
+):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    unload_calls: list[bool] = []
+    load_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "unload_model",
+        lambda: unload_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, config=None: load_calls.append((model_id, dict(config or {}))),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    qtbot.mouseClick(toolbar._stop_btn, _left_button())
+
+    mock_index = window._settings_panel._model_combo.findData(MOCK_MODEL_ID)
+    window._settings_panel._model_combo.setCurrentIndex(mock_index)
+
+    assert controller.state_machine.state is ApplicationState.SWITCHING_MODEL
+    assert unload_calls == [True]
+    assert window._runtime_toolbar._disconnect_btn.isEnabled() is False
+
+    controller._on_ack_received(
+        Ack(
+            CommandType.UNLOAD_MODEL,
+            True,
+            model_id=MOGE2_MODEL_ID,
+            metadata={"released": True},
+            unload_time_ms=5.0,
+        )
+    )
+    assert load_calls[-1][0] == MOCK_MODEL_ID
+
+    controller._on_ack_received(
+        Ack(
+            CommandType.LOAD_MODEL,
+            True,
+            model_id=MOCK_MODEL_ID,
+            metadata={
+                "id": MOCK_MODEL_ID,
+                "display_name": "Development Mock",
+                "is_metric": False,
+                "precision": "FP32",
+                "device": "cpu",
+                "outputs": {"depth": True, "normals": False},
+            },
+        )
+    )
+
+    assert controller.state_machine.state is ApplicationState.MODEL_READY
+    assert controller._active_model_id == MOCK_MODEL_ID
+    assert window._settings_panel._model_combo.isEnabled()
+    assert window._runtime_toolbar._disconnect_btn.isEnabled()
+
+
+def test_worker_model_stage_updates_visible_badge(window):
+    from core.runtime.messages import ModelStage, ModelStageEvent
+
+    controller = window._inference_controller
+    controller._on_model_stage_changed(
+        ModelStageEvent(
+            ModelStage.WARMING_UP,
+            model_id=MOGE2_MODEL_ID,
+            message="Priming kernels",
+        )
+    )
+
+    assert window._settings_panel._model_badge.text() == "WARMING UP"
+    assert "Priming kernels" in window._settings_panel._model_badge.toolTip()
+
+
+def test_point_budget_change_does_not_reload_resident_model(
+    window, qtbot, monkeypatch
+):
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+
+    # UI tests share an isolated QSettings store for the pytest session.
+    # Earlier persistence tests may leave Development Mock selected, so make
+    # this regression test self-contained and explicitly select MoGe-2 before
+    # simulating a successful MoGe load acknowledgement.
+    model_combo = window._settings_panel._model_combo
+    moge_index = model_combo.findData(MOGE2_MODEL_ID)
+    assert moge_index >= 0
+    model_combo.setCurrentIndex(moge_index)
+    assert window._settings_panel.selected_model_id == MOGE2_MODEL_ID
+    unload_calls: list[bool] = []
+    load_calls: list[str] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "unload_model",
+        lambda: unload_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, _config=None: load_calls.append(model_id),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    qtbot.mouseClick(toolbar._stop_btn, _left_button())
+    assert controller.state_machine.state is ApplicationState.MODEL_READY
+
+    budget = window._settings_panel._point_budget
+    target = budget.findText("500K")
+    if target < 0:
+        target = (budget.currentIndex() + 1) % budget.count()
+    budget.setCurrentIndex(target)
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+
+    assert controller.state_machine.state is ApplicationState.RUNNING
+    assert unload_calls == []
+    assert load_calls == [MOGE2_MODEL_ID]

@@ -7,7 +7,15 @@ import pickle
 import numpy as np
 import pytest
 
-from core.runtime.messages import Ack, Command, CommandType, FrameRequest, InferenceResult
+from core.runtime.messages import (
+    Ack,
+    Command,
+    CommandType,
+    FrameRequest,
+    InferenceResult,
+    ModelStage,
+    ModelStageEvent,
+)
 
 
 def test_frame_request_pickle_round_trip_preserves_array_and_metadata() -> None:
@@ -59,3 +67,16 @@ def test_control_messages_are_frozen() -> None:
         command.model_id = "other"  # type: ignore[misc]
     with pytest.raises((AttributeError, TypeError)):
         ack.success = False  # type: ignore[misc]
+
+
+def test_model_stage_event_is_picklable_and_frozen() -> None:
+    event = ModelStageEvent(
+        stage=ModelStage.WARMING_UP,
+        model_id="moge-2",
+        message="Priming kernels",
+    )
+    restored = pickle.loads(pickle.dumps(event))
+    assert restored.stage is ModelStage.WARMING_UP
+    assert restored.model_id == "moge-2"
+    with pytest.raises((AttributeError, TypeError)):
+        event.message = "changed"  # type: ignore[misc]

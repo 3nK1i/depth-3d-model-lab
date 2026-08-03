@@ -216,6 +216,13 @@ class SourceBar(QWidget):
     def set_video_path_display(self, path: str) -> None:
         self._video_path_edit.setText(path)
 
+    def set_source_controls_enabled(self, enabled: bool) -> None:
+        """Enable or lock source type and configuration controls together."""
+        enabled = bool(enabled)
+        for button in self._type_buttons.values():
+            button.setEnabled(enabled)
+        self._stack.setEnabled(enabled)
+
     @property
     def active_type(self) -> SourceType:
         return self._active_type

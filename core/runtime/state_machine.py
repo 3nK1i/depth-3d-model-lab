@@ -40,6 +40,8 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
     ApplicationState.SOURCE_READY: frozenset(
         {
             ApplicationState.LOADING_MODEL,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RUNNING,
             ApplicationState.DISCONNECTED,
             ApplicationState.RECONNECTING,
             ApplicationState.ERROR,

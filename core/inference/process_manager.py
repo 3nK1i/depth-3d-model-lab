@@ -23,7 +23,14 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from core.inference.worker import worker_main
-from core.runtime.messages import Ack, Command, CommandType, FrameRequest, InferenceResult
+from core.runtime.messages import (
+    Ack,
+    Command,
+    CommandType,
+    FrameRequest,
+    InferenceResult,
+    ModelStageEvent,
+)
 from core.runtime.watchdog import DEFAULT_TIMEOUT_MS, CommandWatchdog
 
 _POLL_INTERVAL_MS = 20
@@ -36,6 +43,7 @@ class InferenceProcessManager(QObject):
 
     ack_received = pyqtSignal(object)  # Ack
     result_ready = pyqtSignal(object)  # InferenceResult
+    model_stage_changed = pyqtSignal(object)  # ModelStageEvent
     worker_unresponsive = pyqtSignal(object)  # CommandType that timed out
     worker_crashed = pyqtSignal()
 
@@ -112,7 +120,7 @@ class InferenceProcessManager(QObject):
         self._send(Command(type=CommandType.LOAD_MODEL, model_id=model_id, config=config or {}))
 
     def unload_model(self) -> None:
-        self._send(Command(type=CommandType.UNLOAD_MODEL))
+        self._send(Command(type=CommandType.UNLOAD_MODEL), watch=True)
 
     def pause(self) -> None:
         self._send(Command(type=CommandType.PAUSE))
@@ -181,9 +189,12 @@ class InferenceProcessManager(QObject):
         if self._parent_conn is not None:
             try:
                 while self._parent_conn.poll(0):
-                    ack: Ack = self._parent_conn.recv()
-                    self._watchdog.acknowledge(ack.command_type)
-                    self.ack_received.emit(ack)
+                    message = self._parent_conn.recv()
+                    if isinstance(message, Ack):
+                        self._watchdog.acknowledge(message.command_type)
+                        self.ack_received.emit(message)
+                    elif isinstance(message, ModelStageEvent):
+                        self.model_stage_changed.emit(message)
             except (BrokenPipeError, OSError, EOFError):
                 self.worker_crashed.emit()
 
