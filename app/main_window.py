@@ -49,11 +49,19 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()
-        self._viewport_focus_mode = False
+        self._focus_target: str | None = None
+        self._viewport_focus_mode = False  # Backward-compatible test/public state.
         self._saved_main_splitter_sizes: list[int] | None = None
         self._saved_left_splitter_sizes: list[int] | None = None
+        self._saved_top_splitter_sizes: list[int] | None = None
 
         self._build_ui()
+        self._original_view.fullscreen_requested.connect(
+            lambda: self._toggle_panel_focus("source")
+        )
+        self._depth_view.fullscreen_requested.connect(
+            lambda: self._toggle_panel_focus("depth")
+        )
         self._viewport_panel.fullscreen_requested.connect(self._toggle_viewport_focus)
         self._sync_header_hardware()
 
@@ -70,7 +78,7 @@ class MainWindow(QMainWindow):
             self._settings_panel,
         )
         self._inference_controller.viewport_escape_requested.connect(
-            self._exit_viewport_focus
+            self._exit_focus_mode
         )
         self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
         self._restore_layout()
@@ -200,59 +208,96 @@ class MainWindow(QMainWindow):
         )
         self._header.update_cuda_status(cuda_label)
 
-    # -- Viewport focus mode ----------------------------------------------
+    # -- Panel focus mode -------------------------------------------------
+
+    def _toggle_panel_focus(self, target: str) -> None:
+        self._set_focus_target(None if self._focus_target == target else target)
 
     def _toggle_viewport_focus(self) -> None:
-        self._set_viewport_focus_mode(not self._viewport_focus_mode)
+        self._toggle_panel_focus("viewport")
 
     def _exit_viewport_focus(self) -> None:
-        if self._viewport_focus_mode:
-            self._set_viewport_focus_mode(False)
+        """Backward-compatible alias retained for existing integrations."""
+        self._exit_focus_mode()
+
+    def _exit_focus_mode(self) -> None:
+        if self._focus_target is not None:
+            self._set_focus_target(None)
 
     def _set_viewport_focus_mode(self, enabled: bool) -> None:
-        """Maximize only the 3D viewport while preserving the window state.
+        """Backward-compatible entry point used by the existing tests."""
+        self._set_focus_target("viewport" if enabled else None)
 
-        This is an in-window focus mode rather than an operating-system
-        fullscreen toggle. It avoids recreating the VisPy/OpenGL surface and
-        restores the user's splitter proportions exactly.
-        """
-        enabled = bool(enabled)
-        if enabled == self._viewport_focus_mode:
-            self._viewport_panel.set_fullscreen_active(enabled)
+    def _set_focus_target(self, target: str | None) -> None:
+        """Focus Source, Depth, or 3D without recreating any render surface."""
+        if target not in {None, "source", "depth", "viewport"}:
+            raise ValueError(f"Unknown focus target: {target!r}")
+        if target == self._focus_target:
+            self._sync_focus_buttons()
             return
 
-        if enabled:
+        if self._focus_target is None and target is not None:
             self._saved_main_splitter_sizes = self._main_splitter.sizes()
             self._saved_left_splitter_sizes = self._left_splitter.sizes()
+            self._saved_top_splitter_sizes = self._top_splitter.sizes()
 
-            self._header.hide()
-            self._mode_tabs.hide()
-            self._control_row.hide()
-            self._top_splitter.hide()
-            self._settings_panel.hide()
-            self._performance_bar.hide()
+        # Restore the complete page first, then hide only what the selected
+        # focus mode does not need. This also supports switching directly
+        # between Source, Depth, and 3D focus modes.
+        self._header.show()
+        self._mode_tabs.show()
+        self._control_row.show()
+        self._top_splitter.show()
+        self._original_view.show()
+        self._depth_view.show()
+        self._viewport_panel.show()
+        self._settings_panel.show()
+        self._performance_bar.show()
 
-            self._main_splitter.setSizes([1, 0])
-            self._left_splitter.setSizes([0, 1])
-        else:
-            self._header.show()
-            self._mode_tabs.show()
-            self._control_row.show()
-            self._top_splitter.show()
-            self._settings_panel.show()
-            self._performance_bar.show()
-
+        if target is None:
             if self._saved_main_splitter_sizes:
                 self._main_splitter.setSizes(self._saved_main_splitter_sizes)
             if self._saved_left_splitter_sizes:
                 self._left_splitter.setSizes(self._saved_left_splitter_sizes)
+            if self._saved_top_splitter_sizes:
+                self._top_splitter.setSizes(self._saved_top_splitter_sizes)
+        else:
+            self._header.hide()
+            self._mode_tabs.hide()
+            self._control_row.hide()
+            self._settings_panel.hide()
+            self._performance_bar.hide()
+            self._main_splitter.setSizes([1, 0])
 
-        self._viewport_focus_mode = enabled
-        self._viewport_panel.set_fullscreen_active(enabled)
+            if target == "viewport":
+                self._top_splitter.hide()
+                self._viewport_panel.show()
+                self._left_splitter.setSizes([0, 1])
+            else:
+                self._viewport_panel.hide()
+                self._top_splitter.show()
+                self._left_splitter.setSizes([1, 0])
+                if target == "source":
+                    self._original_view.show()
+                    self._depth_view.hide()
+                    self._top_splitter.setSizes([1, 0])
+                else:
+                    self._original_view.hide()
+                    self._depth_view.show()
+                    self._top_splitter.setSizes([0, 1])
+
+        self._focus_target = target
+        self._viewport_focus_mode = target == "viewport"
+        self._sync_focus_buttons()
+
+    def _sync_focus_buttons(self) -> None:
+        self._original_view.set_fullscreen_active(self._focus_target == "source")
+        self._depth_view.set_fullscreen_active(self._focus_target == "depth")
+        self._viewport_panel.set_fullscreen_active(self._focus_target == "viewport")
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
-        if self._viewport_focus_mode and event.key() == Qt.Key.Key_Escape:
-            self._set_viewport_focus_mode(False)
+        if self._focus_target is not None and event.key() == Qt.Key.Key_Escape:
+            self._set_focus_target(None)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -288,8 +333,8 @@ class MainWindow(QMainWindow):
         self._settings.sync()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override signature
-        if self._viewport_focus_mode:
-            self._set_viewport_focus_mode(False)
+        if self._focus_target is not None:
+            self._set_focus_target(None)
         self._inference_controller.shutdown()
         self._controller.disconnect_active_source()
         self._save_layout()

@@ -154,3 +154,22 @@ def test_unload_prevents_further_inference() -> None:
         assert "not loaded" in str(exc)
     else:  # pragma: no cover - explicit failure message
         raise AssertionError("Inference unexpectedly succeeded after unload")
+
+
+def test_public_hub_advisory_filter_preserves_real_errors(caplog) -> None:
+    import logging
+
+    from core.models.adapters.moge2_adapter import (
+        _HF_PUBLIC_ADVISORY,
+        _suppress_public_hub_advisory,
+    )
+
+    logger = logging.getLogger("huggingface_hub.file_download")
+    with caplog.at_level(logging.WARNING):
+        with _suppress_public_hub_advisory():
+            logger.warning("%s. Please set a HF_TOKEN.", _HF_PUBLIC_ADVISORY)
+            logger.error("A real checkpoint download error")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any(_HF_PUBLIC_ADVISORY in message for message in messages)
+    assert any("real checkpoint download error" in message for message in messages)

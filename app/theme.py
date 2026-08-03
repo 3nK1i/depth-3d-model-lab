@@ -663,12 +663,67 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     /* Shared display surface for Original Source / Depth Map / 3D canvas,
        so all three read as the same material. Uses the same background as
        the 3D viewport canvas with no inner border. */
+    QFrame#mediaSurfaceHost {{
+        background-color: {p.viewport_canvas_bg};
+        border: none;
+        border-radius: {RADIUS_SM}px;
+    }}
+
     QLabel#mediaSurface {{
         background-color: {p.viewport_canvas_bg};
         border: none;
         border-radius: {RADIUS_SM}px;
         color: {p.viewport_text_dim};
         font-size: 12px;
+    }}
+
+    QFrame#mediaToolbarCard {{
+        background-color: rgba(18, 20, 23, 36);
+        border: 1px solid rgba(255, 255, 255, 14);
+        border-radius: 8px;
+    }}
+    QFrame#mediaToolbarCard QPushButton#iconButton {{
+        background-color: transparent;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        padding: 4px;
+    }}
+    QFrame#mediaToolbarCard QPushButton#iconButton:hover {{
+        background-color: rgba(255, 255, 255, 22);
+        border-color: rgba(255, 255, 255, 18);
+    }}
+    QFrame#mediaToolbarCard QPushButton#iconButton:checked {{
+        background-color: #2a1417;
+        border-color: {p.accent};
+    }}
+    QFrame#mediaToolbarCard QPushButton#iconButton:disabled {{
+        background-color: transparent;
+        border-color: transparent;
+    }}
+
+    QFrame#depthControlsBar {{
+        background-color: transparent;
+        border: none;
+    }}
+    QLabel#depthControlLabel {{
+        color: {p.text_muted};
+        font-size: 11px;
+    }}
+    QComboBox#depthControlCombo {{
+        background-color: {p.bg_input};
+        border: 1px solid {p.border_light};
+        border-radius: 5px;
+        padding: 4px 9px;
+        color: {p.text_primary};
+        font-size: 11px;
+    }}
+    QComboBox#depthControlCombo:hover {{
+        border-color: #4a4c53;
+        background-color: #22242a;
+    }}
+    QComboBox#depthControlCombo::drop-down {{
+        border: none;
+        width: 20px;
     }}
 
     QLabel#viewportTitle {{

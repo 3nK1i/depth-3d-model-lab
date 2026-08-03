@@ -1,11 +1,11 @@
 # Depth & 3D Model Lab — Test Strategy
 
-Scope: Phase 5 Step 0 through Step 3.1.
+Scope: Phase 5 Step 0 through Step 3.2.
 
 The test pack is designed for the current architecture: PyQt6 UI, a spawned
 inference worker, Development Mock, MoGe-2, VisPy point rendering, hardware
 profiles, latest-frame backpressure, static-image lifecycle, telemetry, and
-viewport controls.
+viewport controls, media inspection toolbars, and synchronized depth controls.
 
 ## Principles
 
@@ -164,6 +164,17 @@ model load/warm-up details, and preserving final metrics after Stop.
 Validates Cursor/Orbit/Pan/Zoom modes, Fit, focus/fullscreen mode, immediate point
 size and smoothing, RGB/depth/normal recoloring, density, background, grid, axes,
 background removal, disabled Mesh/VSync placeholders, and temporal smoothing.
+
+### Step 3.2 — Source and Depth viewer toolbars
+
+- `tests/ui/test_media_toolbars.py`
+- `tests/ui/test_view_content_states.py`
+- `tests/unit/test_moge2_adapter.py`
+
+Validates the floating Source toolbar geometry, truthful disabled states, save/copy,
+preview rotation, fit/1:1, grid, Source/Depth focus modes, bidirectional depth
+control synchronization, removal of the redundant gear placeholder, and scoped
+suppression of only the public Hugging Face rate-limit advisory.
 
 ### Geometry export foundation
 

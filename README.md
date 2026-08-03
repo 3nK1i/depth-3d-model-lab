@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-3.1 are implemented:
+Phases 1-4 and Phase 5 Steps 1-3.2 are implemented:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -20,6 +20,8 @@ Phases 1-4 and Phase 5 Steps 1-3.1 are implemented:
 - Functional Select, Orbit, Pan, Zoom, Fit and viewport-focus controls
 - Immediate RGB/depth/normal recoloring and point-style updates from cached results
 - Live temporal smoothing, background removal and immediate render-setting updates
+- Functional floating Original Source inspection toolbar with save, copy, rotate, fit, grid and focus actions
+- Synchronized Depth Map colormap/range controls with panel focus mode
 
 ## Requirements
 
@@ -78,6 +80,21 @@ The floating render card updates an already displayed static result without reru
 **Mesh (Poisson)** remains disabled until the dedicated reconstruction phase adds threaded mesh generation. **VSync** is enabled when the VisPy canvas is created and is shown as a locked setting because changing the swap interval would require recreating the OpenGL surface.
 
 The right sidebar's colormap, depth range, edge filtering, background removal, background color, grid, axes and point budget all apply immediately to the cached result. Temporal smoothing affects only consecutive video, camera and RTSP frames; static images are never temporally blended.
+
+## Source and depth inspection controls
+
+The **Original Source** toolbar is overlaid on the media surface and contains only real actions:
+
+- save the current frame
+- copy the current frame to the clipboard
+- rotate the preview clockwise (display only)
+- focus the Source panel, with `Esc` to restore the full interface
+- toggle fit-to-panel versus 1:1 display
+- toggle a rule-of-thirds inspection grid
+
+The **Depth Map** footer mirrors the sidebar colormap, minimum depth and maximum depth values. Changes made in either location update the other and immediately rerender the cached depth/geometry result. The redundant settings-gear placeholder has been removed; the remaining fullscreen action focuses the Depth panel and exits with `Esc`.
+
+Public MoGe-2 checkpoints continue to load anonymously with `token=False`. The application suppresses only Hugging Face's harmless anonymous-rate-limit advisory while preserving real network, repository, cache and authentication errors.
 
 ## Tests
 

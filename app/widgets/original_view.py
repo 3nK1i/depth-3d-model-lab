@@ -1,45 +1,46 @@
-"""Original RGB source panel.
-
-Phase 1 renders the panel chrome (title, live indicator, display-mode
-toolbar) with a placeholder image area. Real frames are pushed in via
-:meth:`set_frame` starting in Phase 2, once :mod:`core.capture` exists.
-This panel must stay independent of inference — it keeps showing frames
-even while inference is stopped or paused (spec §5).
-"""
+"""Original RGB source panel with a functional floating inspection toolbar."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from app.widgets.icon_button import IconButton
+from app.widgets.media_canvas import ScalablePixmapLabel
 
 
 class OriginalSourceView(QFrame):
-    """Displays the raw, unprocessed source frame."""
+    """Displays the raw source frame and local, non-destructive view tools."""
+
+    fullscreen_requested = pyqtSignal()
+    frame_saved = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("panel")
         self._is_live = False
         self._activity_text = "IDLE"
+        self._tool_buttons: list[IconButton] = []
         self._build_ui()
+        self._set_tools_enabled(False)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(6)
         layout.addLayout(self._build_title_row())
-        layout.addWidget(self._build_display_area(), stretch=1)
-        layout.addLayout(self._build_toolbar_row())
+        layout.addWidget(self._build_display_surface(), stretch=1)
 
     def _build_title_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -56,42 +57,92 @@ class OriginalSourceView(QFrame):
         row.addWidget(self._live_label)
         return row
 
-    def _build_display_area(self) -> QLabel:
-        self._display = QLabel("No source connected")
-        self._display.setObjectName("mediaSurface")
-        self._display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._display.setMinimumHeight(160)
-        self._display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        return self._display
+    def _build_display_surface(self) -> QFrame:
+        surface = QFrame()
+        surface.setObjectName("mediaSurfaceHost")
+        stack = QGridLayout(surface)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(0)
 
-    def _build_toolbar_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.addStretch(1)
-        for icon_name, tooltip in (
-            ("screenshot", "Screenshot"),
-            ("capture", "Snapshot"),
-            ("refresh", "Refresh"),
-            ("fullscreen", "Fullscreen"),
-            ("fit", "Fit"),
-            ("grid", "Grid"),
-        ):
-            row.addWidget(IconButton(icon_name, size=28, icon_size=15, tooltip=tooltip))
-        row.addStretch(1)
-        return row
+        self._display = ScalablePixmapLabel("No source connected")
+        stack.addWidget(self._display, 0, 0)
 
-    def set_frame(self, pixmap: QPixmap) -> None:
-        """Display a new RGB frame. Called by the source controller."""
-        self._display.setPixmap(
-            pixmap.scaled(
-                self._display.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        self._toolbar_card = QFrame()
+        self._toolbar_card.setObjectName("mediaToolbarCard")
+        toolbar = QHBoxLayout(self._toolbar_card)
+        toolbar.setContentsMargins(7, 5, 7, 5)
+        toolbar.setSpacing(4)
+
+        self._save_btn = self._make_tool(
+            "screenshot",
+            "Save the current source frame",
+        )
+        self._rotate_btn = self._make_tool(
+            "refresh",
+            "Rotate preview clockwise (display only)",
+        )
+        self._fullscreen_btn = self._make_tool(
+            "fullscreen",
+            "Focus the Original Source panel (Esc to restore)",
+            checkable=True,
+        )
+        self._fit_btn = self._make_tool(
+            "fit",
+            "Fit image to panel / show at actual pixel size",
+            checkable=True,
+        )
+        self._fit_btn.setChecked(True)
+        self._grid_btn = self._make_tool(
+            "grid",
+            "Toggle rule-of-thirds inspection grid",
+            checkable=True,
         )
 
+        for button in self._tool_buttons:
+            toolbar.addWidget(button)
+
+        self._save_btn.clicked.connect(self._save_current_frame)
+        self._rotate_btn.clicked.connect(self._display.rotate_clockwise)
+        self._fullscreen_btn.clicked.connect(self.fullscreen_requested.emit)
+        self._fit_btn.toggled.connect(self._display.set_fit_to_view)
+        self._grid_btn.toggled.connect(self._display.set_grid_visible)
+
+        stack.addWidget(
+            self._toolbar_card,
+            0,
+            0,
+            alignment=Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+        )
+        stack.setContentsMargins(0, 0, 0, 10)
+        return surface
+
+    def _make_tool(
+        self,
+        icon_name: str,
+        tooltip: str,
+        *,
+        checkable: bool = False,
+    ) -> IconButton:
+        button = IconButton(
+            icon_name,
+            size=30,
+            icon_size=16,
+            tooltip=tooltip,
+            checkable=checkable,
+        )
+        self._tool_buttons.append(button)
+        return button
+
+    def set_frame(self, pixmap: QPixmap) -> None:
+        """Display a new RGB frame while retaining full resolution."""
+        self._display.set_source_pixmap(pixmap)
+        self._set_tools_enabled(True)
+
     def clear_frame(self) -> None:
-        self._display.clear()
-        self._display.setText("No source connected")
+        self._display.clear_source()
+        self._grid_btn.setChecked(False)
+        self._fit_btn.setChecked(True)
+        self._set_tools_enabled(False)
 
     def set_live(self, is_live: bool) -> None:
         """Show LIVE for continuous sources, or IDLE when inactive."""
@@ -104,6 +155,9 @@ class OriginalSourceView(QFrame):
         """Show READY for a loaded static image source."""
         self._set_activity("READY", active=True)
 
+    def set_fullscreen_active(self, active: bool) -> None:
+        self._fullscreen_btn.setChecked(bool(active))
+
     def _set_activity(self, text: str, *, active: bool) -> None:
         self._is_live = text == "LIVE"
         self._activity_text = text
@@ -113,6 +167,29 @@ class OriginalSourceView(QFrame):
             if active
             else "color: #5f6169; font-size: 11px;"
         )
+
+    def _set_tools_enabled(self, enabled: bool) -> None:
+        for button in self._tool_buttons:
+            button.setEnabled(enabled)
+
+    def _save_current_frame(self) -> None:
+        pixmap = self._display.current_full_resolution_pixmap()
+        if pixmap.isNull():
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Current Source Frame",
+            "source-frame.png",
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;Bitmap (*.bmp)",
+        )
+        if not path:
+            return
+
+        output = Path(path)
+        if not output.suffix:
+            output = output.with_suffix(".jpg" if "JPEG" in selected_filter else ".png")
+        if pixmap.save(str(output)):
+            self.frame_saved.emit(str(output))
 
     @property
     def activity_text(self) -> str:

@@ -180,6 +180,9 @@ class InferenceController(QObject):
         viewport_panel.density_changed.connect(self._schedule_cached_geometry_refresh)
         viewport_panel.render_mode_changed.connect(self._schedule_cached_geometry_refresh)
 
+        depth_view.colormap_changed.connect(settings_panel.set_colormap_name)
+        depth_view.depth_range_changed.connect(settings_panel.set_depth_range)
+        settings_panel.depth_visual_changed.connect(self._sync_depth_view_controls)
         settings_panel.depth_visual_changed.connect(self._schedule_cached_geometry_refresh)
         settings_panel.geometry_settings_changed.connect(self._schedule_cached_geometry_refresh)
         settings_panel.temporal_smoothing_changed.connect(self._on_temporal_smoothing_changed)
@@ -199,6 +202,14 @@ class InferenceController(QObject):
         self._point_cloud_canvas.set_grid_visible(self._settings_panel.grid_visible)
         self._viewport_panel.set_axis_visible(self._settings_panel.axes_visible)
         self._viewport_panel.set_surface_normals_available(False)
+        self._sync_depth_view_controls()
+
+    def _sync_depth_view_controls(self) -> None:
+        self._depth_view.sync_controls(
+            self._settings_panel.colormap_name,
+            self._settings_panel.min_depth_m,
+            self._settings_panel.max_depth_m,
+        )
 
     def _on_background_changed(self, background: str) -> None:
         self._point_cloud_canvas.set_background(background)

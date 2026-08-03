@@ -8,8 +8,11 @@ the spawned inference worker.
 from __future__ import annotations
 
 import gc
+import logging
 import time
-from typing import Any
+import warnings
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import numpy as np
 
@@ -24,6 +27,58 @@ _DEFAULT_NUM_TOKENS = 1200
 _DEFAULT_RESOLUTION_LEVEL = 5
 _DEFAULT_POINT_BUDGET = 250_000
 _DEFAULT_WARMUP_SIZE = 256
+
+_HF_PUBLIC_ADVISORY = "You are sending unauthenticated requests to the HF Hub"
+_HF_LOGGER_NAMES = (
+    "huggingface_hub",
+    "huggingface_hub.file_download",
+    "huggingface_hub.utils",
+    "huggingface_hub.utils._headers",
+    "huggingface_hub.utils._http",
+)
+
+
+class _PublicHubAdvisoryFilter(logging.Filter):
+    """Suppress only the harmless public-download rate-limit advisory."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _HF_PUBLIC_ADVISORY not in record.getMessage()
+
+
+@contextmanager
+def _suppress_public_hub_advisory() -> Iterator[None]:
+    """Hide the anonymous-download advisory while preserving real errors.
+
+    Official MoGe checkpoints are public and are deliberately requested with
+    ``token=False``. Some huggingface_hub versions still emit an advisory that
+    authentication would raise rate limits. It is useful in a CLI downloader
+    but noisy in this desktop app. The filter is scoped to the checkpoint load
+    and matches only that exact advisory text.
+    """
+
+    log_filter = _PublicHubAdvisoryFilter()
+    loggers = [logging.getLogger(name) for name in _HF_LOGGER_NAMES]
+    handlers = {
+        handler
+        for logger in [logging.getLogger(), *loggers]
+        for handler in logger.handlers
+    }
+    for logger in loggers:
+        logger.addFilter(log_filter)
+    for handler in handlers:
+        handler.addFilter(log_filter)
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*You are sending unauthenticated requests to the HF Hub.*",
+            )
+            yield
+    finally:
+        for logger in loggers:
+            logger.removeFilter(log_filter)
+        for handler in handlers:
+            handler.removeFilter(log_filter)
 
 
 class MoGeDependencyError(RuntimeError):
@@ -108,7 +163,8 @@ class Moge2GeometryModel(BaseGeometryModel):
             hf_kwargs["local_files_only"] = True
 
         try:
-            model = model_class.from_pretrained(self._pretrained, **hf_kwargs)
+            with _suppress_public_hub_advisory():
+                model = model_class.from_pretrained(self._pretrained, **hf_kwargs)
             model = model.to(self._device)
             if self._precision == "bf16":
                 if self._device.type != "cuda":

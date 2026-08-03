@@ -212,13 +212,17 @@ class SettingsPanel(QFrame):
         self._min_depth_slider = SettingsSlider(0, 100, 1)
         min_box = ValueBox()
         self._bindings.append(SliderValueBinding(self._min_depth_slider, min_box, _fmt_metres))
-        self._min_depth_slider.valueChanged.connect(self._emit_depth_and_geometry_changed)
+        self._min_depth_slider.valueChanged.connect(
+            lambda value: self._on_depth_slider_changed("min", value)
+        )
         card.add_slider_row("Min Depth", self._min_depth_slider, min_box)
 
         self._max_depth_slider = SettingsSlider(0, 200, 80)
         max_box = ValueBox()
         self._bindings.append(SliderValueBinding(self._max_depth_slider, max_box, _fmt_metres))
-        self._max_depth_slider.valueChanged.connect(self._emit_depth_and_geometry_changed)
+        self._max_depth_slider.valueChanged.connect(
+            lambda value: self._on_depth_slider_changed("max", value)
+        )
         card.add_slider_row("Max Depth", self._max_depth_slider, max_box)
 
         self._edge_filter_slider = SettingsSlider(0, 100, 60)
@@ -286,6 +290,31 @@ class SettingsPanel(QFrame):
         )
         card.add_toggle_row("VSync", self._vsync_toggle)
         return card
+
+    def _on_depth_slider_changed(self, changed: str, _value: int) -> None:
+        """Keep the near/far interval valid while either slider is dragged."""
+        near = self._min_depth_slider.value()
+        far = self._max_depth_slider.value()
+        if near >= far:
+            if changed == "min":
+                if near < self._max_depth_slider.maximum():
+                    blocker = QSignalBlocker(self._max_depth_slider)
+                    self._max_depth_slider.setValue(near + 1)
+                    del blocker
+                else:
+                    blocker = QSignalBlocker(self._min_depth_slider)
+                    self._min_depth_slider.setValue(max(self._min_depth_slider.minimum(), far - 1))
+                    del blocker
+            else:
+                if far > self._min_depth_slider.minimum():
+                    blocker = QSignalBlocker(self._min_depth_slider)
+                    self._min_depth_slider.setValue(far - 1)
+                    del blocker
+                else:
+                    blocker = QSignalBlocker(self._max_depth_slider)
+                    self._max_depth_slider.setValue(min(self._max_depth_slider.maximum(), near + 1))
+                    del blocker
+        self._emit_depth_and_geometry_changed()
 
     def _emit_depth_and_geometry_changed(self, _value: object | None = None) -> None:
         self.depth_visual_changed.emit()
@@ -466,6 +495,33 @@ class SettingsPanel(QFrame):
         return config
 
     # -- Public API: live-read geometry settings --------------------------
+
+    def set_colormap_name(self, name: str) -> None:
+        """Select a colormap from the compact Depth Map toolbar."""
+        target = str(name).strip().lower()
+        for index in range(self._colormap.count()):
+            if self._colormap.itemText(index).strip().lower() == target:
+                self._colormap.setCurrentIndex(index)
+                return
+
+    def set_depth_range(self, near_m: float, far_m: float) -> None:
+        """Apply a valid metric interval from the compact depth controls."""
+        near_value = int(round(float(near_m) * 10.0))
+        far_value = int(round(float(far_m) * 10.0))
+        near_value = max(self._min_depth_slider.minimum(), min(self._min_depth_slider.maximum(), near_value))
+        far_value = max(self._max_depth_slider.minimum(), min(self._max_depth_slider.maximum(), far_value))
+        if near_value >= far_value:
+            if near_value < self._max_depth_slider.maximum():
+                far_value = near_value + 1
+            else:
+                near_value = max(self._min_depth_slider.minimum(), far_value - 1)
+
+        min_blocker = QSignalBlocker(self._min_depth_slider)
+        max_blocker = QSignalBlocker(self._max_depth_slider)
+        self._min_depth_slider.setValue(near_value)
+        self._max_depth_slider.setValue(far_value)
+        del min_blocker, max_blocker
+        self._emit_depth_and_geometry_changed()
 
     @property
     def colormap_name(self) -> str:
