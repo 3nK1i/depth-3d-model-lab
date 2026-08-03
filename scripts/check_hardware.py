@@ -204,7 +204,12 @@ def main() -> int:
     parser.add_argument(
         "--assert-ready",
         action="store_true",
-        help="Exit non-zero when CUDA/PyTorch is not ready on a real GPU.",
+        help="Run an active CUDA execution probe on a detected real GPU.",
+    )
+    parser.add_argument(
+        "--require-cuda",
+        action="store_true",
+        help="Exit non-zero when no CUDA device is available (release-gate mode).",
     )
     args = parser.parse_args()
 
@@ -214,6 +219,10 @@ def main() -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         _print_report(report)
+
+    if args.require_cuda and not hardware.has_cuda_device:
+        print("CUDA requirement: FAIL — no CUDA device was detected.")
+        return 4
 
     if args.assert_ready and hardware.has_cuda_device:
         if not hardware.cuda_ready:

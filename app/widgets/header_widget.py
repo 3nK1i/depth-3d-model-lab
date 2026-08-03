@@ -5,9 +5,8 @@ a single baseline, a red PRO badge and version, the hardware block
 (GPU / VRAM / CUDA) grouped toward the right, a status badge, and vector
 icon actions (help / settings / minimize / maximize / close).
 
-Phase 1 shows placeholder hardware values; real values are pushed in via
-``update_gpu_status`` / ``update_cuda_status`` from the hardware layer in
-a later phase.
+Hardware values are pushed through ``update_gpu_status`` and
+``update_cuda_status`` from the runtime hardware layer.
 """
 
 from __future__ import annotations
@@ -26,8 +25,9 @@ from PyQt6.QtWidgets import (
 
 from app.widgets.badge import BadgeKind, BadgeLabel
 from app.theme import PALETTE
+from core.version import __version__
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = f"v{__version__}"
 
 
 class _LogoTile(QLabel):

@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "pytest-cov>=5.0",
 ]
 moge2 = [
     "moge @ git+https://github.com/microsoft/MoGe.git",

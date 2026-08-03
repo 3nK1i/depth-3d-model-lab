@@ -8,6 +8,7 @@ strings across the process boundary.
 
 from __future__ import annotations
 
+import logging
 import queue
 import time
 from multiprocessing.connection import Connection
@@ -19,6 +20,7 @@ from core.models.adapters.moge2_adapter import Moge2GeometryModel
 from core.models.base import BaseGeometryModel
 from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
 from core.runtime.failures import FailureStage, classify_failure
+from core.runtime.logging_setup import configure_logging
 from core.runtime.messages import (
     Ack,
     Command,
@@ -28,6 +30,8 @@ from core.runtime.messages import (
     ModelStage,
     ModelStageEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 _MODEL_REGISTRY: dict[str, type[BaseGeometryModel]] = {
     MOGE2_MODEL_ID: Moge2GeometryModel,
@@ -49,13 +53,29 @@ def worker_main(
     result_queue: MPQueue,
 ) -> None:
     """Run until a SHUTDOWN command is received."""
+    try:
+        log_path = configure_logging(process_name="worker", console=False)
+        logger.info("Inference worker started; log=%s", log_path)
+    except Exception:  # noqa: BLE001 - logging must never block inference startup
+        pass
+
     active_model: BaseGeometryModel | None = None
     active_model_id: str | None = None
     paused = True
 
     while True:
-        if control_conn.poll(timeout=0.02):
-            command: Command = control_conn.recv()
+        try:
+            has_command = control_conn.poll(timeout=0.02)
+        except (EOFError, OSError):
+            logger.info("Parent control channel closed; stopping worker.")
+            return
+
+        if has_command:
+            try:
+                command: Command = control_conn.recv()
+            except (EOFError, OSError):
+                logger.info("Parent control channel closed during receive; stopping worker.")
+                return
 
             if command.type == CommandType.LOAD_MODEL:
                 total_started = time.perf_counter()
@@ -122,6 +142,7 @@ def worker_main(
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 - report, never crash silently
+                    logger.exception("Model load/warm-up failed for %s", command.model_id)
                     failure = classify_failure(
                         exc,
                         stage=failure_stage,
@@ -167,6 +188,7 @@ def worker_main(
                     if active_model is not None:
                         metadata = dict(active_model.unload() or {})
                 except Exception as exc:  # noqa: BLE001 - acknowledge cleanup failure
+                    logger.exception("Model unload failed for %s", previous_model_id)
                     message = str(exc)
                     failure = classify_failure(
                         exc,
@@ -222,6 +244,7 @@ def worker_main(
                     try:
                         metadata = dict(active_model.unload() or {})
                     except Exception as exc:  # noqa: BLE001
+                        logger.exception("Model cleanup failed during worker shutdown")
                         message = str(exc)
                         failure = classify_failure(
                             exc,
@@ -243,6 +266,7 @@ def worker_main(
                         failure=failure,
                     )
                 )
+                logger.info("Inference worker shutdown complete")
                 return
 
         if paused or active_model is None:
@@ -285,6 +309,7 @@ def worker_main(
             )
         except Exception as exc:  # noqa: BLE001 - never let a bad frame kill worker
             failed_model_id = active_model_id or ""
+            logger.exception("Inference failed for model %s", failed_model_id)
             failure = classify_failure(
                 exc,
                 stage=FailureStage.INFERENCE,

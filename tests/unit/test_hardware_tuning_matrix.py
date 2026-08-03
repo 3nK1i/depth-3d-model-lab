@@ -33,3 +33,18 @@ def test_simulated_5090_memory_pressure_is_safe() -> None:
     profile = report["automatic_profile"]
     assert profile["effective"] == "balanced"
     assert profile["model_repo"] == "Ruicheng/moge-2-vitb-normal"
+
+
+def test_release_gate_can_require_a_real_cuda_device(monkeypatch, capsys) -> None:
+    import sys
+
+    from scripts.check_hardware import main
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_hardware.py", "--simulate", "cpu", "--require-cuda"],
+    )
+
+    assert main() == 4
+    assert "CUDA requirement: FAIL" in capsys.readouterr().out

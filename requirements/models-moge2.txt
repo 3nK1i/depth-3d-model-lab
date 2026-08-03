@@ -1,6 +1,6 @@
 # Install a CUDA-enabled PyTorch build compatible with the target GPU first.
 # On RTX 5090, verify the wheel with:
-#   python scripts/check_hardware.py --assert-ready
+#   python scripts/check_hardware.py --assert-ready --require-cuda
 
 # Optional official MoGe-2 runtime.
 # Install inside the same environment as the application:

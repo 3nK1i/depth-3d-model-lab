@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 Steps 1-5 are implemented:
+Phases 1-4 and Phase 5 are complete. Version `0.5.0` is the stable Phase 5 baseline:
 
 - Image, video, camera and RTSP capture
 - Process-isolated inference worker with session-based stale-result rejection
@@ -26,6 +26,8 @@ Phases 1-4 and Phase 5 Steps 1-5 are implemented:
 - Structured failure classification with bounded worker crash/timeout/OOM recovery
 - Repeated lifecycle, restart, shutdown and memory-stability stress tooling
 - Simulated cross-GPU tuning matrix for hardware that is not currently available
+- Rotating application/worker logs and uncaught-exception diagnostics
+- Reproducible Phase 5 release gate with an atomic JSON report
 
 ## Requirements
 
@@ -57,7 +59,7 @@ The first MoGe-2 start downloads the selected checkpoint from Hugging Face. The 
 Inspect the current machine:
 
 ```bash
-python scripts/check_hardware.py --assert-ready
+python scripts/check_hardware.py --assert-ready --require-cuda
 ```
 
 The resolver uses CUDA readiness, compute capability, total VRAM and startup
@@ -235,6 +237,54 @@ Xorg, GNOME, browsers or other CUDA applications are active; allocator reserved
 memory after unload and repeated tail drift are the stronger model-lifecycle
 signals.
 
+
+## Phase 5 release gate
+
+Run the quick gate while developing:
+
+```bash
+./scripts/run_phase5_release.sh quick
+```
+
+Run the complete release gate before tagging or moving to Phase 6:
+
+```bash
+./scripts/run_phase5_release.sh full
+```
+
+The full gate verifies the supported Python version, project layout, base and
+MoGe dependencies, version consistency, writable runtime directories, physical
+CUDA execution, RTX 2060/RTX 5090 simulations, Python compilation and the full
+unit/UI/integration/stress suite. It writes an atomic report to:
+
+```text
+outputs/release/phase5_release_report.json
+```
+
+For a final physical-GPU memory check, add a bounded MoGe stress run:
+
+```bash
+./scripts/run_phase5_release.sh full --moge-stress-cycles 5
+```
+
+Use `--require-clean-git` only after committing the release files. A dirty Git
+worktree is reported as an advisory by default so the gate can still be run
+before the final commit.
+
+## Diagnostics
+
+Normal startup writes rotating logs to:
+
+```text
+logs/app.log
+logs/worker.log
+```
+
+The two processes use separate files to avoid cross-process rotation conflicts.
+Uncaught application/thread exceptions and full worker model tracebacks are
+recorded there. `DEPTH3D_LOG_DIR` and `DEPTH3D_LOG_LEVEL` can override the
+location and level without editing the repository.
+
 ## Tests
 
 ```bash
@@ -256,7 +306,7 @@ core/capture/        Image, video, camera and RTSP sources
 core/inference/      Worker process and IPC manager
 core/models/         Unified model adapters and model catalog
 core/geometry/       Depth, direct points, filtering and sampling
-core/runtime/        State machine, sessions and watchdog
+core/runtime/        State, sessions, watchdog, logs and release diagnostics
 requirements/        Optional model dependency groups
-tests/               Unit, UI, integration and explicit stress tests
+tests/               Unit, UI, integration, stress and release tests
 ```
