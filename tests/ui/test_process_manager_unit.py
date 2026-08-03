@@ -1,0 +1,96 @@
+"""UI-process IPC manager tests with local fake queues and pipes."""
+
+from __future__ import annotations
+
+import queue
+
+import numpy as np
+
+from core.inference.process_manager import InferenceProcessManager
+from core.runtime.messages import CommandType, FrameRequest
+
+
+class _FakeConnection:
+    def __init__(self) -> None:
+        self.sent = []
+        self.closed = False
+
+    def send(self, item) -> None:
+        self.sent.append(item)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ClosableQueue(queue.Queue):
+    def __init__(self, maxsize=0):
+        super().__init__(maxsize=maxsize)
+        self.closed = False
+        self.cancelled = False
+
+    def close(self):
+        self.closed = True
+
+    def cancel_join_thread(self):
+        self.cancelled = True
+
+
+def test_submit_frame_replaces_obsolete_queued_frame(qapp) -> None:
+    manager = InferenceProcessManager()
+    manager._frame_queue = queue.Queue(maxsize=1)
+    manager._frame_queue.put(FrameRequest(1, 1, np.zeros((1, 1, 3), np.uint8)))
+
+    accepted = manager.submit_frame(
+        2,
+        9,
+        np.ones((2, 3, 3), np.uint8),
+        point_budget=123,
+        submitted_at=4.0,
+        source_timestamp=3.5,
+    )
+
+    assert accepted
+    latest = manager._frame_queue.get_nowait()
+    assert latest.session_id == 2
+    assert latest.frame_id == 9
+    assert latest.point_budget == 123
+    assert latest.image.shape == (2, 3, 3)
+
+
+def test_submit_frame_without_worker_queue_is_rejected(qapp) -> None:
+    manager = InferenceProcessManager()
+    assert not manager.submit_frame(1, 1, np.zeros((1, 1, 3), np.uint8))
+
+
+def test_stop_sends_session_id_and_starts_watchdog(qapp) -> None:
+    manager = InferenceProcessManager()
+    connection = _FakeConnection()
+    manager._parent_conn = connection
+
+    manager.stop(session_id=77)
+
+    assert connection.sent[-1].type is CommandType.STOP
+    assert connection.sent[-1].session_id == 77
+    assert manager._watchdog.is_watching
+    manager._watchdog.cancel()
+
+
+def test_dispose_ipc_closes_and_clears_resources(qapp) -> None:
+    manager = InferenceProcessManager()
+    connection = _FakeConnection()
+    frame_queue = _ClosableQueue()
+    result_queue = _ClosableQueue()
+    manager._parent_conn = connection
+    manager._frame_queue = frame_queue
+    manager._result_queue = result_queue
+    manager._process = object()  # type: ignore[assignment]
+
+    manager._dispose_ipc()
+
+    assert connection.closed
+    assert frame_queue.closed and frame_queue.cancelled
+    assert result_queue.closed and result_queue.cancelled
+    assert manager._parent_conn is None
+    assert manager._frame_queue is None
+    assert manager._result_queue is None
+    assert manager._process is None

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from PyQt6.QtCore import QAbstractAnimation
+
 from app.icons import has_icon, render_pixmap
 from app.widgets.icon_button import IconButton
 from app.widgets.toggle_switch import ToggleSwitch
@@ -37,6 +39,11 @@ def test_toggle_switch_emits_and_moves_knob(qtbot):
     with qtbot.waitSignal(toggle.toggled_changed, timeout=500) as blocker:
         toggle.setChecked(True)
     assert blocker.args == [True]
-    # Knob target is the "on" extreme after the animation completes.
-    qtbot.wait(200)
-    assert toggle.get_knob_position() == pytest.approx(toggle._knob_max, abs=1.0)
+
+    # Wait for the actual animation completion instead of assuming a fixed
+    # wall-clock delay. Offscreen Qt event processing can be slower on CI.
+    qtbot.waitUntil(
+        lambda: toggle._anim.state() == QAbstractAnimation.State.Stopped,
+        timeout=1_000,
+    )
+    assert toggle.get_knob_position() == pytest.approx(toggle._knob_max, abs=0.25)

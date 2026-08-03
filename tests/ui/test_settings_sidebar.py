@@ -1,8 +1,8 @@
 """Structural tests for the right settings sidebar.
 
-Locks in the accordion-card rework: three independent, content-sized
-cards in a scroll area, with the stretch after the last card so unused
-height stays outside them.
+Locks in the current accordion-card layout: three independent expanded
+cards share the available sidebar height according to configured stretch
+factors, while collapsed cards return their stretch share to the others.
 """
 
 from __future__ import annotations
@@ -39,9 +39,17 @@ def test_three_independent_cards(sidebar):
     assert titles == ["MODEL", "DEPTH SETTINGS", "RENDER SETTINGS"]
 
 
-def test_cards_are_content_sized_not_expanding(sidebar):
-    for card in sidebar.findChildren(CollapsibleSettingsCard):
-        assert card.sizePolicy().verticalPolicy() != QSizePolicy.Policy.Expanding
+def test_expanded_cards_share_available_height(sidebar):
+    cards = sidebar.findChildren(CollapsibleSettingsCard)
+    assert cards
+
+    # The production layout intentionally gives expanded cards vertical
+    # stretch shares (33/36/31) so they fill the sidebar without leaving
+    # a large dead region below the last card.
+    assert set(sidebar._card_stretches) == set(cards)
+    for card in cards:
+        assert card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+        assert card._body.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
 
 
 def test_visible_gaps_between_cards(sidebar):
@@ -52,9 +60,16 @@ def test_visible_gaps_between_cards(sidebar):
 
 
 def test_model_selector_and_badge_share_one_row(sidebar):
-    badge = sidebar.findChildren(StatusBadge)[0]
-    combo_centre = sidebar._model_combo.geometry().center().y()
-    assert abs(badge.geometry().center().y() - combo_centre) <= 2
+    # Address the exact model badge instead of relying on findChildren()
+    # ordering, which is not a stable Qt API contract.  Map both widget
+    # centres into sidebar coordinates before comparing them.
+    combo_center = sidebar._model_combo.mapTo(
+        sidebar, sidebar._model_combo.rect().center()
+    )
+    badge_center = sidebar._model_badge.mapTo(
+        sidebar, sidebar._model_badge.rect().center()
+    )
+    assert abs(badge_center.y() - combo_center.y()) <= 3
 
 
 def test_slider_values_are_boxed(sidebar):

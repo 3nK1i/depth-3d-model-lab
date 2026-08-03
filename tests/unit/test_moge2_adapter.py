@@ -12,6 +12,7 @@ from core.runtime.messages import FrameRequest
 
 class _FakeMoGeModel:
     last_instance: "_FakeMoGeModel | None" = None
+    last_from_pretrained_kwargs: dict[str, object] = {}
 
     def __init__(self) -> None:
         self.device = torch.device("cpu")
@@ -23,6 +24,7 @@ class _FakeMoGeModel:
 
     @classmethod
     def from_pretrained(cls, _repo: str, **_kwargs):
+        cls.last_from_pretrained_kwargs = dict(_kwargs)
         instance = cls()
         cls.last_instance = instance
         return instance
@@ -120,6 +122,7 @@ def test_adapter_returns_metric_direct_geometry_with_bounded_points() -> None:
     assert fake.last_kwargs["force_projection"] is True
     assert fake.last_kwargs["apply_mask"] is False
     assert fake.last_kwargs["use_fp16"] is False
+    assert _FakeMoGeModel.last_from_pretrained_kwargs["token"] is False
 
 
 def test_load_metadata_and_warmup_are_runtime_ready() -> None:
