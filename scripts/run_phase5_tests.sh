@@ -21,7 +21,8 @@ case "$MODE" in
       tests/unit/test_geometry_filtering.py \
       tests/unit/test_geometry_sampling.py \
       tests/unit/test_mock_adapter.py \
-      tests/unit/test_model_lifecycle.py
+      tests/unit/test_model_lifecycle.py \
+      tests/unit/test_failure_classification.py
     ;;
   unit)
     pytest -q tests/unit

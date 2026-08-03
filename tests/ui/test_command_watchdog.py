@@ -11,7 +11,15 @@ def test_watchdog_emits_pending_command_on_timeout(qtbot) -> None:
     with qtbot.waitSignal(watchdog.timeout_exceeded, timeout=500) as signal:
         watchdog.watch(CommandType.STOP)
     assert signal.args == [CommandType.STOP]
-    assert watchdog.is_watching
+    assert not watchdog.is_watching
+
+
+def test_watchdog_accepts_a_call_specific_timeout(qtbot) -> None:
+    watchdog = CommandWatchdog(timeout_ms=1000)
+    with qtbot.waitSignal(watchdog.timeout_exceeded, timeout=500) as signal:
+        watchdog.watch(CommandType.LOAD_MODEL, timeout_ms=20)
+    assert signal.args == [CommandType.LOAD_MODEL]
+    assert not watchdog.is_watching
 
 
 def test_matching_ack_cancels_timeout(qtbot) -> None:

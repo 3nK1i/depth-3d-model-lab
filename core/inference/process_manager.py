@@ -36,6 +36,7 @@ from core.runtime.watchdog import DEFAULT_TIMEOUT_MS, CommandWatchdog
 _POLL_INTERVAL_MS = 20
 _FRAME_QUEUE_SIZE = 1
 _RESULT_QUEUE_SIZE = 1
+_MODEL_LOAD_TIMEOUT_MS = 180_000
 
 
 class InferenceProcessManager(QObject):
@@ -47,13 +48,21 @@ class InferenceProcessManager(QObject):
     worker_unresponsive = pyqtSignal(object)  # CommandType that timed out
     worker_crashed = pyqtSignal()
 
-    def __init__(self, stop_timeout_ms: int = DEFAULT_TIMEOUT_MS, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        stop_timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        model_load_timeout_ms: int = _MODEL_LOAD_TIMEOUT_MS,
+        parent: QObject | None = None,
+    ) -> None:
         super().__init__(parent)
         self._ctx = mp.get_context("spawn")
+        self._model_load_timeout_ms = max(1, int(model_load_timeout_ms))
         self._process: mp.process.BaseProcess | None = None
         self._parent_conn: Connection | None = None
         self._frame_queue: Any = None
         self._result_queue: Any = None
+        self._crash_reported = False
+        self._last_exitcode: int | None = None
 
         self._watchdog = CommandWatchdog(timeout_ms=stop_timeout_ms, parent=self)
         self._watchdog.timeout_exceeded.connect(self.worker_unresponsive.emit)
@@ -80,6 +89,8 @@ class InferenceProcessManager(QObject):
             daemon=True,
         )
         self._process.start()
+        self._crash_reported = False
+        self._last_exitcode = None
         # The parent must close its duplicate of the child endpoint. Keeping
         # both ends open can delay EOF detection and leak descriptors across
         # worker restarts.
@@ -117,7 +128,11 @@ class InferenceProcessManager(QObject):
     # -- Commands (fire-and-forget; results arrive via signals) --------------
 
     def load_model(self, model_id: str, config: dict[str, Any] | None = None) -> None:
-        self._send(Command(type=CommandType.LOAD_MODEL, model_id=model_id, config=config or {}))
+        self._send(
+            Command(type=CommandType.LOAD_MODEL, model_id=model_id, config=config or {}),
+            watch=True,
+            timeout_ms=self._model_load_timeout_ms,
+        )
 
     def unload_model(self) -> None:
         self._send(Command(type=CommandType.UNLOAD_MODEL), watch=True)
@@ -174,16 +189,22 @@ class InferenceProcessManager(QObject):
 
     # -- Internals -------------------------------------------------------------
 
-    def _send(self, command: Command, *, watch: bool = False) -> None:
+    def _send(
+        self,
+        command: Command,
+        *,
+        watch: bool = False,
+        timeout_ms: int | None = None,
+    ) -> None:
         if self._parent_conn is None:
             return
         try:
             self._parent_conn.send(command)
         except (BrokenPipeError, OSError):
-            self.worker_crashed.emit()
+            self._emit_worker_crashed_once()
             return
         if watch:
-            self._watchdog.watch(command.type)
+            self._watchdog.watch(command.type, timeout_ms=timeout_ms)
 
     def _poll(self) -> None:
         if self._parent_conn is not None:
@@ -196,7 +217,7 @@ class InferenceProcessManager(QObject):
                     elif isinstance(message, ModelStageEvent):
                         self.model_stage_changed.emit(message)
             except (BrokenPipeError, OSError, EOFError):
-                self.worker_crashed.emit()
+                self._emit_worker_crashed_once()
 
         if self._result_queue is not None:
             try:
@@ -207,8 +228,17 @@ class InferenceProcessManager(QObject):
                 pass
 
         if self._process is not None and not self._process.is_alive():
-            self.worker_crashed.emit()
+            self._last_exitcode = self._process.exitcode
+            self._emit_worker_crashed_once()
             self._poll_timer.stop()
+
+
+    def _emit_worker_crashed_once(self) -> None:
+        if self._crash_reported:
+            return
+        self._crash_reported = True
+        self._watchdog.cancel()
+        self.worker_crashed.emit()
 
     def _dispose_ipc(self) -> None:
         """Close and clear process/pipe/queue resources after shutdown."""
@@ -235,3 +265,7 @@ class InferenceProcessManager(QObject):
     @property
     def is_running(self) -> bool:
         return self._process is not None and self._process.is_alive()
+
+    @property
+    def last_exitcode(self) -> int | None:
+        return self._last_exitcode

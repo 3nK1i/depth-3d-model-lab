@@ -18,6 +18,7 @@ from core.capture.image_source import ImageSource
 from core.capture.rtsp_source import RtspSource
 from core.capture.video_source import VideoSource
 from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.runtime.failures import FailureInfo, FailureKind, FailureStage
 from core.runtime.messages import Ack, CommandType, InferenceResult
 from core.runtime.state_machine import ApplicationState
 from core.runtime.telemetry import GeometryTiming
@@ -46,6 +47,14 @@ def window(qtbot, monkeypatch):
         property(lambda self: True),
     )
     return win
+
+
+def _select_model(window: MainWindow, model_id: str) -> None:
+    combo = window._settings_panel._model_combo
+    index = combo.findData(model_id)
+    assert index >= 0
+    combo.setCurrentIndex(index)
+    assert window._settings_panel.selected_model_id == model_id
 
 
 def _moge_ack() -> Ack:
@@ -155,14 +164,25 @@ def test_restart_from_model_ready_reuses_loaded_model(window, qtbot, monkeypatch
     assert load_calls == [MOGE2_MODEL_ID]
 
 
-def test_load_failure_keeps_source_retryable(window, qtbot):
+def test_load_failure_keeps_source_retryable(window, qtbot, monkeypatch):
     toolbar = window._runtime_toolbar
     controller = window._inference_controller
+
+    # The shared window fixture replaces connect_active_source() with a no-op.
+    # Represent a genuinely configured source explicitly so recovery can
+    # preserve it and return to SOURCE_READY, as the real application does.
+    monkeypatch.setattr(window._controller, "_active_source", object())
+
     qtbot.mouseClick(toolbar._connect_btn, _left_button())
     qtbot.mouseClick(toolbar._start_btn, _left_button())
 
     controller._on_ack_received(
-        Ack(CommandType.LOAD_MODEL, False, "MoGe package is missing", model_id=MOGE2_MODEL_ID)
+        Ack(
+            CommandType.LOAD_MODEL,
+            False,
+            "MoGe package is missing",
+            model_id=MOGE2_MODEL_ID,
+        )
     )
 
     assert controller.state_machine.state is ApplicationState.SOURCE_READY
@@ -573,3 +593,220 @@ def test_point_budget_change_does_not_reload_resident_model(
     assert controller.state_machine.state is ApplicationState.RUNNING
     assert unload_calls == []
     assert load_calls == [MOGE2_MODEL_ID]
+
+def test_structured_network_load_failure_preserves_source_and_allows_retry(
+    window, qtbot
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+
+    failure = FailureInfo(
+        FailureKind.NETWORK_UNAVAILABLE,
+        FailureStage.LOAD,
+        "The model is not cached and the network is unavailable.",
+        "ConnectionError: offline",
+        "Reconnect or use a cached model.",
+    )
+    controller._on_ack_received(
+        Ack(
+            CommandType.LOAD_MODEL,
+            False,
+            "offline",
+            model_id=MOGE2_MODEL_ID,
+            failure=failure,
+        )
+    )
+
+    assert controller.state_machine.state is ApplicationState.SOURCE_READY
+    assert controller.last_failure == failure
+    assert toolbar._start_btn.isEnabled()
+    assert window._settings_panel._model_combo.isEnabled()
+    assert window._settings_panel._model_badge.text() == "OFFLINE"
+    assert "Reconnect" in window._settings_panel._model_badge.toolTip()
+
+
+def test_inference_oom_restarts_worker_and_returns_to_retryable_source(
+    window, qtbot, monkeypatch
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    restart_calls: list[bool] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "restart_worker",
+        lambda: restart_calls.append(True),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    session_id = controller._session.active_session_id
+
+    failure = FailureInfo(
+        FailureKind.CUDA_OUT_OF_MEMORY,
+        FailureStage.INFERENCE,
+        "The selected model ran out of GPU memory.",
+        "OutOfMemoryError",
+        "Choose Efficient or Development Mock.",
+        requires_worker_restart=True,
+    )
+    controller._on_result_ready(
+        InferenceResult(
+            session_id=session_id,
+            frame_id=0,
+            model_id=MOGE2_MODEL_ID,
+            depth=None,
+            latency_ms=0.0,
+            error="CUDA out of memory",
+            failure=failure,
+        )
+    )
+
+    assert restart_calls == [True]
+    assert controller.state_machine.state is ApplicationState.SOURCE_READY
+    assert not controller._model_loaded
+    assert toolbar._start_btn.isEnabled()
+    assert window._settings_panel._model_badge.text() == "OOM RECOVERED"
+
+
+def test_worker_crash_restarts_and_reloads_resident_model_without_autostart(
+    window, qtbot, monkeypatch
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    restart_calls: list[bool] = []
+    load_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "restart_worker",
+        lambda: restart_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, config=None: load_calls.append((model_id, dict(config or {}))),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    qtbot.mouseClick(toolbar._stop_btn, _left_button())
+    load_calls.clear()
+
+    controller._on_worker_crashed()
+
+    assert restart_calls == [True]
+    assert controller.state_machine.state is ApplicationState.LOADING_MODEL
+    assert load_calls and load_calls[-1][0] == MOGE2_MODEL_ID
+
+    controller._on_ack_received(_moge_ack())
+    assert controller.state_machine.state is ApplicationState.MODEL_READY
+    assert toolbar._start_btn.isEnabled()
+    assert controller._app_controller.active_source is not None
+
+
+def test_load_timeout_restarts_worker_without_automatic_retry(
+    window, qtbot, monkeypatch
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    restart_calls: list[bool] = []
+    load_calls: list[str] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "restart_worker",
+        lambda: restart_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, _config=None: load_calls.append(model_id),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    controller._on_worker_unresponsive(CommandType.LOAD_MODEL)
+
+    assert restart_calls == [True]
+    assert load_calls == []
+    assert controller.state_machine.state is ApplicationState.SOURCE_READY
+    assert toolbar._start_btn.isEnabled()
+    assert window._settings_panel._model_badge.text() == "WORKER TIMEOUT"
+
+
+def test_missing_inference_result_restarts_worker_and_preserves_source(
+    window, qtbot, monkeypatch
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    restart_calls: list[bool] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "restart_worker",
+        lambda: restart_calls.append(True),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    assert controller.state_machine.state is ApplicationState.RUNNING
+
+    controller._inference_in_flight = True
+    controller._inflight_frame_id = 42
+    controller._on_inference_result_timeout()
+
+    assert restart_calls == [True]
+    assert controller.state_machine.state is ApplicationState.SOURCE_READY
+    assert controller.last_failure is not None
+    assert controller.last_failure.kind is FailureKind.WORKER_TIMEOUT
+    assert "frame 42" in controller.last_failure.technical_details
+    assert controller._app_controller.active_source is not None
+    assert toolbar._start_btn.isEnabled()
+
+
+def test_worker_crash_during_unload_keeps_pending_model_selection(
+    window, qtbot, monkeypatch
+):
+    _select_model(window, MOGE2_MODEL_ID)
+    toolbar = window._runtime_toolbar
+    controller = window._inference_controller
+    controller._app_controller._active_source = object()
+    restart_calls: list[bool] = []
+    load_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        controller._process_manager,
+        "restart_worker",
+        lambda: restart_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, config=None: load_calls.append((model_id, dict(config or {}))),
+    )
+
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    qtbot.mouseClick(toolbar._stop_btn, _left_button())
+    load_calls.clear()
+
+    _select_model(window, MOCK_MODEL_ID)
+    assert controller.state_machine.state is ApplicationState.SWITCHING_MODEL
+    assert controller._pending_model_request is not None
+
+    controller._on_worker_crashed()
+
+    assert restart_calls == [True]
+    assert load_calls and load_calls[-1][0] == MOCK_MODEL_ID
+    assert controller.state_machine.state is ApplicationState.LOADING_MODEL

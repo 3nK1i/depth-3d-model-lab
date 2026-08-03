@@ -1,11 +1,11 @@
 # Depth & 3D Model Lab — Test Strategy
 
-Scope: Phase 5 Step 0 through Step 4.1.
+Scope: Phase 5 Step 0 through Step 4.2.
 
 The test pack is designed for the current architecture: PyQt6 UI, a spawned
 inference worker, Development Mock, MoGe-2, VisPy point rendering, hardware
 profiles, latest-frame backpressure, static-image lifecycle, telemetry, and
-viewport controls, media inspection toolbars, synchronized depth controls, and explicit model unload/reload lifecycle.
+viewport controls, media inspection toolbars, synchronized depth controls, explicit model unload/reload lifecycle, structured failure classification, bounded worker recovery, and retryable source preservation.
 
 ## Principles
 
@@ -264,3 +264,22 @@ git status
 git add -A
 git commit -m "test: consolidate phase 5 regression suite"
 ```
+
+
+### Step 4.2 — Failure classification and recovery
+
+- `tests/unit/test_failure_classification.py`
+- `tests/unit/test_runtime_messages.py`
+- `tests/unit/test_mock_adapter.py`
+- `tests/ui/test_command_watchdog.py`
+- `tests/ui/test_process_manager_unit.py`
+- `tests/ui/test_state_machine.py`
+- `tests/ui/test_main_window_shell.py`
+- `tests/integration/test_inference_lifecycle.py`
+
+Coverage includes structured IPC failure payloads, CUDA OOM classification,
+network/offline, authentication, missing/corrupt checkpoints, warm-up and
+configuration failures, command-specific watchdog timeouts, inference-result
+timeouts for hung frames, one-shot crash signalling, source-preserving UI
+recovery, mock OOM cleanup, warm-up failure retry, and worker reload after a
+crash.

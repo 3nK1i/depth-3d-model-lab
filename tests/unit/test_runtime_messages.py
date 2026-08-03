@@ -7,6 +7,7 @@ import pickle
 import numpy as np
 import pytest
 
+from core.runtime.failures import FailureInfo, FailureKind, FailureStage
 from core.runtime.messages import (
     Ack,
     Command,
@@ -80,3 +81,22 @@ def test_model_stage_event_is_picklable_and_frozen() -> None:
     assert restored.model_id == "moge-2"
     with pytest.raises((AttributeError, TypeError)):
         event.message = "changed"  # type: ignore[misc]
+
+
+def test_failure_payload_round_trip_on_ack_and_result() -> None:
+    failure = FailureInfo(
+        FailureKind.CUDA_OUT_OF_MEMORY,
+        FailureStage.INFERENCE,
+        "GPU memory exhausted",
+        "OutOfMemoryError",
+        "Choose Efficient",
+        requires_worker_restart=True,
+    )
+    ack = Ack(CommandType.LOAD_MODEL, False, failure=failure)
+    result = InferenceResult(1, 2, "moge-2", None, 0.0, failure=failure)
+
+    restored_ack = pickle.loads(pickle.dumps(ack))
+    restored_result = pickle.loads(pickle.dumps(result))
+
+    assert restored_ack.failure == failure
+    assert restored_result.failure == failure

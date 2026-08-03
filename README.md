@@ -116,6 +116,27 @@ garbage collection, clears the PyTorch allocator cache and returns cleanup
 telemetry to the UI process. Development Mock follows the same lifecycle
 contract so switching can be tested without CUDA or model downloads.
 
+
+## Failure recovery
+
+Worker/model failures are classified into stable categories instead of being
+reported as undifferentiated exception strings. The UI distinguishes CUDA OOM,
+missing dependencies, offline/uncached checkpoints, missing or corrupted model
+files, authentication problems, invalid configuration, warm-up failure, worker
+timeout and worker crash.
+
+Recoverable failures preserve the configured image/video/camera/RTSP source and
+unlock model controls. CUDA OOM and dead/unresponsive workers trigger one
+bounded worker restart; the application never loops indefinitely. A crashed
+worker may reload the previously resident model, but inference is not restarted
+automatically. A timed-out model load returns to a retryable source state so the
+user can reconnect, choose a safer profile, or switch to Development Mock.
+
+The model-load watchdog uses a longer timeout than Stop/Unload so first-time
+checkpoint downloads and warm-up do not create false worker failures. A
+separate result watchdog detects a submitted frame that never returns, then
+terminates and recreates only the inference worker while preserving the source.
+
 ## Tests
 
 ```bash

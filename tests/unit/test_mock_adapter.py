@@ -66,3 +66,18 @@ def test_mock_metadata_never_presents_output_as_real_ai() -> None:
     assert metadata["display_name"] == "Development Mock"
     assert metadata["is_metric"] is False
     assert metadata["outputs"]["points"] is False
+
+
+def test_mock_can_simulate_load_warmup_and_unload_failures() -> None:
+    with pytest.raises(RuntimeError, match="offline"):
+        _loaded(simulate_load_error="network is unreachable: offline")
+
+    model = _loaded(simulate_warmup_error="warm-up failed")
+    with pytest.raises(RuntimeError, match="warm-up failed"):
+        model.warmup()
+
+    model = _loaded(simulate_unload_error="cleanup failed")
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        model.unload()
+    with pytest.raises(RuntimeError, match="before load"):
+        model.infer(FrameRequest(1, 1, np.zeros((2, 2, 3), np.uint8)))

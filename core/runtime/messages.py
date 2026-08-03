@@ -11,6 +11,8 @@ from enum import Enum
 
 import numpy as np
 
+from core.runtime.failures import FailureInfo
+
 
 class CommandType(Enum):
     LOAD_MODEL = "load_model"
@@ -65,6 +67,7 @@ class Ack:
     model_load_time_ms: float | None = None
     warmup_time_ms: float | None = None
     unload_time_ms: float | None = None
+    failure: FailureInfo | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,3 +123,4 @@ class InferenceResult:
     vram_total_gib: float | None = None
 
     error: str | None = None
+    failure: FailureInfo | None = None

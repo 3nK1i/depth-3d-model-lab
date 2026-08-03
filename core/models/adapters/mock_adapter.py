@@ -38,6 +38,9 @@ class MockGeometryModel(BaseGeometryModel):
         simulate_oom: bool          — raise SimulatedOOMError on next infer
         simulate_hang_seconds: float — block for this long (tests the
                                        watchdog / restart-worker path)
+        simulate_load_error: str     — fail during load with this message
+        simulate_warmup_error: str   — fail during warm-up with this message
+        simulate_unload_error: str   — fail during unload with this message
     """
 
     def __init__(self) -> None:
@@ -45,12 +48,20 @@ class MockGeometryModel(BaseGeometryModel):
         self._latency_ms = 20.0
         self._simulate_oom = False
         self._simulate_hang_seconds = 0.0
+        self._simulate_load_error = ""
+        self._simulate_warmup_error = ""
+        self._simulate_unload_error = ""
         self._frame_counter = 0
 
     def load(self, device: str, precision: str, config: dict[str, Any]) -> None:
         self._latency_ms = float(config.get("latency_ms", 20.0))
         self._simulate_oom = bool(config.get("simulate_oom", False))
         self._simulate_hang_seconds = float(config.get("simulate_hang_seconds", 0.0))
+        self._simulate_load_error = str(config.get("simulate_load_error", ""))
+        self._simulate_warmup_error = str(config.get("simulate_warmup_error", ""))
+        self._simulate_unload_error = str(config.get("simulate_unload_error", ""))
+        if self._simulate_load_error:
+            raise RuntimeError(self._simulate_load_error)
         # Room-scale range in meters, matching the units the rest of the
         # app assumes (depth colormap near/far, projection) — NOT a raw
         # unitless 0-1 gradient, which produced a point cloud smaller
@@ -66,6 +77,8 @@ class MockGeometryModel(BaseGeometryModel):
     def warmup(self) -> None:
         if not self._loaded:
             raise RuntimeError("MockGeometryModel.warmup() called before load()")
+        if self._simulate_warmup_error:
+            raise RuntimeError(self._simulate_warmup_error)
         time.sleep(0.05)
 
     def infer(self, frame: FrameRequest) -> GeometryResult:
@@ -112,8 +125,12 @@ class MockGeometryModel(BaseGeometryModel):
 
     def unload(self) -> dict[str, Any]:
         released_frames = self._frame_counter
+        unload_error = self._simulate_unload_error
         self._loaded = False
         self._frame_counter = 0
+        self._simulate_unload_error = ""
+        if unload_error:
+            raise RuntimeError(unload_error)
         return {
             "released": True,
             "released_frames": released_frames,

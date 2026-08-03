@@ -134,3 +134,27 @@ def test_poll_routes_model_stage_without_treating_it_as_ack(qtbot) -> None:
         manager._poll()
 
     assert signal.args == [event]
+
+
+def test_load_model_starts_long_command_watchdog(qapp) -> None:
+    manager = InferenceProcessManager(model_load_timeout_ms=1234)
+    connection = _FakeConnection()
+    manager._parent_conn = connection
+
+    manager.load_model("moge-2", {"device": "cpu"})
+
+    assert connection.sent[-1].type is CommandType.LOAD_MODEL
+    assert manager._watchdog.is_watching
+    assert manager._watchdog._timer.interval() == 1234
+    manager._watchdog.cancel()
+
+
+def test_worker_crash_signal_is_emitted_only_once(qtbot) -> None:
+    manager = InferenceProcessManager()
+    emissions: list[bool] = []
+    manager.worker_crashed.connect(lambda: emissions.append(True))
+
+    manager._emit_worker_crashed_once()
+    manager._emit_worker_crashed_once()
+
+    assert emissions == [True]

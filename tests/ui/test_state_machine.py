@@ -70,6 +70,7 @@ def test_non_strict_invalid_transition_returns_false() -> None:
         (ApplicationState.RUNNING, False, True, False, True, True, False),
         (ApplicationState.PAUSED, False, True, False, True, True, True),
         (ApplicationState.STOPPING, False, False, False, False, False, False),
+        (ApplicationState.RECOVERING_WORKER, False, False, False, False, False, False),
         (ApplicationState.ERROR, False, True, False, False, False, False),
         (ApplicationState.SHUTTING_DOWN, False, False, False, False, False, False),
     ],
@@ -93,3 +94,18 @@ def test_source_ready_can_run_with_a_resident_model_or_switch_it() -> None:
 
     assert machine.can_transition_to(ApplicationState.RUNNING)
     assert machine.can_transition_to(ApplicationState.SWITCHING_MODEL)
+
+
+def test_running_can_enter_worker_recovery_and_return_to_model_ready() -> None:
+    machine = StateMachine()
+    for target in (
+        ApplicationState.CONNECTING,
+        ApplicationState.SOURCE_READY,
+        ApplicationState.LOADING_MODEL,
+        ApplicationState.MODEL_READY,
+        ApplicationState.RUNNING,
+        ApplicationState.RECOVERING_WORKER,
+        ApplicationState.LOADING_MODEL,
+        ApplicationState.MODEL_READY,
+    ):
+        assert machine.transition_to(target)

@@ -29,12 +29,21 @@ class CommandWatchdog(QObject):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._on_timeout)
 
-    def watch(self, command_type: CommandType) -> None:
-        """Start watching for an ack of ``command_type``. Replaces any
-        previously-pending watch (only one in-flight command at a time is
-        tracked, matching how commands are sent serially)."""
+    def watch(
+        self,
+        command_type: CommandType,
+        *,
+        timeout_ms: int | None = None,
+    ) -> None:
+        """Start watching for an acknowledgement of ``command_type``.
+
+        Long model loads need a much larger timeout than Stop/Unload.  A
+        call-specific timeout keeps one watchdog implementation while avoiding
+        false failures during first-time checkpoint loading and warm-up.
+        """
         self._pending_command = command_type
-        self._timer.start(self._timeout_ms)
+        duration = self._timeout_ms if timeout_ms is None else max(1, int(timeout_ms))
+        self._timer.start(duration)
 
     def acknowledge(self, command_type: CommandType) -> None:
         """Call when the matching Ack arrives — cancels the timeout."""
@@ -49,6 +58,7 @@ class CommandWatchdog(QObject):
     def _on_timeout(self) -> None:
         if self._pending_command is not None:
             command_type = self._pending_command
+            self._pending_command = None
             self.timeout_exceeded.emit(command_type)
 
     def set_timeout_ms(self, timeout_ms: int) -> None:

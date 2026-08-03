@@ -24,6 +24,7 @@ class ApplicationState(Enum):
     PAUSED = "paused"
     STOPPING = "stopping"
     SWITCHING_MODEL = "switching_model"
+    RECOVERING_WORKER = "recovering_worker"
     RECONNECTING = "reconnecting"
     ERROR = "error"
     SHUTTING_DOWN = "shutting_down"
@@ -41,6 +42,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
         {
             ApplicationState.LOADING_MODEL,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.RUNNING,
             ApplicationState.DISCONNECTED,
             ApplicationState.RECONNECTING,
@@ -49,12 +51,18 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
         }
     ),
     ApplicationState.LOADING_MODEL: frozenset(
-        {ApplicationState.MODEL_READY, ApplicationState.ERROR, ApplicationState.SOURCE_READY}
+        {
+            ApplicationState.MODEL_READY,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.ERROR,
+            ApplicationState.SOURCE_READY,
+        }
     ),
     ApplicationState.MODEL_READY: frozenset(
         {
             ApplicationState.RUNNING,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.DISCONNECTED,
             ApplicationState.RECONNECTING,
             ApplicationState.ERROR,
@@ -65,6 +73,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
         {
             ApplicationState.RUNNING,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.DISCONNECTED,
             ApplicationState.RECONNECTING,
             ApplicationState.ERROR,
@@ -76,18 +85,43 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.RESULT_READY,
             ApplicationState.PAUSED,
             ApplicationState.STOPPING,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.RECONNECTING,
             ApplicationState.ERROR,
         }
     ),
     ApplicationState.PAUSED: frozenset(
-        {ApplicationState.RUNNING, ApplicationState.STOPPING, ApplicationState.ERROR}
+        {
+            ApplicationState.RUNNING,
+            ApplicationState.STOPPING,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.ERROR,
+        }
     ),
     ApplicationState.STOPPING: frozenset(
-        {ApplicationState.MODEL_READY, ApplicationState.ERROR}
+        {
+            ApplicationState.MODEL_READY,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.ERROR,
+        }
     ),
     ApplicationState.SWITCHING_MODEL: frozenset(
-        {ApplicationState.MODEL_READY, ApplicationState.ERROR, ApplicationState.SOURCE_READY}
+        {
+            ApplicationState.MODEL_READY,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.ERROR,
+            ApplicationState.SOURCE_READY,
+        }
+    ),
+    ApplicationState.RECOVERING_WORKER: frozenset(
+        {
+            ApplicationState.LOADING_MODEL,
+            ApplicationState.SOURCE_READY,
+            ApplicationState.MODEL_READY,
+            ApplicationState.DISCONNECTED,
+            ApplicationState.ERROR,
+            ApplicationState.SHUTTING_DOWN,
+        }
     ),
     ApplicationState.RECONNECTING: frozenset(
         {
@@ -98,7 +132,12 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
         }
     ),
     ApplicationState.ERROR: frozenset(
-        {ApplicationState.DISCONNECTED, ApplicationState.SOURCE_READY, ApplicationState.SHUTTING_DOWN}
+        {
+            ApplicationState.DISCONNECTED,
+            ApplicationState.SOURCE_READY,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.SHUTTING_DOWN,
+        }
     ),
     ApplicationState.SHUTTING_DOWN: frozenset(),
 }
@@ -204,7 +243,7 @@ def button_states_for(state: ApplicationState) -> ButtonStates:
             pause_resume_enabled=False,
             stop_enabled=False,
         )
-    if state == ApplicationState.SWITCHING_MODEL:
+    if state in (ApplicationState.SWITCHING_MODEL, ApplicationState.RECOVERING_WORKER):
         return ButtonStates(
             connect_enabled=False,
             disconnect_enabled=False,

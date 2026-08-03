@@ -39,6 +39,15 @@ from core.models.catalog import (
     MOCK_DISPLAY_LABEL,
     MOCK_MODEL_ID,
 )
+from core.runtime.failures import (
+    FailureInfo,
+    FailureKind,
+    FailureStage,
+    classify_failure,
+    crashed_worker_failure,
+    format_failure_tooltip,
+    timeout_failure,
+)
 from core.runtime.messages import (
     Ack,
     CommandType,
@@ -63,6 +72,8 @@ _RECENT_FRAMES_CACHE_SIZE = 3
 _LIVE_PIPELINE_FPS = 12.0
 _LIVE_PIPELINE_INTERVAL_S = 1.0 / _LIVE_PIPELINE_FPS
 _PIPELINE_TICK_MS = 10
+_INFERENCE_RESULT_TIMEOUT_MS = 30_000
+_MAX_AUTO_WORKER_RECOVERIES = 1
 
 _STATE_TO_FOOTER_BADGE: dict[ApplicationState, tuple[BadgeKind, str]] = {
     ApplicationState.DISCONNECTED: (BadgeKind.NOT_INSTALLED, "IDLE"),
@@ -75,6 +86,7 @@ _STATE_TO_FOOTER_BADGE: dict[ApplicationState, tuple[BadgeKind, str]] = {
     ApplicationState.PAUSED: (BadgeKind.EXPERIMENTAL, "PAUSED"),
     ApplicationState.STOPPING: (BadgeKind.EXPERIMENTAL, "STOPPING"),
     ApplicationState.SWITCHING_MODEL: (BadgeKind.LOADING, "SWITCHING MODEL"),
+    ApplicationState.RECOVERING_WORKER: (BadgeKind.LOADING, "WORKER RESTARTING"),
     ApplicationState.RECONNECTING: (BadgeKind.EXPERIMENTAL, "RECONNECTING"),
     ApplicationState.ERROR: (BadgeKind.NOT_RECOMMENDED, "ERROR"),
     ApplicationState.SHUTTING_DOWN: (BadgeKind.NOT_INSTALLED, "SHUTTING DOWN"),
@@ -130,6 +142,9 @@ class InferenceController(QObject):
         self._pending_model_request: tuple[str, dict[str, object]] | None = None
         self._auto_start_after_load = False
         self._run_started_at: float | None = None
+        self._last_failure: FailureInfo | None = None
+        self._worker_recovery_attempts = 0
+        self._recovery_in_progress = False
 
         self._inference_rate = RateMeter(window_seconds=2.0)
         self._render_rate = RateMeter(window_seconds=2.0)
@@ -159,6 +174,11 @@ class InferenceController(QObject):
         self._pipeline_timer = QTimer(self)
         self._pipeline_timer.setInterval(_PIPELINE_TICK_MS)
         self._pipeline_timer.timeout.connect(self._on_pipeline_tick)
+
+        self._inference_watchdog_timer = QTimer(self)
+        self._inference_watchdog_timer.setSingleShot(True)
+        self._inference_watchdog_timer.setInterval(_INFERENCE_RESULT_TIMEOUT_MS)
+        self._inference_watchdog_timer.timeout.connect(self._on_inference_result_timeout)
 
         self._settings_refresh_timer = QTimer(self)
         self._settings_refresh_timer.setSingleShot(True)
@@ -308,6 +328,7 @@ class InferenceController(QObject):
     ) -> None:
         self._requested_model_id = model_id
         self._requested_model_config = dict(config)
+        self._last_failure = None
         self._auto_start_after_load = bool(auto_start)
         self._pending_model_request = None
         self._model_lifecycle.transition_to(ModelLifecycleState.LOADING, strict=False)
@@ -454,6 +475,9 @@ class InferenceController(QObject):
         self._requested_model_id = None
         self._requested_model_config.clear()
         self._pending_model_request = None
+        self._last_failure = None
+        self._worker_recovery_attempts = 0
+        self._recovery_in_progress = False
         self._active_model_id = None
         self._active_model_config_signature = None
         self._active_model_metadata.clear()
@@ -472,6 +496,9 @@ class InferenceController(QObject):
         self._apply_button_states()
 
     def _on_start_clicked(self) -> None:
+        # A direct user retry starts a fresh recovery budget. Automatic worker
+        # recovery never loops indefinitely.
+        self._worker_recovery_attempts = 0
         try:
             model_id, config = self._selected_model_request()
         except ValueError as exc:
@@ -678,15 +705,34 @@ class InferenceController(QObject):
         self._inference_in_flight = True
         self._inflight_frame_id = frame_id
         self._last_submit_at = now
+        self._inference_watchdog_timer.start()
+
+    def _on_inference_result_timeout(self) -> None:
+        """Recover when a submitted frame never returns from the worker."""
+        if (
+            self._state_machine.state is not ApplicationState.RUNNING
+            or not self._inference_in_flight
+        ):
+            return
+        frame_id = self._inflight_frame_id
+        failure = timeout_failure(
+            f"inference result for frame {frame_id}"
+            if frame_id is not None
+            else "inference result"
+        )
+        self._handle_inference_failure(failure)
 
     # -- Worker signal handlers ------------------------------------------
 
     def _on_ack_received(self, ack: Ack) -> None:
         if ack.command_type is CommandType.UNLOAD_MODEL:
             if not ack.success:
-                self._handle_model_unload_failure(
-                    ack.message or "Model unloading failed."
+                failure = ack.failure or classify_failure(
+                    RuntimeError(ack.message or "Model unloading failed."),
+                    stage=FailureStage.UNLOAD,
+                    model_id=ack.model_id,
                 )
+                self._handle_model_unload_failure(failure)
                 return
 
             self._model_lifecycle.transition_to(
@@ -712,7 +758,12 @@ class InferenceController(QObject):
             return
 
         if not ack.success:
-            self._handle_model_load_failure(ack.message or "Model loading failed.")
+            failure = ack.failure or classify_failure(
+                RuntimeError(ack.message or "Model loading failed."),
+                stage=FailureStage.LOAD,
+                model_id=ack.model_id or self._requested_model_id or "",
+            )
+            self._handle_model_load_failure(failure)
             return
 
         self._model_lifecycle.transition_to(ModelLifecycleState.READY, strict=False)
@@ -728,6 +779,9 @@ class InferenceController(QObject):
             self._active_model_metadata["model_load_time_ms"] = ack.model_load_time_ms
         if ack.warmup_time_ms is not None:
             self._active_model_metadata["warmup_time_ms"] = ack.warmup_time_ms
+        self._last_failure = None
+        self._worker_recovery_attempts = 0
+        self._recovery_in_progress = False
         self._settings_panel.set_model_loaded(self._active_model_metadata)
         outputs = self._active_model_metadata.get("outputs", {})
         normals_available = bool(
@@ -739,6 +793,7 @@ class InferenceController(QObject):
         if self._state_machine.state in (
             ApplicationState.LOADING_MODEL,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
         ):
             self._state_machine.transition_to(ApplicationState.MODEL_READY)
             should_start = self._auto_start_after_load
@@ -747,52 +802,75 @@ class InferenceController(QObject):
             if should_start:
                 self._begin_running_session()
 
-    def _handle_model_unload_failure(self, message: str) -> None:
-        logger.error("Model unload failed: %s", message)
+    def _handle_model_unload_failure(self, failure: FailureInfo) -> None:
+        logger.error("Model unload failed: %s", failure.technical_details or failure.message)
+        self._mark_model_unavailable()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
+        if failure.requires_worker_restart:
+            self._recover_worker(failure, reload_request=None)
+            return
+        self._present_recoverable_failure(failure, model_ready=False)
+
+    def _handle_model_load_failure(self, failure: FailureInfo | str) -> None:
+        if isinstance(failure, str):
+            failure = classify_failure(
+                RuntimeError(failure),
+                stage=FailureStage.LOAD,
+                model_id=self._requested_model_id or "",
+            )
+        logger.error("Model load failed: %s", failure.technical_details or failure.message)
+        self._mark_model_unavailable()
+        self._pending_model_request = None
+        self._auto_start_after_load = False
+        if failure.requires_worker_restart:
+            self._recover_worker(failure, reload_request=None)
+            return
+        self._present_recoverable_failure(failure, model_ready=False)
+
+    def _mark_model_unavailable(self) -> None:
         self._model_lifecycle.mark_failed()
         self._model_loaded = False
         self._active_model_id = None
         self._active_model_config_signature = None
         self._active_model_metadata.clear()
-        self._pending_model_request = None
-        self._auto_start_after_load = False
         self._viewport_panel.set_surface_normals_available(False)
-        self._settings_panel.set_model_error(message, label="UNLOAD FAILED")
-        self._header.set_status(BadgeKind.NOT_RECOMMENDED, "UNLOAD FAILED")
-        if self._state_machine.state is ApplicationState.SWITCHING_MODEL:
-            self._state_machine.transition_to(ApplicationState.SOURCE_READY)
-        else:
-            self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
-        self._performance_bar.set_status(BadgeKind.NOT_RECOMMENDED, "ERROR")
+
+    def _present_recoverable_failure(
+        self,
+        failure: FailureInfo,
+        *,
+        model_ready: bool,
+    ) -> None:
+        """Expose a failure without discarding the connected capture source."""
+        self._last_failure = failure
+        tooltip = format_failure_tooltip(failure)
+        self._settings_panel.set_model_error(
+            tooltip,
+            label=failure.label,
+            unlock_controls=True,
+        )
+        badge_kind = (
+            BadgeKind.EXPERIMENTAL
+            if failure.retryable
+            else BadgeKind.NOT_RECOMMENDED
+        )
+        self._header.set_status(badge_kind, failure.label)
+        self._performance_bar.set_status(badge_kind, failure.label)
+        self._viewport_panel.set_status(
+            ViewportStatus.IDLE if failure.preserve_source else ViewportStatus.ERROR
+        )
+
+        target = self._recoverable_application_state(model_ready=model_ready)
+        if self._state_machine.state != target:
+            self._state_machine.transition_to(target, strict=False)
         self._apply_button_states()
         self._sync_model_controls_for_state()
 
-    def _handle_model_load_failure(self, message: str) -> None:
-        logger.error("Model load failed: %s", message)
-        self._model_lifecycle.mark_failed()
-        self._model_loaded = False
-        self._active_model_id = None
-        self._active_model_config_signature = None
-        self._active_model_metadata.clear()
-        self._pending_model_request = None
-        self._auto_start_after_load = False
-        self._viewport_panel.set_surface_normals_available(False)
-        self._settings_panel.set_model_error(message, label="LOAD FAILED")
-        self._header.set_status(BadgeKind.NOT_RECOMMENDED, "LOAD FAILED")
-
-        # Keep the source connected and return to a retryable state. This lets
-        # the user select Development Mock when the optional MoGe dependency or
-        # checkpoint is unavailable, without restarting the whole application.
-        if self._state_machine.state in (
-            ApplicationState.LOADING_MODEL,
-            ApplicationState.SWITCHING_MODEL,
-        ):
-            self._state_machine.transition_to(ApplicationState.SOURCE_READY)
-        else:
-            self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
-        self._performance_bar.set_status(BadgeKind.NOT_RECOMMENDED, "ERROR")
-        self._apply_button_states()
-        self._sync_model_controls_for_state()
+    def _recoverable_application_state(self, *, model_ready: bool) -> ApplicationState:
+        if self._app_controller.active_source is None:
+            return ApplicationState.DISCONNECTED
+        return ApplicationState.MODEL_READY if model_ready else ApplicationState.SOURCE_READY
 
     def _on_result_ready(self, result: InferenceResult) -> None:
         if not self._session.is_current(result.session_id):
@@ -802,6 +880,7 @@ class InferenceController(QObject):
         self._counters.results_received += 1
         rgb = self._recent_frames.pop(result.frame_id, None)
         if result.frame_id == self._inflight_frame_id:
+            self._inference_watchdog_timer.stop()
             self._inference_in_flight = False
             self._inflight_frame_id = None
 
@@ -811,10 +890,21 @@ class InferenceController(QObject):
             return
 
         if result.error is not None:
-            self._handle_inference_failure(result.error)
+            failure = result.failure or classify_failure(
+                RuntimeError(result.error),
+                stage=FailureStage.INFERENCE,
+                model_id=result.model_id or self._active_model_id or "",
+            )
+            self._handle_inference_failure(failure)
             return
         if result.depth is None:
-            self._handle_inference_failure("The model returned no depth map.")
+            self._handle_inference_failure(
+                classify_failure(
+                    RuntimeError("The model returned no depth map."),
+                    stage=FailureStage.INFERENCE,
+                    model_id=result.model_id or self._active_model_id or "",
+                )
+            )
             return
 
         self._update_inference_fps()
@@ -830,23 +920,32 @@ class InferenceController(QObject):
         self._try_submit_latest_frame()
         self._try_render_latest_result()
 
-    def _handle_inference_failure(self, message: str) -> None:
-        logger.error("Inference failed: %s", message)
+    def _handle_inference_failure(self, failure: FailureInfo | str) -> None:
+        if isinstance(failure, str):
+            failure = classify_failure(
+                RuntimeError(failure),
+                stage=FailureStage.INFERENCE,
+                model_id=self._active_model_id or "",
+            )
+        logger.error("Inference failed: %s", failure.technical_details or failure.message)
         self._counters.inference_errors += 1
         self._refresh_uptime()
         self._session.invalidate()
         self._reset_pipeline_runtime()
         self._process_manager.pause()
-        self._viewport_panel.set_status(ViewportStatus.ERROR)
-        self._settings_panel.set_model_error(
-            message,
-            label="INFERENCE ERROR",
-            unlock_controls=False,
+
+        if failure.requires_worker_restart:
+            self._mark_model_unavailable()
+            self._recover_worker(failure, reload_request=None)
+            return
+
+        # The worker pauses after publishing an inference failure.  Keep a
+        # healthy resident model available for a deliberate retry while the
+        # capture source remains connected.
+        self._present_recoverable_failure(
+            failure,
+            model_ready=self._model_loaded,
         )
-        self._header.set_status(BadgeKind.NOT_RECOMMENDED, "INFERENCE ERROR")
-        self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
-        self._performance_bar.set_status(BadgeKind.NOT_RECOMMENDED, "ERROR")
-        self._apply_button_states()
 
     def _try_render_latest_result(self) -> None:
         if self._state_machine.state != ApplicationState.RUNNING:
@@ -1370,6 +1469,7 @@ class InferenceController(QObject):
         self._uptime_timer.stop()
         self._pending_source_frame = None
         self._pending_render = None
+        self._inference_watchdog_timer.stop()
         self._inference_in_flight = False
         self._inflight_frame_id = None
         self._last_submit_at = None
@@ -1389,31 +1489,87 @@ class InferenceController(QObject):
     # -- Worker recovery --------------------------------------------------
 
     def _on_worker_unresponsive(self, command_type: CommandType) -> None:
-        logger.warning("Inference worker did not acknowledge %s in time", command_type)
+        failure = timeout_failure(command_type.value)
+        logger.warning("%s", failure.message)
+
+        reload_request: tuple[str, dict[str, object]] | None = None
+        if command_type is CommandType.UNLOAD_MODEL:
+            reload_request = self._pending_model_request
+        elif command_type is CommandType.STOP and self._model_loaded:
+            reload_request = self._resident_model_request()
+        # A timed-out load is not retried automatically: it may have stalled
+        # because of network or hardware pressure.  The user can retry after
+        # the fresh worker is ready.
+        self._recover_worker(failure, reload_request=reload_request)
 
     def _on_worker_crashed(self) -> None:
-        logger.error("Inference worker process crashed")
-        self._model_lifecycle.mark_failed()
-        self._model_loaded = False
-        self._active_model_id = None
-        self._active_model_config_signature = None
-        self._active_model_metadata.clear()
-        self._pending_model_request = None
-        self._auto_start_after_load = False
-        self._viewport_panel.set_surface_normals_available(False)
+        if self._state_machine.state is ApplicationState.SHUTTING_DOWN:
+            return
+        failure = crashed_worker_failure(self._process_manager.last_exitcode)
+        logger.error("%s", failure.message)
+        reload_request: tuple[str, dict[str, object]] | None = None
+        if self._app_controller.active_source is not None:
+            # If the worker dies while unloading for a model switch, preserve
+            # the user's new selection instead of silently restoring the old
+            # resident model. A crash during the new load itself is not retried
+            # automatically, which prevents repeated download/OOM loops.
+            if self._pending_model_request is not None:
+                model_id, config = self._pending_model_request
+                reload_request = model_id, dict(config)
+            elif self._model_loaded:
+                reload_request = self._resident_model_request()
+        self._recover_worker(failure, reload_request=reload_request)
+
+    def _resident_model_request(self) -> tuple[str, dict[str, object]] | None:
+        model_id = self._active_model_id or self._requested_model_id
+        if not model_id:
+            return None
+        return model_id, dict(self._requested_model_config)
+
+    def _recover_worker(
+        self,
+        failure: FailureInfo,
+        *,
+        reload_request: tuple[str, dict[str, object]] | None,
+    ) -> None:
+        """Restart a failed worker once while preserving the capture source."""
+        self._last_failure = failure
+        if self._recovery_in_progress:
+            return
+        if self._worker_recovery_attempts >= _MAX_AUTO_WORKER_RECOVERIES:
+            self._present_recoverable_failure(failure, model_ready=False)
+            return
+
+        self._worker_recovery_attempts += 1
+        self._recovery_in_progress = True
+        self._session.invalidate()
         self._clear_cached_geometry()
         self._reset_pipeline_runtime()
-        self._settings_panel.set_model_error(
-            "The inference worker process crashed.",
-            label="WORKER ERROR",
+        self._depth_view.clear_frame()
+        self._point_cloud_canvas.clear_points()
+        self._viewport_panel.invalidate_camera()
+        self._viewport_panel.set_surface_normals_available(False)
+        self._viewport_panel.set_status(ViewportStatus.IDLE)
+
+        if self._state_machine.state is not ApplicationState.RECOVERING_WORKER:
+            transitioned = self._state_machine.transition_to(
+                ApplicationState.RECOVERING_WORKER,
+                strict=False,
+            )
+            if not transitioned and self._app_controller.active_source is None:
+                self._recovery_in_progress = False
+                self._process_manager.restart_worker()
+                self._mark_model_unavailable()
+                return
+
+        self._settings_panel.set_model_stage(
+            "RESTARTING",
+            format_failure_tooltip(failure),
         )
-        self._header.set_status(BadgeKind.NOT_RECOMMENDED, "WORKER ERROR")
-        self._viewport_panel.set_status(ViewportStatus.ERROR)
-        self._state_machine.transition_to(ApplicationState.ERROR, strict=False)
+        self._header.set_status(BadgeKind.LOADING, "WORKER RESTARTING")
+        self._performance_bar.set_status(BadgeKind.LOADING, "WORKER RESTARTING")
         self._apply_button_states()
 
-    def restart_worker(self) -> None:
-        """Public entry point for a future Restart Worker UI action."""
         self._process_manager.restart_worker()
         self._model_lifecycle.reset()
         self._model_loaded = False
@@ -1422,10 +1578,28 @@ class InferenceController(QObject):
         self._active_model_metadata.clear()
         self._pending_model_request = None
         self._auto_start_after_load = False
-        self._viewport_panel.set_surface_normals_available(False)
-        self._settings_panel.set_model_unloaded()
-        self._clear_cached_geometry()
-        self._reset_pipeline_runtime()
+
+        if reload_request is not None and self._app_controller.active_source is not None:
+            model_id, config = reload_request
+            # A recovered model is loaded but never auto-started.  This avoids
+            # a crash/OOM loop and gives the user control over the next frame.
+            self._recovery_in_progress = False
+            self._begin_model_load(
+                model_id,
+                config,
+                auto_start=False,
+                switching=False,
+            )
+            return
+
+        self._recovery_in_progress = False
+        self._present_recoverable_failure(failure, model_ready=False)
+
+    def restart_worker(self) -> None:
+        """Explicitly restart the worker while preserving the current source."""
+        failure = crashed_worker_failure(self._process_manager.last_exitcode)
+        self._worker_recovery_attempts = 0
+        self._recover_worker(failure, reload_request=None)
 
     # -- Button state application ----------------------------------------
 
@@ -1447,6 +1621,7 @@ class InferenceController(QObject):
             ApplicationState.PAUSED,
             ApplicationState.STOPPING,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.RECONNECTING,
             ApplicationState.SHUTTING_DOWN,
         }
@@ -1460,6 +1635,7 @@ class InferenceController(QObject):
             ApplicationState.PAUSED,
             ApplicationState.STOPPING,
             ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
             ApplicationState.RECONNECTING,
             ApplicationState.SHUTTING_DOWN,
         }
@@ -1480,18 +1656,25 @@ class InferenceController(QObject):
         if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
             self._stop_inference()
         self._pipeline_timer.stop()
+        self._inference_watchdog_timer.stop()
         self._settings_refresh_timer.stop()
         self._process_manager.shutdown()
         self._model_lifecycle.reset()
         self._model_loaded = False
         self._active_model_id = None
         self._active_model_config_signature = None
+        self._last_failure = None
+        self._recovery_in_progress = False
         self._settings_panel.set_model_unloaded()
         self._point_cloud_canvas.close()
 
     @property
     def model_lifecycle_state(self) -> ModelLifecycleState:
         return self._model_lifecycle.state
+
+    @property
+    def last_failure(self) -> FailureInfo | None:
+        return self._last_failure
 
     @property
     def state_machine(self) -> StateMachine:
