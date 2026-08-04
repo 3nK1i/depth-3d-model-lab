@@ -1,8 +1,8 @@
 """Inference lifecycle, latest-frame scheduling, and geometry rendering.
 
-Phase 5 Step 2 activates the first real adapter, MoGe-2, while preserving the
-bounded live-stream pipeline introduced in Step 1.2. Heavy model imports and all
-CUDA allocations remain isolated in the spawned worker process.
+Phase 6 keeps the bounded Phase 5 runtime stable while making model selection,
+configuration, capabilities, and presentation registry-driven. Heavy model
+imports and all CUDA allocations remain isolated in the spawned worker process.
 """
 
 from __future__ import annotations
@@ -29,16 +29,11 @@ from app.widgets.viewport.vispy_canvas import PointCloudCanvas
 from core.capture.frame import SourceFrame
 from core.geometry.colors import apply_colormap
 from core.geometry.filtering import edge_filter_mask, remove_invalid, valid_mask
-from core.geometry.projection import depth_to_points
+from core.geometry.projection import depth_to_points, scale_intrinsics
 from core.geometry.sampling import adaptive_stride, enforce_point_budget, stride_for_point_budget
 from core.geometry.temporal import TemporalGeometrySmoother
 from core.inference.process_manager import InferenceProcessManager
-from core.models.catalog import (
-    MOGE2_DISPLAY_LABEL,
-    MOGE2_MODEL_ID,
-    MOCK_DISPLAY_LABEL,
-    MOCK_MODEL_ID,
-)
+from core.models.registry import get_model_descriptor
 from core.runtime.failures import (
     FailureInfo,
     FailureKind,
@@ -67,7 +62,6 @@ from core.runtime.telemetry import GeometryTiming, RateMeter, RuntimeCounters
 logger = logging.getLogger(__name__)
 
 _STOP_TIMEOUT_MS = 5000
-_MOCK_LATENCY_MS = 30.0
 _RECENT_FRAMES_CACHE_SIZE = 3
 _LIVE_PIPELINE_FPS = 12.0
 _LIVE_PIPELINE_INTERVAL_S = 1.0 / _LIVE_PIPELINE_FPS
@@ -272,15 +266,9 @@ class InferenceController(QObject):
 
     def _selected_model_request(self) -> tuple[str, dict[str, object]]:
         model_id = self._settings_panel.selected_model_id
-        if model_id == MOGE2_MODEL_ID:
-            return model_id, dict(self._settings_panel.model_runtime_config)
-        if model_id == MOCK_MODEL_ID:
-            return model_id, {
-                "device": "cpu",
-                "precision": "fp32",
-                "latency_ms": _MOCK_LATENCY_MS,
-            }
-        raise ValueError(f"Unknown model selection: {model_id!r}")
+        # Registry dispatch in SettingsPanel resolves every adapter config.
+        get_model_descriptor(model_id)  # fail early on corrupted persisted ids
+        return model_id, dict(self._settings_panel.model_runtime_config)
 
     def _selected_model_matches_active(self) -> bool:
         if not self._model_loaded or self._active_model_id is None:
@@ -298,8 +286,7 @@ class InferenceController(QObject):
         self._request_safe_model_switch_from_settings()
 
     def _on_compute_profile_changed(self, _resolved_profile: object) -> None:
-        if self._settings_panel.selected_model_id == MOGE2_MODEL_ID:
-            self._request_safe_model_switch_from_settings()
+        self._request_safe_model_switch_from_settings()
 
     def _request_safe_model_switch_from_settings(self) -> None:
         if not self._model_loaded:
@@ -1227,7 +1214,7 @@ class InferenceController(QObject):
         full_valid_mask: np.ndarray | None,
         density_stride: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-        """Align MoGe's worker-sampled point grid with depth/RGB/mask data."""
+        """Align any adapter-provided point grid with depth/RGB/mask data."""
         assert result.depth is not None
         assert result.points is not None
 
@@ -1263,6 +1250,11 @@ class InferenceController(QObject):
                 :: base_stride * extra_stride,
                 :: base_stride * extra_stride,
             ]
+        elif result.colors is not None and result.colors.shape == result.points.shape:
+            sampled_colors = np.asarray(result.colors, dtype=np.uint8)[
+                ::extra_stride,
+                ::extra_stride,
+            ]
         else:
             aligned_rgb = _aligned_rgb(rgb, result.depth.shape)
             source = aligned_rgb if aligned_rgb is not None else depth_rgb
@@ -1288,7 +1280,7 @@ class InferenceController(QObject):
         density_stride: int,
         point_budget: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-        """Keep the existing virtual-FOV path for mock/depth-only adapters."""
+        """Use estimated-intrinsics projection for depth-only adapters."""
         assert result.depth is not None
         depth = result.depth
         if self._app_controller.is_stream_source:
@@ -1301,7 +1293,13 @@ class InferenceController(QObject):
         )
 
         sampled_depth = depth[::stride, ::stride]
-        points_grid = depth_to_points(sampled_depth)
+        sampled_intrinsics = None
+        if result.intrinsics is not None:
+            sampled_intrinsics = scale_intrinsics(
+                result.intrinsics,
+                1.0 / float(stride),
+            )
+        points_grid = depth_to_points(sampled_depth, intrinsics=sampled_intrinsics)
 
         render_mode = self._viewport_panel.render_mode
         if render_mode == "Depth Colors" or render_mode == "Surface Normals":
@@ -1327,8 +1325,10 @@ class InferenceController(QObject):
         if geometry is None:
             geometry = GeometryTiming(point_count=point_count or 0)
         model_label = result.model_name or self._active_model_display_name(result.model_id)
-        precision = result.precision or (
-            "FP32" if result.model_id == MOCK_MODEL_ID else None
+        precision = (
+            result.precision
+            or _string_metadata(self._active_model_metadata, "precision")
+            or _registry_default_precision_label(result.model_id)
         )
         uptime_seconds = (
             int(time.monotonic() - self._run_started_at)
@@ -1427,9 +1427,10 @@ class InferenceController(QObject):
 
     def _initial_session_snapshot(self) -> PerformanceSnapshot:
         metadata = self._active_model_metadata
-        precision = _string_metadata(metadata, "precision")
-        if not precision and self._active_model_id == MOCK_MODEL_ID:
-            precision = "FP32"
+        precision = (
+            _string_metadata(metadata, "precision")
+            or _registry_default_precision_label(self._active_model_id)
+        )
         return PerformanceSnapshot(
             status="RUNNING",
             model_name=self._active_model_display_name(),
@@ -1469,17 +1470,27 @@ class InferenceController(QObject):
         if metadata_name:
             return metadata_name
         active_id = model_id or self._active_model_id
-        if active_id == MOCK_MODEL_ID:
-            return MOCK_DISPLAY_LABEL
-        if active_id == MOGE2_MODEL_ID:
-            return self._settings_panel.resolved_profile.spec.model_label
-        return active_id or ""
+        if not active_id:
+            return ""
+        try:
+            return get_model_descriptor(active_id).display_name
+        except ValueError:
+            return active_id
 
     def _set_active_model_header(self) -> None:
-        if self._active_model_id == MOCK_MODEL_ID:
-            self._header.set_status(BadgeKind.EXPERIMENTAL, "MOCK")
-        elif self._active_model_id == MOGE2_MODEL_ID:
-            self._header.set_status(BadgeKind.RECOMMENDED, "MOGE-2")
+        active_id = self._active_model_id
+        if not active_id:
+            return
+        try:
+            descriptor = get_model_descriptor(active_id)
+        except ValueError:
+            return
+        try:
+            kind = BadgeKind(descriptor.presentation.header_badge_kind)
+        except ValueError:
+            kind = BadgeKind.COMPATIBLE
+        label = descriptor.presentation.header_label or descriptor.display_name.upper()
+        self._header.set_status(kind, label)
 
     def _update_inference_fps(self) -> None:
         self._last_inference_fps = self._inference_rate.mark(time.monotonic())
@@ -1761,6 +1772,24 @@ def _string_metadata(metadata: dict[str, object], key: str) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _registry_default_precision_label(model_id: str | None) -> str | None:
+    """Return a registry-owned fallback precision label for partial results.
+
+    Normal worker results carry their resolved precision explicitly. This
+    fallback preserves Phase 5 behavior for synthetic tests and early-session
+    snapshots where runtime metadata has not yet been populated.
+    """
+    if not model_id:
+        return None
+    try:
+        descriptor = get_model_descriptor(model_id)
+    except ValueError:
+        return None
+
+    precision = str(descriptor.default_config.get("precision", "")).strip()
+    return precision.upper() or None
 
 
 def _aligned_mask(mask: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray | None:

@@ -42,6 +42,8 @@ def test_frame_request_pickle_round_trip_preserves_array_and_metadata() -> None:
 def test_result_pickle_round_trip_preserves_optional_geometry() -> None:
     depth = np.ones((2, 3), dtype=np.float32)
     points = np.ones((2, 3, 3), dtype=np.float32)
+    colors = np.full((2, 3, 3), 127, dtype=np.uint8)
+    confidence = np.full((2, 3), 0.8, dtype=np.float32)
     result = InferenceResult(
         session_id=2,
         frame_id=4,
@@ -51,13 +53,21 @@ def test_result_pickle_round_trip_preserves_optional_geometry() -> None:
         points=points,
         precision="FP16",
         vram_reserved_gib=0.75,
+        colors=colors,
+        confidence=confidence,
+        depth_scale="metric",
+        intrinsics_source="estimated",
     )
 
     restored = pickle.loads(pickle.dumps(result))
     np.testing.assert_array_equal(restored.depth, depth)
     np.testing.assert_array_equal(restored.points, points)
+    np.testing.assert_array_equal(restored.colors, colors)
+    np.testing.assert_array_equal(restored.confidence, confidence)
     assert restored.precision == "FP16"
     assert restored.vram_reserved_gib == 0.75
+    assert restored.depth_scale == "metric"
+    assert restored.intrinsics_source == "estimated"
 
 
 def test_control_messages_are_frozen() -> None:

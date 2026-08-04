@@ -1,8 +1,8 @@
-"""Stable model identifiers and user-facing labels.
+"""Backward-compatible stable model identifiers.
 
-This module intentionally has no heavyweight imports. UI code, worker code and
-model adapters can all import these constants without importing PyTorch or a
-model package in the Qt process.
+Phase 6 makes :mod:`core.models.registry` authoritative for model metadata and
+adapter construction. These constants remain here because Phase 5 callers and
+third-party integrations may import them directly.
 """
 
 from __future__ import annotations
@@ -13,4 +13,5 @@ MOGE2_DISPLAY_LABEL = "MoGe-2"
 MOCK_MODEL_ID = "development-mock"
 MOCK_DISPLAY_LABEL = "DEVELOPMENT MOCK — NOT AI OUTPUT"
 
+# Kept as a Phase 5 compatibility alias. New code should query the registry.
 SUPPORTED_MODEL_IDS = (MOGE2_MODEL_ID, MOCK_MODEL_ID)

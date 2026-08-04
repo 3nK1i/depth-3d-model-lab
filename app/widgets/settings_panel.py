@@ -30,16 +30,20 @@ from app.widgets.settings_controls import (
 )
 from core.hardware.gpu_info import HardwareInfo, detect_hardware
 from core.hardware.profiles import (
-    PROFILE_SPECS,
     ComputeProfile,
     ResolvedProfile,
     resolve_profile,
 )
-from core.models.catalog import (
-    MOGE2_DISPLAY_LABEL,
-    MOGE2_MODEL_ID,
-    MOCK_MODEL_ID,
+from core.models.metadata import ModelDescriptor, ModelProfileMetadata
+from core.models.registry import (
+    check_model_availability,
+    get_default_model_descriptor,
+    get_model_descriptor,
+    iter_model_descriptors,
+    resolve_model_profile_metadata,
+    resolve_model_runtime_config,
 )
+from core.models.runtime_config import ModelRuntimeContext
 
 SIDEBAR_MIN_WIDTH = 320
 SIDEBAR_PREFERRED_WIDTH = 348
@@ -88,7 +92,9 @@ class SettingsPanel(QFrame):
         self._hardware_info = hardware_info or detect_hardware()
         self._app_settings = app_settings or AppSettings()
         self._resolved_profile: ResolvedProfile | None = None
+        self._profile_metadata: ModelProfileMetadata | None = None
         self._bindings: list[SliderValueBinding] = []
+        self._model_controls_locked = False
 
         self._build_ui()
         self._initialize_compute_profile()
@@ -146,13 +152,14 @@ class SettingsPanel(QFrame):
         card = CollapsibleSettingsCard("MODEL", uppercase_labels=True)
 
         self._model_combo = SettingsComboBox()
-        self._model_combo.addItem(MOGE2_DISPLAY_LABEL, MOGE2_MODEL_ID)
-        self._model_combo.addItem("Development Mock", MOCK_MODEL_ID)
+        for descriptor in iter_model_descriptors(
+            selectable_only=True,
+            enabled_only=True,
+        ):
+            self._model_combo.addItem(descriptor.display_name, descriptor.model_id)
         self._model_combo.currentIndexChanged.connect(self._on_model_selected)
         self._model_combo.setToolTip(
-            "Choose the adapter to load in the isolated inference worker. "
-            "MoGe-2 is the default; the development mock remains available "
-            "only for lifecycle diagnostics."
+            "Choose a registry-declared adapter to load in the isolated inference worker."
         )
         self._model_badge = StatusBadge("READY")
         card.add_wide_row(self._model_combo, self._model_badge)
@@ -162,33 +169,26 @@ class SettingsPanel(QFrame):
         self._gpu_profile.currentIndexChanged.connect(self._on_profile_selected)
         card.add_control_row("GPU Profile", self._gpu_profile)
 
-        # These rows are profile outputs in Step 1. They become editable only
-        # when a dedicated Custom profile is introduced later.
-        self._model_variant = SettingsComboBox(
-            [PROFILE_SPECS[p].model_label for p in _CONCRETE_PROFILES]
-        )
+        # Registry-resolved outputs. They remain read-only until a dedicated
+        # custom profile workflow is added in a later phase.
+        self._model_variant = SettingsComboBox()
         self._model_variant.setEnabled(False)
         self._model_variant.setToolTip(
-            "Resolved MoGe-2 variant for the selected hardware profile."
+            "Registry-resolved model variant for the selected adapter and profile."
         )
         card.add_control_row("Model Variant", self._model_variant)
 
-        self._resolution = SettingsComboBox(
-            [
-                _resolution_label(PROFILE_SPECS[p].resolution_level, PROFILE_SPECS[p].num_tokens)
-                for p in _CONCRETE_PROFILES
-            ]
-        )
+        self._resolution = SettingsComboBox()
         self._resolution.setEnabled(False)
         self._resolution.setToolTip(
-            "Resolved inference detail for the selected hardware profile."
+            "Registry-resolved inference detail for the selected adapter."
         )
         card.add_control_row("Inference Detail", self._resolution)
 
-        self._precision = SettingsComboBox(["FP16 (Half)", "FP32", "BF16"])
+        self._precision = SettingsComboBox()
         self._precision.setEnabled(False)
         self._precision.setToolTip(
-            "Resolved numeric precision for the selected hardware profile."
+            "Registry-resolved numeric precision for the selected adapter."
         )
         card.add_control_row("Precision", self._precision)
         return card
@@ -322,41 +322,69 @@ class SettingsPanel(QFrame):
     def _initialize_model_selection(self) -> None:
         loader = getattr(self._app_settings, "load_last_model_id", None)
         saved = loader() if callable(loader) else None
-        model_id = saved if saved in {MOGE2_MODEL_ID, MOCK_MODEL_ID} else MOGE2_MODEL_ID
+        selectable_ids = {
+            descriptor.model_id
+            for descriptor in iter_model_descriptors(
+                selectable_only=True,
+                enabled_only=True,
+            )
+        }
+        default_id = get_default_model_descriptor().model_id
+        model_id = saved if saved in selectable_ids else default_id
         index = self._model_combo.findData(model_id)
         _set_combo_index_blocked(self._model_combo, max(index, 0))
+        self._apply_profile(self.resolved_profile.requested, emit_signal=False)
         self._refresh_model_badge()
+        self._sync_profile_control_state()
 
     def _on_model_selected(self, _index: int) -> None:
         saver = getattr(self._app_settings, "save_last_model_id", None)
         if callable(saver):
             saver(self.selected_model_id)
+        self._apply_profile(self.resolved_profile.requested, emit_signal=False)
         self._refresh_model_badge()
+        self._sync_profile_control_state()
         self.model_selection_changed.emit(self.selected_model_id)
 
     def _refresh_model_badge(self) -> None:
-        if self.selected_model_id == MOCK_MODEL_ID:
-            self._model_badge.setText("DEV ONLY")
-            self._model_badge.setToolTip(
-                "Synthetic depth used only to test the runtime lifecycle."
-            )
+        descriptor = self.selected_model_descriptor
+        availability = check_model_availability(
+            descriptor.model_id,
+            self._hardware_info,
+        )
+        if descriptor.development_only:
+            self._model_badge.setText(descriptor.presentation.idle_badge)
+            self._model_badge.setToolTip(descriptor.presentation.description)
+            self._model_combo.setToolTip(descriptor.presentation.description)
             return
-        if self.resolved_profile.downgraded:
+        if descriptor.uses_compute_profile and self.resolved_profile.downgraded:
             self._model_badge.setText("SAFE FALLBACK")
         elif self._hardware_info.cuda_ready:
             self._model_badge.setText("GPU READY")
         else:
             self._model_badge.setText("CPU MODE")
 
-        tooltip_parts = [self._hardware_info.details]
-        if self.resolved_profile.warning:
+        tooltip_parts = [descriptor.presentation.description, self._hardware_info.details]
+        if availability.reason:
+            tooltip_parts.append(f"Availability: {availability.reason}")
+        if descriptor.uses_compute_profile and self.resolved_profile.warning:
             tooltip_parts.append(f"Profile: {self.resolved_profile.warning}")
-        self._model_badge.setToolTip("\n".join(v for v in tooltip_parts if v))
+        tooltip = "\n".join(v for v in tooltip_parts if v)
+        self._model_badge.setToolTip(tooltip)
+        self._model_combo.setToolTip(tooltip)
 
     def set_model_controls_locked(self, locked: bool) -> None:
         """Prevent config/model changes while a worker model is loaded."""
+        self._model_controls_locked = bool(locked)
         self._model_combo.setEnabled(not locked)
-        self._gpu_profile.setEnabled(not locked)
+        self._sync_profile_control_state()
+
+    def _sync_profile_control_state(self) -> None:
+        enabled = (
+            not self._model_controls_locked
+            and self.selected_model_descriptor.uses_compute_profile
+        )
+        self._gpu_profile.setEnabled(enabled)
 
     def set_model_loading(self) -> None:
         self.set_model_stage("LOADING", "Loading model weights.")
@@ -369,12 +397,8 @@ class SettingsPanel(QFrame):
 
     def set_model_loaded(self, metadata: dict | None) -> None:
         metadata = metadata or {}
-        if self.selected_model_id == MOCK_MODEL_ID:
-            self._model_badge.setText("MOCK ACTIVE")
-        elif bool(metadata.get("is_metric")):
-            self._model_badge.setText("METRIC READY")
-        else:
-            self._model_badge.setText("READY")
+        descriptor = self.selected_model_descriptor
+        self._model_badge.setText(descriptor.presentation.active_badge)
         details = [
             str(metadata.get("display_name", "")),
             str(metadata.get("device", "")),
@@ -431,42 +455,37 @@ class SettingsPanel(QFrame):
         self._resolved_profile = resolved
         self._app_settings.save_compute_profile(requested.value)
 
-        variant_index = _CONCRETE_PROFILES.index(resolved.effective)
-        _set_combo_index_blocked(self._model_variant, variant_index)
-        _set_combo_index_blocked(self._resolution, variant_index)
+        profile_metadata = resolve_model_profile_metadata(
+            self.selected_model_id,
+            resolved,
+        )
+        self._profile_metadata = profile_metadata
+        _set_combo_single_value(self._model_variant, profile_metadata.variant_label)
+        _set_combo_single_value(self._resolution, profile_metadata.detail_label)
+        _set_combo_single_value(self._precision, profile_metadata.precision_label)
 
-        precision_index = self._precision.findText(resolved.precision.display_name)
-        _set_combo_index_blocked(self._precision, max(precision_index, 0))
-
-        budget_label = _point_budget_label(resolved.spec.point_budget)
+        budget_label = _point_budget_label(profile_metadata.point_budget)
         budget_index = self._point_budget.findText(budget_label)
-        if budget_index >= 0:
-            _set_combo_index_blocked(self._point_budget, budget_index)
+        if budget_index < 0:
+            self._point_budget.addItem(budget_label)
+            budget_index = self._point_budget.findText(budget_label)
+        _set_combo_index_blocked(self._point_budget, max(budget_index, 0))
 
-        live_cap = resolved.spec.live_point_budget
+        live_cap = profile_metadata.live_point_budget
         self._point_budget.setToolTip(
             "Maximum point count for a static image. Lower budgets resample the "
             "cached result immediately; requesting more points than the worker "
             "returned takes effect on the next inference. "
             f"Continuous video/camera/RTSP rendering is safety-capped at "
-            f"{_point_budget_label(live_cap)} for the "
-            f"{resolved.effective.display_name} profile to keep the UI responsive."
+            f"{_point_budget_label(live_cap)} for the resolved registry profile."
         )
 
-        tooltip_parts = [self._hardware_info.details]
-        tooltip_parts.append(
-            "Auto tuning: "
-            f"{resolved.spec.model_label}, {resolved.precision.display_name}, "
-            f"level {resolved.spec.resolution_level}, {resolved.spec.num_tokens} tokens, "
-            f"{resolved.spec.warmup_runs} warm-up run(s)."
-        )
-        if resolved.warning:
-            tooltip_parts.append(f"Profile: {resolved.warning}")
+        tooltip_parts = [self._hardware_info.details, profile_metadata.tooltip]
         profile_tooltip = "\n".join(part for part in tooltip_parts if part)
         self._gpu_profile.setToolTip(profile_tooltip)
 
         self._refresh_model_badge()
-        if self.selected_model_id == MOGE2_MODEL_ID:
+        if self.selected_model_descriptor.uses_compute_profile:
             self._model_badge.setToolTip(profile_tooltip)
 
         if emit_signal:
@@ -477,7 +496,11 @@ class SettingsPanel(QFrame):
     @property
     def selected_model_id(self) -> str:
         value = self._model_combo.currentData()
-        return str(value) if value else MOGE2_MODEL_ID
+        return str(value) if value else get_default_model_descriptor().model_id
+
+    @property
+    def selected_model_descriptor(self) -> ModelDescriptor:
+        return get_model_descriptor(self.selected_model_id)
 
     @property
     def selected_model_label(self) -> str:
@@ -494,9 +517,14 @@ class SettingsPanel(QFrame):
 
     @property
     def model_runtime_config(self) -> dict[str, object]:
-        config = self.resolved_profile.as_model_config()
-        config["point_budget"] = self.point_budget
-        return config
+        return resolve_model_runtime_config(
+            self.selected_model_id,
+            ModelRuntimeContext(
+                hardware_info=self._hardware_info,
+                resolved_profile=self.resolved_profile,
+                point_budget=self.point_budget,
+            ),
+        )
 
     # -- Public API: live-read geometry settings --------------------------
 
@@ -575,7 +603,8 @@ class SettingsPanel(QFrame):
     @property
     def live_point_budget(self) -> int:
         """Safe point-cloud cap for continuous video/camera/RTSP sources."""
-        cap = self.resolved_profile.spec.live_point_budget
+        metadata = self._profile_metadata
+        cap = metadata.live_point_budget if metadata is not None else self.point_budget
         return min(self.point_budget, cap)
 
 
@@ -584,10 +613,6 @@ _CONCRETE_PROFILES = (
     ComputeProfile.BALANCED,
     ComputeProfile.ULTRA,
 )
-
-
-def _resolution_label(level: int, num_tokens: int) -> str:
-    return f"Level {level} · {num_tokens} tok"
 
 
 def _point_budget_label(point_budget: int) -> str:
@@ -599,4 +624,12 @@ def _point_budget_label(point_budget: int) -> str:
 def _set_combo_index_blocked(combo: SettingsComboBox, index: int) -> None:
     blocker = QSignalBlocker(combo)
     combo.setCurrentIndex(index)
+    del blocker
+
+
+def _set_combo_single_value(combo: SettingsComboBox, value: str) -> None:
+    blocker = QSignalBlocker(combo)
+    combo.clear()
+    combo.addItem(str(value))
+    combo.setCurrentIndex(0)
     del blocker

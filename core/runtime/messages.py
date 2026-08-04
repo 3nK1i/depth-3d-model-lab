@@ -124,3 +124,11 @@ class InferenceResult:
 
     error: str | None = None
     failure: FailureInfo | None = None
+
+    # Phase 6 normalized optional outputs and semantics. Appended to preserve
+    # the Phase 5 positional constructor contract.
+    confidence: np.ndarray | None = None
+    colors: np.ndarray | None = None
+    depth_scale: str = ""
+    intrinsics_source: str = ""
+    confidence_kind: str = ""

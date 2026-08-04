@@ -29,6 +29,7 @@ class GeometryResult:
     worker_total_ms: float | None = None
     queue_wait_ms: float | None = None
 
+    # ``is_metric`` is retained for Phase 5 compatibility.
     is_metric: bool = False
     model_id: str = ""
     model_name: str = ""
@@ -42,3 +43,9 @@ class GeometryResult:
     vram_peak_reserved_gib: float | None = None
     vram_device_used_gib: float | None = None
     vram_total_gib: float | None = None
+
+    # Phase 6 semantics are appended to preserve the Phase 5 positional
+    # constructor contract.
+    depth_scale: str = ""
+    intrinsics_source: str = ""
+    confidence_kind: str = ""

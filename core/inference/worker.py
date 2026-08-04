@@ -15,10 +15,10 @@ from multiprocessing.connection import Connection
 from multiprocessing.queues import Queue as MPQueue
 from typing import Any
 
-from core.models.adapters.mock_adapter import MockGeometryModel
-from core.models.adapters.moge2_adapter import Moge2GeometryModel
 from core.models.base import BaseGeometryModel
-from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.models.metadata import ModelDescriptor
+from core.models.registry import build_model, get_model_descriptor, merge_model_metadata
+from core.models.validation import normalize_geometry_result
 from core.runtime.failures import FailureStage, classify_failure
 from core.runtime.logging_setup import configure_logging
 from core.runtime.messages import (
@@ -33,18 +33,10 @@ from core.runtime.messages import (
 
 logger = logging.getLogger(__name__)
 
-_MODEL_REGISTRY: dict[str, type[BaseGeometryModel]] = {
-    MOGE2_MODEL_ID: Moge2GeometryModel,
-    MOCK_MODEL_ID: MockGeometryModel,
-}
-
-
 def _build_model(model_id: str) -> BaseGeometryModel:
-    try:
-        model_cls = _MODEL_REGISTRY[model_id]
-    except KeyError:
-        raise ValueError(f"Unknown model id: {model_id!r}") from None
-    return model_cls()
+    """Backward-compatible worker helper delegated to the model registry."""
+
+    return build_model(model_id)
 
 
 def worker_main(
@@ -60,6 +52,7 @@ def worker_main(
         pass
 
     active_model: BaseGeometryModel | None = None
+    active_descriptor: ModelDescriptor | None = None
     active_model_id: str | None = None
     paused = True
 
@@ -94,6 +87,7 @@ def worker_main(
                         )
                         cleanup_metadata = dict(active_model.unload() or {})
                         active_model = None
+                        active_descriptor = None
                         active_model_id = None
 
                     failure_stage = FailureStage.LOAD
@@ -103,7 +97,9 @@ def worker_main(
                         command.model_id,
                         "Loading model weights and allocating runtime resources.",
                     )
+                    descriptor = get_model_descriptor(command.model_id)
                     active_model = _build_model(command.model_id)
+                    active_descriptor = descriptor
                     config = command.config or {}
 
                     load_started = time.perf_counter()
@@ -126,7 +122,10 @@ def worker_main(
                     warmup_time_ms = (time.perf_counter() - warmup_started) * 1000.0
 
                     active_model_id = command.model_id
-                    metadata = dict(active_model.get_metadata() or {})
+                    metadata = merge_model_metadata(
+                        descriptor,
+                        dict(active_model.get_metadata() or {}),
+                    )
                     if cleanup_metadata:
                         metadata["previous_model_cleanup"] = cleanup_metadata
                     total_time_ms = (time.perf_counter() - total_started) * 1000.0
@@ -154,6 +153,7 @@ def worker_main(
                         except Exception:  # noqa: BLE001 - preserve original failure
                             pass
                     active_model = None
+                    active_descriptor = None
                     active_model_id = None
                     paused = True
                     _drain(frame_queue)
@@ -197,6 +197,7 @@ def worker_main(
                     )
                 finally:
                     active_model = None
+                    active_descriptor = None
                     active_model_id = None
                     paused = True
                     _drain(frame_queue)
@@ -253,6 +254,7 @@ def worker_main(
                         )
                     unload_time_ms = (time.perf_counter() - started) * 1000.0
                 active_model = None
+                active_descriptor = None
                 active_model_id = None
                 _drain(frame_queue)
                 _drain(result_queue)
@@ -278,7 +280,8 @@ def worker_main(
             continue
 
         try:
-            result = active_model.infer(frame)
+            descriptor = active_descriptor or get_model_descriptor(active_model_id or "")
+            result = normalize_geometry_result(active_model.infer(frame), descriptor, frame)
             _put_latest(
                 result_queue,
                 InferenceResult(
@@ -295,10 +298,15 @@ def worker_main(
                     normals=result.normals,
                     intrinsics=result.intrinsics,
                     valid_mask=result.valid_mask,
+                    confidence=result.confidence,
+                    colors=result.colors,
                     point_stride=result.point_stride,
                     is_metric=result.is_metric,
                     model_name=result.model_name,
                     precision=result.precision,
+                    depth_scale=result.depth_scale,
+                    intrinsics_source=result.intrinsics_source,
+                    confidence_kind=result.confidence_kind,
                     vram_used_gib=result.vram_used_gib,
                     vram_allocated_gib=result.vram_allocated_gib,
                     vram_reserved_gib=result.vram_reserved_gib,
@@ -324,6 +332,7 @@ def worker_main(
                 except Exception:  # noqa: BLE001 - preserve inference failure
                     pass
                 active_model = None
+                active_descriptor = None
                 active_model_id = None
                 _drain(result_queue)
             _put_latest(

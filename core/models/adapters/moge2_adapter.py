@@ -19,6 +19,7 @@ import numpy as np
 from core.geometry.sampling import stride_for_point_budget
 from core.models.base import BaseGeometryModel
 from core.models.catalog import MOGE2_DISPLAY_LABEL, MOGE2_MODEL_ID
+from core.models.registry import get_model_descriptor
 from core.models.result import GeometryResult
 from core.runtime.messages import FrameRequest
 
@@ -263,6 +264,9 @@ class Moge2GeometryModel(BaseGeometryModel):
                 model_id=result.model_id,
                 model_name=result.model_name,
                 precision=result.precision,
+                depth_scale=result.depth_scale,
+                intrinsics_source=result.intrinsics_source,
+                confidence_kind=result.confidence_kind,
                 vram_used_gib=result.vram_used_gib,
                 vram_allocated_gib=result.vram_allocated_gib,
                 vram_reserved_gib=result.vram_reserved_gib,
@@ -280,33 +284,23 @@ class Moge2GeometryModel(BaseGeometryModel):
         return self._release_model()
 
     def get_metadata(self) -> dict[str, Any]:
-        return {
-            "id": MOGE2_MODEL_ID,
-            "display_name": self._model_name,
-            "family": MOGE2_DISPLAY_LABEL,
-            "pretrained": self._pretrained,
-            "device": str(self._device) if self._device is not None else "",
-            "precision": self.precision_label,
-            "num_tokens": self._num_tokens,
-            "resolution_level": self._resolution_level,
-            "point_budget": self._point_budget,
-            "warmup_size": self._warmup_size,
-            "warmup_runs": self._warmup_runs,
-            "hardware_tier": self._hardware_tier,
-            "allow_tf32": self._tf32_enabled,
-            "matmul_precision": self._matmul_precision,
-            "native_sdpa": self._native_sdpa_enabled,
-            "is_metric": True,
-            "outputs": {
-                "depth": True,
-                "points": True,
-                "normals": True,
-                "intrinsics": True,
-                "valid_mask": True,
-                "confidence": False,
-            },
-            "supports_video": True,
-        }
+        descriptor = get_model_descriptor(MOGE2_MODEL_ID)
+        return descriptor.metadata_with_runtime(
+            display_name=self._model_name,
+            family=MOGE2_DISPLAY_LABEL,
+            pretrained=self._pretrained,
+            device=str(self._device) if self._device is not None else "",
+            precision=self.precision_label,
+            num_tokens=self._num_tokens,
+            resolution_level=self._resolution_level,
+            point_budget=self._point_budget,
+            warmup_size=self._warmup_size,
+            warmup_runs=self._warmup_runs,
+            hardware_tier=self._hardware_tier,
+            allow_tf32=self._tf32_enabled,
+            matmul_precision=self._matmul_precision,
+            native_sdpa=self._native_sdpa_enabled,
+        )
 
     @property
     def precision_label(self) -> str:
@@ -525,6 +519,9 @@ class Moge2GeometryModel(BaseGeometryModel):
             model_id=MOGE2_MODEL_ID,
             model_name=self._model_name,
             precision=self.precision_label,
+            depth_scale="metric",
+            intrinsics_source="model_predicted" if intrinsics is not None else "none",
+            confidence_kind="none",
             vram_used_gib=reserved_gib,
             vram_allocated_gib=allocated_gib,
             vram_reserved_gib=reserved_gib,

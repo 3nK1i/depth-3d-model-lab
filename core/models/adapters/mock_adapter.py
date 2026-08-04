@@ -21,6 +21,7 @@ import numpy as np
 
 from core.models.base import BaseGeometryModel
 from core.models.catalog import MOCK_DISPLAY_LABEL, MOCK_MODEL_ID
+from core.models.registry import get_model_descriptor
 from core.models.result import GeometryResult
 from core.runtime.messages import FrameRequest
 
@@ -52,8 +53,12 @@ class MockGeometryModel(BaseGeometryModel):
         self._simulate_warmup_error = ""
         self._simulate_unload_error = ""
         self._frame_counter = 0
+        self._device = "cpu"
+        self._precision = "fp32"
 
     def load(self, device: str, precision: str, config: dict[str, Any]) -> None:
+        self._device = str(device or "cpu")
+        self._precision = str(precision or "fp32").lower()
         self._latency_ms = float(config.get("latency_ms", 20.0))
         self._simulate_oom = bool(config.get("simulate_oom", False))
         self._simulate_hang_seconds = float(config.get("simulate_hang_seconds", 0.0))
@@ -121,6 +126,9 @@ class MockGeometryModel(BaseGeometryModel):
             model_id=MOCK_MODEL_ID,
             model_name=MOCK_DISPLAY_LABEL,
             precision="FP32",
+            depth_scale="synthetic",
+            intrinsics_source="none",
+            confidence_kind="none",
         )
 
     def unload(self) -> dict[str, Any]:
@@ -138,19 +146,12 @@ class MockGeometryModel(BaseGeometryModel):
         }
 
     def get_metadata(self) -> dict[str, Any]:
-        return {
-            "id": MOCK_MODEL_ID,
-            "display_name": "Development Mock",
-            "is_metric": False,
-            "outputs": {
-                "depth": True,
-                "points": False,
-                "normals": False,
-                "intrinsics": False,
-                "confidence": False,
-            },
-            "supports_video": True,
-        }
+        descriptor = get_model_descriptor(MOCK_MODEL_ID)
+        return descriptor.metadata_with_runtime(
+            display_name="Development Mock",
+            device=self._device,
+            precision="FP32",
+        )
 
     def _synthetic_depth(self, image: np.ndarray) -> np.ndarray:
         """A deterministic diagonal gradient, sized to the input frame

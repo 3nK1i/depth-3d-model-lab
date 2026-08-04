@@ -37,6 +37,32 @@ def intrinsics_from_virtual_fov(
     return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
 
 
+def scale_intrinsics(
+    intrinsics: np.ndarray,
+    scale_x: float,
+    scale_y: float | None = None,
+) -> np.ndarray:
+    """Scale pixel-space intrinsics for a resized or strided depth map.
+
+    Registered adapters expose a 3×3 matrix in the pixel coordinates of their
+    full-resolution depth output. Geometry code calls this helper before
+    projecting a sampled depth grid.
+    """
+    matrix = np.asarray(intrinsics, dtype=np.float32)
+    if matrix.shape != (3, 3):
+        raise ValueError("intrinsics must be a 3×3 matrix")
+    sx = float(scale_x)
+    sy = sx if scale_y is None else float(scale_y)
+    if sx <= 0.0 or sy <= 0.0:
+        raise ValueError("intrinsics scales must be positive")
+    scaled = np.array(matrix, dtype=np.float32, copy=True)
+    scaled[0, 0] *= sx
+    scaled[0, 2] *= sx
+    scaled[1, 1] *= sy
+    scaled[1, 2] *= sy
+    return scaled
+
+
 def depth_to_points(
     depth: np.ndarray,
     intrinsics: np.ndarray | None = None,

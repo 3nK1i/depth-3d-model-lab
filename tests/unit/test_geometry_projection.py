@@ -9,6 +9,7 @@ from core.geometry.projection import (
     depth_to_points,
     intrinsics_from_virtual_fov,
     passthrough_points,
+    scale_intrinsics,
 )
 
 
@@ -20,6 +21,22 @@ def test_intrinsics_from_90_degree_fov_are_predictable() -> None:
         np.array([[2.0, 0.0, 2.0], [0.0, 2.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
         atol=1e-6,
     )
+
+
+def test_scale_intrinsics_preserves_projection_for_strided_depth() -> None:
+    intrinsics = np.array(
+        [[600.0, 0.0, 320.0], [0.0, 620.0, 240.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    scaled = scale_intrinsics(intrinsics, 0.5)
+    np.testing.assert_allclose(
+        scaled,
+        np.array(
+            [[300.0, 0.0, 160.0], [0.0, 310.0, 120.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_array_equal(intrinsics[2], [0.0, 0.0, 1.0])
 
 
 def test_depth_to_points_uses_supplied_intrinsics() -> None:
