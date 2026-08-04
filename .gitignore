@@ -16,7 +16,8 @@ logs/*.log.*
 # Local lifecycle/memory stress reports.
 outputs/stress/
 
-# Generated Phase 5 release reports.
+# Generated benchmark and release reports.
+outputs/phase6/
 outputs/release/
 # Locally downloaded optional model checkpoints.
 checkpoints/depth_pro.pt

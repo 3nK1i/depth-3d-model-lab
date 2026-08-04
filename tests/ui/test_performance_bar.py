@@ -62,3 +62,12 @@ def test_static_image_snapshot_keeps_rates_unavailable(qtbot) -> None:
     assert bar._inf_fps._value.text() == "—"
     assert bar._render_fps._value.text() == "—"
     assert bar._points._value.text() == "174,801"
+
+
+def test_footer_distinguishes_model_vram_from_header_device_vram(qtbot) -> None:
+    bar = PerformanceBar()
+    qtbot.addWidget(bar)
+
+    labels = [label.text() for label in bar.findChildren(type(bar._cam_fps._value))]
+    assert "MODEL VRAM" in labels
+    assert "VRAM USAGE" not in labels

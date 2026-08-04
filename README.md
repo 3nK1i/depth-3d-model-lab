@@ -4,30 +4,18 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Phases 1-4 and Phase 5 are complete. Version `0.5.0` is the stable Phase 5 baseline:
+Version `0.6.0` is the stable Phase 6 multi-model release:
 
-- Image, video, camera and RTSP capture
-- Process-isolated inference worker with session-based stale-result rejection
-- Latest-frame live-stream backpressure
-- Hardware-aware Efficient, Balanced and Ultra profiles with total/free-VRAM safety gates
-- Automatic RTX 2060 and RTX 5090 tuning with no source or config edits
-- Development mock adapter for lifecycle diagnostics
-- MoGe-2 metric depth, direct point maps, normals, mask and intrinsics
-- Interactive VisPy point-cloud viewport
-- End-to-end, model, worker, geometry and VisPy update timing
-- Sliding-window capture, inference and 3D update rates
-- Explicit CUDA allocated, reserved, peak and device-wide VRAM telemetry
-- Model load/warm-up timing and latest-frame drop/backpressure diagnostics
-- Functional Select, Orbit, Pan, Zoom, Fit and viewport-focus controls
-- Immediate RGB/depth/normal recoloring and point-style updates from cached results
-- Live temporal smoothing, background removal and immediate render-setting updates
-- Functional floating Original Source inspection toolbar with save, rotate, fit, grid and focus actions
-- Synchronized Depth Map colormap/range controls with panel focus mode
-- Structured failure classification with bounded worker crash/timeout/OOM recovery
-- Repeated lifecycle, restart, shutdown and memory-stability stress tooling
-- Simulated cross-GPU tuning matrix for hardware that is not currently available
-- Rotating application/worker logs and uncaught-exception diagnostics
-- Reproducible Phase 5 release gate with an atomic JSON report
+- Image, video, USB camera and RTSP capture
+- Process-isolated, model-agnostic inference runtime with bounded crash, timeout and OOM recovery
+- Registry-driven adapters, capabilities, dependencies, checkpoints, licensing and GPU profiles
+- Automatic RTX 2060 Efficient and RTX 5090 Ultra selection without code changes
+- MoGe-2, Depth Pro, UniDepthV2, Metric3D v2, Depth Anything V2, Video Depth Anything and Marigold
+- Metric, relative, predicted-intrinsics, estimated-intrinsics, confidence, uncertainty and normals semantics
+- Interactive depth and 3D point-cloud visualization
+- Explicit total-device VRAM in the header and model/process allocator VRAM in the footer
+- Reproducible isolated-process cross-model benchmarking with JSON, CSV and Markdown reports
+- Full unit, UI, integration, stress and release gates
 
 ## Requirements
 
@@ -53,6 +41,20 @@ python -m pip install -r requirements/models-moge2.txt
 ```
 
 The first MoGe-2 start downloads the selected checkpoint from Hugging Face. The automatic RTX 2060 profile selects `Ruicheng/moge-2-vits-normal`; larger GPUs resolve to the Balanced or Ultra variant.
+
+## Optional Phase 6 model runtimes
+
+The base UI remains usable without optional models. Install and download only the models required on the machine, using the dedicated scripts and requirement files under `requirements/`. Local third-party sources and checkpoints are excluded from Git.
+
+Registered production models:
+
+- MoGe-2
+- Depth Pro
+- UniDepthV2
+- Metric3D v2
+- Depth Anything V2
+- Video Depth Anything
+- Marigold
 
 ## Hardware check and automatic tuning
 
@@ -98,7 +100,7 @@ python main.py
 
 Select a source, choose **MoGe-2** in the MODEL card, connect the source, then press **Start Inference**. The optional **Development Mock** remains available when testing the UI without model weights.
 
-Hover over the footer metrics for exact definitions and timing/VRAM breakdowns. The **LATENCY** value is end-to-end from worker submission to the completed depth/3D update; the tooltip also shows the model forward pass, worker preprocessing/postprocessing, UI geometry time and source-to-render age. The **VRAM USAGE** value is PyTorch reserved memory, with allocated, peak-reserved and device-wide usage listed in its tooltip. The MODEL info button shows checkpoint, device, precision, token count, load time and warm-up time.
+Hover over the footer metrics for exact definitions and timing/VRAM breakdowns. The **LATENCY** value is end-to-end from worker submission to the completed depth/3D update; the tooltip also shows the model forward pass, worker preprocessing/postprocessing, UI geometry time and source-to-render age. The **MODEL VRAM** value is PyTorch reserved memory, with allocated, peak-reserved and device-wide usage listed in its tooltip. The MODEL info button shows checkpoint, device, precision, token count, load time and warm-up time.
 
 ## Viewport controls
 
@@ -238,38 +240,39 @@ memory after unload and repeated tail drift are the stronger model-lifecycle
 signals.
 
 
-## Phase 5 release gate
+## Phase 6 benchmark and release gate
 
-Run the quick gate while developing:
-
-```bash
-./scripts/run_phase5_release.sh quick
-```
-
-Run the complete release gate before tagging or moving to Phase 6:
+Run the cross-model benchmark on the current GPU:
 
 ```bash
-./scripts/run_phase5_release.sh full
+python scripts/run_phase6_benchmark.py \
+  --models all \
+  --profile auto \
+  --point-budget 100000 \
+  --require-all
 ```
 
-The full gate verifies the supported Python version, project layout, base and
-MoGe dependencies, version consistency, writable runtime directories, physical
-CUDA execution, RTX 2060/RTX 5090 simulations, Python compilation and the full
-unit/UI/integration/stress suite. It writes an atomic report to:
+Reports are written under `outputs/phase6/`. Each production model runs in a fresh Python process so CUDA allocators, optional dependencies and temporal caches cannot contaminate the next measurement.
+
+Run the quick release gate while developing:
+
+```bash
+./scripts/run_phase6_release.sh quick
+```
+
+Run the complete release gate after generating the benchmark:
+
+```bash
+./scripts/run_phase6_release.sh full --require-benchmark
+```
+
+After committing, add `--require-clean-git`. The atomic release report is written to:
 
 ```text
-outputs/release/phase5_release_report.json
+outputs/release/phase6_release_report.json
 ```
 
-For a final physical-GPU memory check, add a bounded MoGe stress run:
-
-```bash
-./scripts/run_phase5_release.sh full --moge-stress-cycles 5
-```
-
-Use `--require-clean-git` only after committing the release files. A dirty Git
-worktree is reported as an advisory by default so the gate can still be run
-before the final commit.
+The same benchmark command is used on RTX 2060 and RTX 5090; Auto selects the appropriate model variants and compute profile.
 
 ## Diagnostics
 
@@ -304,7 +307,8 @@ location and level without editing the repository.
 app/                 Qt UI and application controllers
 core/capture/        Image, video, camera and RTSP sources
 core/inference/      Worker process and IPC manager
-core/models/         Unified model adapters and model catalog
+core/models/         Registry, normalized contracts and model adapters
+core/benchmark/      Deterministic assets and benchmark/report engine
 core/geometry/       Depth, direct points, filtering and sampling
 core/runtime/        State, sessions, watchdog, logs and release diagnostics
 requirements/        Optional model dependency groups

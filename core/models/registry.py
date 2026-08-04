@@ -40,6 +40,7 @@ from core.models.metadata import (
     DepthScale,
     HardwareRequirements,
     IntrinsicsSource,
+    ModelBenchmarkPolicy,
     ModelCapabilities,
     ModelCheckpoint,
     ModelDependency,
@@ -358,6 +359,13 @@ def _register_builtins() -> None:
                 supported_precisions=("fp32", "fp16", "bf16"),
                 notes="Automatic profiles adapt from RTX 2060 to RTX 5090 class GPUs.",
             ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="metric_geometry",
+                default_iterations=3,
+                timeout_seconds=900.0,
+                notes="Direct metric geometry with predicted intrinsics.",
+            ),
             presentation=ModelPresentation(
                 description=(
                     "Metric monocular geometry with direct points, normals, mask, "
@@ -456,6 +464,13 @@ def _register_builtins() -> None:
                     "inference size. RTX 2060 uses the conservative FP16 profile; "
                     "RTX 5090 uses the high-density profile automatically."
                 ),
+            ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="metric_depth",
+                default_iterations=3,
+                timeout_seconds=900.0,
+                notes="Metric depth with model-predicted focal length.",
             ),
             presentation=ModelPresentation(
                 description=(
@@ -569,6 +584,13 @@ def _register_builtins() -> None:
                     "GPUs, and ViT-L on RTX 5090 class hardware. The isolated V2 "
                     "installer avoids the legacy UniDepthV1 xFormers import path."
                 ),
+            ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="metric_geometry",
+                default_iterations=3,
+                timeout_seconds=900.0,
+                notes="Metric geometry with predicted intrinsics and uncertainty.",
             ),
             presentation=ModelPresentation(
                 description=(
@@ -702,6 +724,13 @@ def _register_builtins() -> None:
                     "used until calibration support is added."
                 ),
             ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="metric_depth",
+                default_iterations=3,
+                timeout_seconds=900.0,
+                notes="Metric depth depends on estimated intrinsics until calibration.",
+            ),
             presentation=ModelPresentation(
                 description=(
                     "Zero-shot metric depth and surface normals using estimated camera "
@@ -818,6 +847,13 @@ def _register_builtins() -> None:
                     "Automatic profiles use ViT-S on RTX 2060, ViT-B on mid-range "
                     "GPUs, and ViT-L on RTX 5090. Output scale is relative."
                 ),
+            ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="relative_depth",
+                default_iterations=5,
+                timeout_seconds=600.0,
+                notes="Fast stateless frame-depth baseline; scale is relative.",
             ),
             presentation=ModelPresentation(
                 description=(
@@ -940,6 +976,15 @@ def _register_builtins() -> None:
                     "Official streaming temporal caches are stateful. RTX 2060 uses "
                     "the metric ViT-S checkpoint at 392 px; RTX 5090 uses metric ViT-L."
                 ),
+            ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="sequence",
+                classification="streaming_temporal_depth",
+                asset_key="temporal",
+                default_iterations=1,
+                sequence_frames=8,
+                timeout_seconds=1200.0,
+                notes="Stateful streaming benchmark; temporal cache is preserved across frames.",
             ),
             presentation=ModelPresentation(
                 description=(
@@ -1079,6 +1124,13 @@ def _register_builtins() -> None:
                     "uses a higher-resolution precision preset with uncertainty."
                 ),
             ),
+            benchmark=ModelBenchmarkPolicy(
+                workload="image",
+                classification="offline_quality_depth",
+                default_iterations=1,
+                timeout_seconds=1800.0,
+                notes="Diffusion quality model; not classified as real-time.",
+            ),
             presentation=ModelPresentation(
                 description=(
                     "High-quality affine-invariant diffusion depth for snapshots and "
@@ -1161,6 +1213,14 @@ def _register_builtins() -> None:
                 supported_backends=("cpu", "cuda"),
                 supported_precisions=("fp32",),
                 notes="Synthetic diagnostic adapter; no AI model is executed.",
+            ),
+            benchmark=ModelBenchmarkPolicy(
+                included=True,
+                workload="image",
+                classification="development",
+                default_iterations=1,
+                timeout_seconds=60.0,
+                notes="Available for benchmark-engine diagnostics but excluded from production comparisons.",
             ),
             presentation=ModelPresentation(
                 description=MOCK_DISPLAY_LABEL,
@@ -1259,6 +1319,25 @@ def _validate_descriptor(descriptor: ModelDescriptor) -> None:
     if not descriptor.hardware.supported_precisions:
         raise ModelRegistryError(
             f"Model {descriptor.model_id!r} must declare at least one precision."
+        )
+
+    policy = descriptor.benchmark
+    if policy.workload not in {"image", "sequence"}:
+        raise ModelRegistryError(
+            f"Model {descriptor.model_id!r} has invalid benchmark workload "
+            f"{policy.workload!r}."
+        )
+    if policy.default_iterations < 1 or policy.sequence_frames < 1:
+        raise ModelRegistryError(
+            f"Model {descriptor.model_id!r} benchmark counts must be positive."
+        )
+    if policy.timeout_seconds <= 0:
+        raise ModelRegistryError(
+            f"Model {descriptor.model_id!r} benchmark timeout must be positive."
+        )
+    if not policy.asset_key.strip() or not policy.classification.strip():
+        raise ModelRegistryError(
+            f"Model {descriptor.model_id!r} benchmark metadata is incomplete."
         )
 
     dependency_names = [item.import_name for item in descriptor.dependencies]

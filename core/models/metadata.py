@@ -176,6 +176,38 @@ class HardwareRequirements:
         }
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class ModelBenchmarkPolicy:
+    """Registry-owned benchmark workload and presentation policy.
+
+    The benchmark engine remains model-agnostic: it selects assets, iteration
+    counts, and timeout limits exclusively from this metadata.
+    """
+
+    included: bool = True
+    workload: str = "image"
+    classification: str = "frame_depth"
+    asset_key: str = "landscape"
+    default_iterations: int = 3
+    sequence_frames: int = 1
+    timeout_seconds: float = 600.0
+    notes: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "included": self.included,
+            "workload": self.workload,
+            "classification": self.classification,
+            "asset_key": self.asset_key,
+            "default_iterations": self.default_iterations,
+            "sequence_frames": self.sequence_frames,
+            "timeout_seconds": self.timeout_seconds,
+            "notes": self.notes,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPresentation:
     """UI labels that remain data-driven and independent of Qt imports."""
@@ -233,6 +265,7 @@ class ModelDescriptor:
     dependencies: tuple[ModelDependency, ...] = ()
     hardware: HardwareRequirements = field(default_factory=HardwareRequirements)
     presentation: ModelPresentation = field(default_factory=ModelPresentation)
+    benchmark: ModelBenchmarkPolicy = field(default_factory=ModelBenchmarkPolicy)
     license: ModelLicense = field(default_factory=ModelLicense)
     default_config: Mapping[str, object] = field(default_factory=dict)
     checkpoints: tuple[ModelCheckpoint, ...] = ()
@@ -270,6 +303,7 @@ class ModelDescriptor:
             "dependencies": [dependency.as_dict() for dependency in self.dependencies],
             "hardware_requirements": self.hardware.as_dict(),
             "presentation": self.presentation.as_dict(),
+            "benchmark": self.benchmark.as_dict(),
             "license": self.license.as_dict(),
             "checkpoints": [checkpoint.as_dict() for checkpoint in self.checkpoints],
             "uses_compute_profile": self.uses_compute_profile,

@@ -227,7 +227,7 @@ class CompactProgressBar(QWidget):
 
 
 class VramMetricCell(QWidget):
-    """VRAM USAGE: label, then value text + compact progress bar on one row."""
+    """MODEL VRAM: allocator memory attributed to the inference process."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -237,7 +237,7 @@ class VramMetricCell(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(2)
 
-        label = QLabel("VRAM USAGE")
+        label = QLabel("MODEL VRAM")
         label.setObjectName("footerCellLabel")
 
         self._value = QLabel(PLACEHOLDER)

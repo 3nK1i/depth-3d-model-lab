@@ -1,4 +1,4 @@
-"""Phase 5 release-gate diagnostics and atomic report helpers."""
+"""Phase 6 release-gate diagnostics and atomic report helpers."""
 
 from __future__ import annotations
 
@@ -24,16 +24,23 @@ _REQUIRED_PROJECT_FILES = (
     "README.md",
     "app/main_window.py",
     "app/inference_controller.py",
+    "app/widgets/performance_bar.py",
+    "core/benchmark/assets.py",
+    "core/benchmark/reports.py",
+    "core/benchmark/runner.py",
     "core/inference/worker.py",
-    "core/hardware/profiles.py",
+    "core/models/registry.py",
     "core/runtime/logging_setup.py",
     "core/runtime/release.py",
     "core/version.py",
     "scripts/check_hardware.py",
     "scripts/release_check.py",
-    "scripts/run_phase5_release.sh",
+    "scripts/run_phase6_benchmark.py",
+    "scripts/run_phase6_release.sh",
+    "scripts/run_phase6_step7_tests.sh",
     "scripts/run_phase5_tests.sh",
-    "TEST_STRATEGY_PHASE5_RELEASE.md",
+    "PHASE6_STEP7_VALIDATION.md",
+    "TEST_STRATEGY_PHASE6_RELEASE.md",
 )
 
 _BASE_DEPENDENCIES = (
@@ -41,12 +48,6 @@ _BASE_DEPENDENCIES = (
     ("numpy", "numpy"),
     ("cv2", "opencv-python"),
     ("vispy", "vispy"),
-)
-
-_MODEL_DEPENDENCIES = (
-    ("torch", "torch"),
-    ("moge", "moge"),
-    ("huggingface_hub", "huggingface-hub"),
 )
 
 
@@ -77,10 +78,8 @@ class CommandResult:
         return self.returncode == 0
 
 
-
 def project_root() -> Path:
     return Path(__file__).resolve().parents[2]
-
 
 
 def collect_static_checks(
@@ -96,15 +95,9 @@ def collect_static_checks(
     checks.extend(_layout_checks(root_path))
     checks.append(version_consistency_check(root_path))
     checks.extend(_dependency_checks(_BASE_DEPENDENCIES, required=True))
-    checks.extend(
-        _dependency_checks(
-            _MODEL_DEPENDENCIES,
-            required=require_model_dependencies,
-        )
-    )
+    checks.extend(_model_registry_checks(required=require_model_dependencies))
     checks.extend(_writable_directory_checks(root_path))
     return checks
-
 
 
 def version_consistency_check(root: str | os.PathLike[str] | Path) -> ReleaseCheck:
@@ -116,7 +109,7 @@ def version_consistency_check(root: str | os.PathLike[str] | Path) -> ReleaseChe
     try:
         pyproject = tomllib.loads((root_path / "pyproject.toml").read_text(encoding="utf-8"))
         discovered["pyproject"] = str(pyproject["project"]["version"])
-    except Exception as exc:  # noqa: BLE001 - release diagnostic must report exact issue
+    except Exception as exc:  # noqa: BLE001
         return ReleaseCheck("version_consistency", False, f"Cannot read pyproject version: {exc}")
 
     config_path = root_path / "config" / "app.yaml"
@@ -131,12 +124,65 @@ def version_consistency_check(root: str | os.PathLike[str] | Path) -> ReleaseChe
 
     unique = set(discovered.values())
     detail = ", ".join(f"{key}={value}" for key, value in sorted(discovered.items()))
-    return ReleaseCheck(
-        "version_consistency",
-        len(unique) == 1,
-        detail,
-    )
+    return ReleaseCheck("version_consistency", len(unique) == 1, detail)
 
+
+def benchmark_report_check(
+    path: str | os.PathLike[str],
+    *,
+    require_all_models: bool = True,
+) -> tuple[ReleaseCheck, dict[str, object] | None]:
+    """Validate a Phase 6 benchmark report without rerunning inference."""
+
+    report_path = Path(path)
+    if not report_path.is_file():
+        return ReleaseCheck(
+            "phase6_benchmark_report",
+            False,
+            f"missing: {report_path}",
+        ), None
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        application = payload.get("application", {})
+        results = payload.get("results", [])
+        if not isinstance(results, list) or not results:
+            raise ValueError("report contains no model results")
+        if str(application.get("version", "")) != __version__:
+            raise ValueError(
+                f"report version {application.get('version')!r} does not match {__version__!r}"
+            )
+        from core.benchmark.runner import production_benchmark_descriptors
+
+        required_ids = {item.model_id for item in production_benchmark_descriptors()}
+        result_by_id = {
+            str(item.get("model_id", "")): item
+            for item in results
+            if isinstance(item, dict)
+        }
+        missing = sorted(required_ids - set(result_by_id))
+        nonpassing = sorted(
+            model_id
+            for model_id in required_ids
+            if model_id in result_by_id
+            and result_by_id[model_id].get("status") != "passed"
+        )
+        passed = not missing and (not require_all_models or not nonpassing)
+        details = [f"{len(required_ids) - len(missing)} / {len(required_ids)} models reported"]
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if nonpassing:
+            details.append("non-passing: " + ", ".join(nonpassing))
+        return ReleaseCheck(
+            "phase6_benchmark_report",
+            passed,
+            "; ".join(details),
+        ), payload
+    except Exception as exc:  # noqa: BLE001
+        return ReleaseCheck(
+            "phase6_benchmark_report",
+            False,
+            f"invalid report: {exc}",
+        ), None
 
 
 def build_release_report(
@@ -145,6 +191,7 @@ def build_release_report(
     commands: Iterable[CommandResult],
     mode: str,
     git: dict[str, object] | None = None,
+    benchmark: dict[str, object] | None = None,
 ) -> dict[str, object]:
     check_list = list(checks)
     command_list = list(commands)
@@ -152,7 +199,7 @@ def build_release_report(
         command.passed or not command.required for command in command_list
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "application": {
             "name": "EIA TECH - Depth & 3D Model Lab",
             "version": __version__,
@@ -172,9 +219,9 @@ def build_release_report(
             }
             for item in command_list
         ],
+        "benchmark": benchmark or {},
         "git": git or {},
     }
-
 
 
 def write_release_report(
@@ -207,8 +254,15 @@ def write_release_report(
     return destination
 
 
-
 def environment_snapshot() -> dict[str, object]:
+    dependencies = {distribution for _, distribution in _BASE_DEPENDENCIES}
+    try:
+        from core.models.registry import iter_model_descriptors
+
+        for descriptor in iter_model_descriptors(enabled_only=True):
+            dependencies.update(item.distribution for item in descriptor.dependencies)
+    except Exception:
+        pass
     return {
         "python": sys.version.split()[0],
         "python_executable": sys.executable,
@@ -217,10 +271,9 @@ def environment_snapshot() -> dict[str, object]:
         "process_id": os.getpid(),
         "dependencies": {
             distribution: _distribution_version(distribution)
-            for _, distribution in (*_BASE_DEPENDENCIES, *_MODEL_DEPENDENCIES)
+            for distribution in sorted(dependencies)
         },
     }
-
 
 
 def release_failed(
@@ -232,7 +285,6 @@ def release_failed(
     )
 
 
-
 def _python_version_check() -> ReleaseCheck:
     supported = (3, 11) <= sys.version_info[:2] < (3, 13)
     return ReleaseCheck(
@@ -240,7 +292,6 @@ def _python_version_check() -> ReleaseCheck:
         supported,
         f"Python {sys.version.split()[0]} via {sys.executable}",
     )
-
 
 
 def _layout_checks(root: Path) -> list[ReleaseCheck]:
@@ -263,7 +314,6 @@ def _layout_checks(root: Path) -> list[ReleaseCheck]:
     return checks
 
 
-
 def _dependency_checks(
     dependencies: Iterable[tuple[str, str]],
     *,
@@ -271,7 +321,7 @@ def _dependency_checks(
 ) -> list[ReleaseCheck]:
     checks: list[ReleaseCheck] = []
     for module_name, distribution_name in dependencies:
-        available = importlib.util.find_spec(module_name) is not None
+        available = _module_available(module_name)
         version = _distribution_version(distribution_name)
         detail = (
             f"{distribution_name} {version or '(version unavailable)'}"
@@ -289,10 +339,46 @@ def _dependency_checks(
     return checks
 
 
+def _model_registry_checks(*, required: bool) -> list[ReleaseCheck]:
+    try:
+        from core.benchmark.runner import production_benchmark_descriptors
+        from core.models.registry import check_model_availability
+    except Exception as exc:  # noqa: BLE001
+        return [ReleaseCheck("model_registry", False, str(exc), required=required)]
+
+    checks: list[ReleaseCheck] = []
+    seen_dependencies: set[str] = {module for module, _ in _BASE_DEPENDENCIES}
+    for descriptor in production_benchmark_descriptors():
+        for dependency in descriptor.dependencies:
+            if dependency.import_name in seen_dependencies:
+                continue
+            seen_dependencies.add(dependency.import_name)
+            checks.extend(
+                _dependency_checks(
+                    ((dependency.import_name, dependency.distribution),),
+                    required=required,
+                )
+            )
+        availability = check_model_availability(descriptor.model_id)
+        asset_detail = (
+            "available"
+            if not availability.missing_assets
+            else "missing: " + ", ".join(availability.missing_assets)
+        )
+        checks.append(
+            ReleaseCheck(
+                f"model_{descriptor.model_id.replace('-', '_')}_assets",
+                not availability.missing_assets,
+                asset_detail,
+                required=required,
+            )
+        )
+    return checks
+
 
 def _writable_directory_checks(root: Path) -> list[ReleaseCheck]:
     results: list[ReleaseCheck] = []
-    for relative in ("logs", "outputs/release", "outputs/stress"):
+    for relative in ("logs", "outputs/release", "outputs/stress", "outputs/phase6"):
         directory = root / relative
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -307,6 +393,12 @@ def _writable_directory_checks(root: Path) -> list[ReleaseCheck]:
         results.append(ReleaseCheck(f"writable_{relative.replace('/', '_')}", passed, detail))
     return results
 
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
 
 
 def _distribution_version(distribution_name: str) -> str | None:
