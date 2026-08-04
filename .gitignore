@@ -18,6 +18,7 @@ outputs/stress/
 
 # Generated benchmark and release reports.
 outputs/phase6/
+outputs/phase7/
 outputs/release/
 # Locally downloaded optional model checkpoints.
 checkpoints/depth_pro.pt

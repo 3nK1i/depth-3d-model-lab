@@ -68,3 +68,21 @@ def test_mock_executes_benchmark_contract_without_model_dependencies(tmp_path: P
     assert result["timing"]["load_ms"] >= 0.0
     assert result["timing"]["unload_ms"] >= 0.0
     assert result["timing"]["end_to_end_ms"]["count"] == 2.0
+
+
+def test_explicit_image_asset_override_uses_only_selected_input(tmp_path: Path) -> None:
+    result = benchmark_model(
+        MOCK_MODEL_ID,
+        assets_root=tmp_path / "assets",
+        options=BenchmarkOptions(
+            profile=ComputeProfile.AUTO,
+            iterations=2,
+            point_budget=20_000,
+            image_asset_key="landscape",
+        ),
+        hardware=_cpu(),
+    )
+
+    assert result["status"] == "passed"
+    assert result["output"]["resolution"] == [640, 384]
+    assert result["output"]["resolutions"] == [[640, 384]]

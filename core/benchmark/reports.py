@@ -142,6 +142,7 @@ def write_benchmark_summary(
     passed = [item for item in results if item.get("status") == "passed"]
     failed = [item for item in results if item.get("status") == "failed"]
     unavailable = [item for item in results if item.get("status") == "unavailable"]
+    cancelled = [item for item in results if item.get("status") == "cancelled"]
     lines = [
         "# Phase 6 Cross-Model Benchmark Summary",
         "",
@@ -150,6 +151,7 @@ def write_benchmark_summary(
         f"- Passed: **{len(passed)}**",
         f"- Failed: **{len(failed)}**",
         f"- Unavailable: **{len(unavailable)}**",
+        f"- Cancelled: **{len(cancelled)}**",
         "",
         "| Model | Status | Profile | Mean model latency | End-to-end | FPS | Peak model VRAM | Scale |",
         "|---|---|---|---:|---:|---:|---:|---|",
@@ -170,9 +172,9 @@ def write_benchmark_summary(
                 scale=output.get("depth_scale", ""),
             )
         )
-    if failed or unavailable:
+    if failed or unavailable or cancelled:
         lines.extend(["", "## Non-passing models", ""])
-        for item in (*failed, *unavailable):
+        for item in (*failed, *unavailable, *cancelled):
             lines.append(
                 f"- **{item.get('display_name', item.get('model_id'))}:** "
                 f"{item.get('error') or item.get('availability_reason') or item.get('status')}"

@@ -1,8 +1,7 @@
 """Primary navigation: Live 3D / Stable Video / Snapshot / Reconstruction / Benchmark.
 
-Only "Live 3D" is functional. The others are visibly present but disabled
-so the architecture reads as extensible without pretending unfinished
-modes work (per spec §3).
+Live 3D and Benchmark are functional. Future modes remain visible but disabled
+so the architecture reads as extensible without pretending unfinished modes work.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ _MODE_LABELS: dict[AppMode, str] = {
 }
 
 # Modes not yet implemented remain visible but disabled, per spec §3.
-_ENABLED_MODES = {AppMode.LIVE_3D}
+_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.BENCHMARK}
 
 
 class ModeTabs(QFrame):
@@ -97,6 +96,25 @@ class ModeTabs(QFrame):
             return
         for m, btn in self._buttons.items():
             btn.setChecked(m == mode)
+        self._active_mode = mode
+        self.mode_changed.emit(mode)
+
+
+    def set_navigation_locked(self, locked: bool) -> None:
+        """Keep the active mode available while a long-running mode owns the UI."""
+        for mode, button in self._buttons.items():
+            base_enabled = mode in _ENABLED_MODES
+            button.setEnabled(base_enabled and (not locked or mode is self._active_mode))
+
+    def set_active_mode(self, mode: AppMode) -> None:
+        """Select an enabled mode programmatically without emitting twice."""
+        if mode not in _ENABLED_MODES:
+            raise ValueError(f"Mode is not enabled: {mode.value}")
+        if mode is self._active_mode:
+            self._buttons[mode].setChecked(True)
+            return
+        for item, button in self._buttons.items():
+            button.setChecked(item is mode)
         self._active_mode = mode
         self.mode_changed.emit(mode)
 

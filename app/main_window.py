@@ -12,11 +12,17 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QMainWindow,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.application_controller import ApplicationController
+from app.benchmark_controller import (
+    BenchmarkController,
+    BenchmarkRunConfiguration,
+    BenchmarkRunState,
+)
 from app.inference_controller import InferenceController
 from app.settings import AppSettings
 from app.theme import (
@@ -27,14 +33,16 @@ from app.theme import (
     PAGE_SPACING,
     SPLITTER_HANDLE,
 )
+from app.widgets.benchmark_page import BenchmarkPage
 from app.widgets.depth_view import DepthMapView
 from app.widgets.header_widget import HeaderWidget
-from app.widgets.mode_tabs import ModeTabs
+from app.widgets.mode_tabs import AppMode, ModeTabs
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.performance_bar import PerformanceBar
 from app.widgets.settings_panel import SettingsPanel
 from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
+from core.runtime.state_machine import ApplicationState
 
 MIN_WINDOW_WIDTH = 1366
 MIN_WINDOW_HEIGHT = 768
@@ -81,6 +89,19 @@ class MainWindow(QMainWindow):
             self._exit_focus_mode
         )
         self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
+
+        self._benchmark_controller = BenchmarkController(self)
+        self._benchmark_page.run_requested.connect(self._on_benchmark_run_requested)
+        self._benchmark_page.cancel_requested.connect(self._benchmark_controller.cancel)
+        self._benchmark_controller.state_changed.connect(self._on_benchmark_state_changed)
+        self._benchmark_controller.event_received.connect(self._benchmark_page.handle_event)
+        self._benchmark_controller.log_received.connect(self._benchmark_page.append_log)
+        self._benchmark_controller.results_ready.connect(self._benchmark_page.set_results)
+        self._mode_tabs.mode_changed.connect(self._on_mode_changed)
+        self._inference_controller.state_machine.state_changed.connect(
+            self._refresh_benchmark_safety
+        )
+        self._refresh_benchmark_safety()
         self._restore_layout()
 
     # -- Construction --------------------------------------------------
@@ -103,7 +124,11 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._mode_tabs)
 
         self._page = self._build_page()
-        outer.addWidget(self._page, stretch=1)
+        self._benchmark_page = BenchmarkPage()
+        self._mode_stack = QStackedWidget()
+        self._mode_stack.addWidget(self._page)
+        self._mode_stack.addWidget(self._benchmark_page)
+        outer.addWidget(self._mode_stack, stretch=1)
 
     def _build_page(self) -> QWidget:
         """The Live 3D page: source bar, main body and footer as siblings.
@@ -207,6 +232,53 @@ class MainWindow(QMainWindow):
             else None
         )
         self._header.update_cuda_status(cuda_label)
+
+    # -- Primary application modes ---------------------------------------
+
+    def _on_mode_changed(self, mode: AppMode) -> None:
+        if mode is AppMode.LIVE_3D:
+            self._mode_stack.setCurrentWidget(self._page)
+            return
+        if mode is AppMode.BENCHMARK:
+            self._exit_focus_mode()
+            self._refresh_benchmark_safety()
+            self._mode_stack.setCurrentWidget(self._benchmark_page)
+
+    def _on_benchmark_run_requested(
+        self, configuration: BenchmarkRunConfiguration
+    ) -> None:
+        if self._inference_controller.state_machine.state is not ApplicationState.DISCONNECTED:
+            self._refresh_benchmark_safety()
+            return
+        try:
+            self._benchmark_controller.start(configuration)
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._benchmark_page.append_log(f"Benchmark could not start: {exc}")
+            self._benchmark_page.apply_state(BenchmarkRunState.FAILED)
+
+    def _on_benchmark_state_changed(self, state: BenchmarkRunState) -> None:
+        self._benchmark_page.apply_state(state)
+        running = state in {
+            BenchmarkRunState.STARTING,
+            BenchmarkRunState.RUNNING,
+            BenchmarkRunState.CANCELLING,
+        }
+        self._mode_tabs.set_navigation_locked(running)
+        if not running:
+            self._refresh_benchmark_safety()
+
+    def _refresh_benchmark_safety(self, *_args: object) -> None:
+        state = self._inference_controller.state_machine.state
+        safe = state is ApplicationState.DISCONNECTED and not self._benchmark_controller.is_running
+        reason = ""
+        if state is not ApplicationState.DISCONNECTED:
+            reason = (
+                "Benchmarking requires an idle GPU runtime. Return to Live 3D, "
+                "Stop inference, and Disconnect the active source first."
+            )
+        elif self._benchmark_controller.is_running:
+            reason = "A benchmark is already running."
+        self._benchmark_page.set_runtime_safe(safe, reason)
 
     # -- Panel focus mode -------------------------------------------------
 
@@ -335,6 +407,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override signature
         if self._focus_target is not None:
             self._set_focus_target(None)
+        self._benchmark_controller.shutdown()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()

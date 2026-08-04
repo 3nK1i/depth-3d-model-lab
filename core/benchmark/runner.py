@@ -41,6 +41,8 @@ class BenchmarkOptions:
     sequence_frames: int | None = None
     point_budget: int = 100_000
     smoke_test: bool = False
+    image_asset_key: str | None = None
+    sequence_asset_key: str | None = None
 
 
 def production_benchmark_descriptors() -> tuple[ModelDescriptor, ...]:
@@ -202,8 +204,9 @@ def _workload_frames(
     options: BenchmarkOptions,
 ) -> tuple[np.ndarray, ...]:
     policy = descriptor.benchmark
-    available = load_asset_frames(manifest, policy.asset_key)
     if policy.workload == "sequence":
+        asset_key = options.sequence_asset_key or policy.asset_key
+        available = load_asset_frames(manifest, asset_key)
         frame_count = options.sequence_frames or policy.sequence_frames
         if options.smoke_test:
             frame_count = min(frame_count, 2)
@@ -213,14 +216,19 @@ def _workload_frames(
         repeats = math.ceil(frame_count / len(available))
         return tuple((available * repeats)[:frame_count])
 
+    asset_key = options.image_asset_key or policy.asset_key
+    available = load_asset_frames(manifest, asset_key)
     iterations = options.iterations or policy.default_iterations
     if options.smoke_test:
         iterations = 1
     iterations = max(1, int(iterations))
-    # The common image workload alternates landscape and portrait assets. Very
-    # slow quality models may declare one iteration in registry metadata.
-    portrait = load_asset_frames(manifest, "portrait")[0]
-    common_frames = (available[0], portrait)
+    # Registry mode alternates landscape and portrait assets. An explicit UI
+    # asset choice benchmarks only that selected image for repeatability.
+    if options.image_asset_key is not None:
+        common_frames = (available[0],)
+    else:
+        portrait = load_asset_frames(manifest, "portrait")[0]
+        common_frames = (available[0], portrait)
     repeats = math.ceil(iterations / len(common_frames))
     return tuple(frame.copy() for frame in (common_frames * repeats)[:iterations])
 

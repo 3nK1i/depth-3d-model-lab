@@ -70,3 +70,26 @@ def test_benchmark_reports_are_machine_and_human_readable(tmp_path: Path) -> Non
     matrix = matrix_path.read_text(encoding="utf-8")
     assert "MoGe-2" in matrix
     assert "Estimated — Not Calibrated" in matrix
+
+
+def test_cancelled_runs_are_visible_in_human_summary(tmp_path: Path) -> None:
+    payload = {
+        "application": {"version": "0.6.0"},
+        "hardware": {"name": "Test GPU"},
+        "cancelled": True,
+        "results": [
+            {
+                "model_id": "model-a",
+                "display_name": "Model A",
+                "status": "cancelled",
+                "error": "Benchmark cancelled by the user.",
+            }
+        ],
+    }
+
+    summary = write_benchmark_summary(tmp_path / "cancelled.md", payload).read_text(
+        encoding="utf-8"
+    )
+
+    assert "Cancelled: **1**" in summary
+    assert "Benchmark cancelled by the user" in summary

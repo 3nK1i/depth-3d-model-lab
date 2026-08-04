@@ -201,7 +201,7 @@ def build_release_report(
     return {
         "schema_version": 2,
         "application": {
-            "name": "EIA TECH - Depth & 3D Model Lab",
+            "name": "EIA TECH | Depth & 3D Model Lab",
             "version": __version__,
             "release_name": RELEASE_NAME,
             "release_phase": RELEASE_PHASE,

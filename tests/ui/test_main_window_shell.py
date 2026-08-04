@@ -92,9 +92,32 @@ def test_minimum_resolution_supported(window):
     assert window.size().height() >= 768
 
 
-def test_only_live_3d_mode_enabled(window):
+def test_live_3d_and_benchmark_modes_are_enabled(window):
+    enabled = {AppMode.LIVE_3D, AppMode.BENCHMARK}
     for mode, btn in window._mode_tabs._buttons.items():
-        assert btn.isEnabled() is (mode is AppMode.LIVE_3D)
+        assert btn.isEnabled() is (mode in enabled)
+
+
+def test_benchmark_mode_switches_to_interactive_page(window, qtbot):
+    button = window._mode_tabs._buttons[AppMode.BENCHMARK]
+    qtbot.mouseClick(button, _left_button())
+
+    assert window._mode_tabs.active_mode is AppMode.BENCHMARK
+    assert window._mode_stack.currentWidget() is window._benchmark_page
+    assert window._benchmark_page._run_btn.isEnabled()
+
+    qtbot.mouseClick(window._mode_tabs._buttons[AppMode.LIVE_3D], _left_button())
+    assert window._mode_stack.currentWidget() is window._page
+
+
+def test_benchmark_run_is_blocked_while_live_source_is_connected(window, qtbot):
+    qtbot.mouseClick(window._runtime_toolbar._connect_btn, _left_button())
+    assert window._inference_controller.state_machine.state is ApplicationState.SOURCE_READY
+
+    qtbot.mouseClick(window._mode_tabs._buttons[AppMode.BENCHMARK], _left_button())
+
+    assert not window._benchmark_page._run_btn.isEnabled()
+    assert "Disconnect" in window._benchmark_page._safety_message.text()
 
 
 def test_initial_button_states_are_disconnected(window):

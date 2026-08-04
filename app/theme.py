@@ -894,6 +894,173 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         background: {p.settings_text};
     }}
 
+    /* ---- Interactive benchmark page ---- */
+
+    QWidget#benchmarkPage {{
+        background-color: {p.bg_root};
+    }}
+
+    QFrame#benchmarkCard {{
+        background-color: {p.settings_card_bg};
+        border: 1px solid {p.settings_card_border};
+        border-radius: 7px;
+    }}
+
+    QLabel#benchmarkTitle {{
+        color: {p.text_primary};
+        font-size: 15px;
+        font-weight: 700;
+    }}
+
+    QLabel#benchmarkSubtitle, QLabel#benchmarkProgressLabel {{
+        color: {p.text_secondary};
+        font-size: 11px;
+    }}
+
+    QLabel#benchmarkSectionTitle {{
+        color: {p.text_primary};
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }}
+
+    QLabel#benchmarkOptionLabel {{
+        color: {p.settings_text_secondary};
+        font-size: 11px;
+    }}
+
+    QLabel#benchmarkSafetyMessage {{
+        background-color: {p.footer_status_amber_bg};
+        border: 1px solid {p.footer_status_amber_border};
+        border-radius: 5px;
+        color: {p.footer_status_amber_fg};
+        padding: 6px 8px;
+        font-size: 10px;
+    }}
+
+    QLabel#benchmarkStatusBadge {{
+        border-radius: 5px;
+        padding: 4px 11px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        background-color: {p.footer_status_neutral_bg};
+        border: 1px solid {p.footer_status_neutral_border};
+        color: {p.footer_status_neutral_fg};
+    }}
+    QLabel#benchmarkStatusBadge[statusKind="ready"] {{
+        background-color: {p.footer_status_green_bg};
+        border-color: {p.footer_status_green_border};
+        color: {p.footer_status_green_fg};
+    }}
+    QLabel#benchmarkStatusBadge[statusKind="running"] {{
+        background-color: {p.badge_compatible_bg};
+        border-color: {p.badge_compatible_fg};
+        color: {p.badge_compatible_fg};
+    }}
+    QLabel#benchmarkStatusBadge[statusKind="warning"] {{
+        background-color: {p.footer_status_amber_bg};
+        border-color: {p.footer_status_amber_border};
+        color: {p.footer_status_amber_fg};
+    }}
+    QLabel#benchmarkStatusBadge[statusKind="error"] {{
+        background-color: {p.footer_status_red_bg};
+        border-color: {p.footer_status_red_border};
+        color: {p.footer_status_red_fg};
+    }}
+
+    QListWidget#benchmarkModelList, QTableWidget#benchmarkResultsTable, QTextEdit#benchmarkLog {{
+        background-color: {p.bg_input};
+        border: 1px solid {p.settings_input_border};
+        border-radius: 5px;
+        color: {p.text_primary};
+        selection-background-color: {p.toolbar_active_bg};
+        selection-color: {p.text_primary};
+    }}
+
+    QListWidget#benchmarkModelList::item {{
+        padding: 4px 5px;
+    }}
+
+    QTableWidget#benchmarkResultsTable {{
+        gridline-color: {p.footer_separator};
+        alternate-background-color: {p.bg_panel_alt};
+        font-size: 10px;
+    }}
+
+    QHeaderView::section {{
+        background-color: {p.bg_panel_alt};
+        border: none;
+        border-right: 1px solid {p.footer_separator};
+        border-bottom: 1px solid {p.footer_separator};
+        color: {p.text_secondary};
+        padding: 5px 7px;
+        font-size: 10px;
+        font-weight: 700;
+    }}
+
+    QComboBox#benchmarkInput, QSpinBox#benchmarkInput, QLineEdit#benchmarkOutputPath {{
+        background-color: {p.settings_input_bg};
+        border: 1px solid {p.settings_input_border};
+        border-radius: 4px;
+        color: {p.settings_text};
+        min-height: 27px;
+        padding: 0 8px;
+    }}
+
+    QProgressBar#benchmarkProgress {{
+        background-color: {p.footer_track_bg};
+        border: none;
+        border-radius: 3px;
+        min-height: 6px;
+        max-height: 6px;
+    }}
+    QProgressBar#benchmarkProgress::chunk {{
+        background-color: {p.accent};
+        border-radius: 3px;
+    }}
+
+    QPushButton#benchmarkPrimaryButton, QPushButton#benchmarkSecondaryButton,
+    QPushButton#benchmarkDangerButton {{
+        border-radius: 5px;
+        padding: 7px 12px;
+        font-size: 11px;
+        font-weight: 650;
+    }}
+    QPushButton#benchmarkPrimaryButton {{
+        background-color: {p.toolbar_green_bg};
+        border: 1px solid {p.toolbar_green_border};
+        color: {p.toolbar_green_fg};
+    }}
+    QPushButton#benchmarkDangerButton {{
+        background-color: {p.toolbar_red_bg};
+        border: 1px solid {p.toolbar_red_border};
+        color: {p.toolbar_red_fg};
+    }}
+    QPushButton#benchmarkSecondaryButton {{
+        background-color: {p.toolbar_hover_bg};
+        border: 1px solid {p.toolbar_card_border};
+        color: {p.toolbar_text};
+    }}
+    QPushButton#benchmarkPrimaryButton:disabled, QPushButton#benchmarkSecondaryButton:disabled,
+    QPushButton#benchmarkDangerButton:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.text_muted};
+    }}
+
+    QPushButton#benchmarkLinkButton {{
+        background: transparent;
+        border: none;
+        color: {p.info_cyan};
+        padding: 2px 4px;
+        font-size: 10px;
+    }}
+    QPushButton#benchmarkLinkButton:hover {{
+        color: {p.text_primary};
+    }}
+
+
     /* ---- Performance footer ---- */
 
     QFrame#performanceFooter {{
