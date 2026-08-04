@@ -53,6 +53,94 @@ def build_static_runtime_config(
     return validate_runtime_config(config)
 
 
+
+def build_depth_pro_runtime_config(
+    descriptor: ModelDescriptor,
+    context: ModelRuntimeContext,
+) -> dict[str, object]:
+    """Build a Depth Pro config without leaking model logic into controllers.
+
+    Depth Pro currently supports FP32 and FP16. The shared profile resolver may
+    expose BF16 for future hardware, so this builder safely maps that case to
+    FP16 on CUDA while retaining FP32 on CPU. Profile tiers control precision,
+    point-cloud density, warm-up repetitions, and backend tuning; the official
+    model architecture and its internal 1536-pixel inference size remain fixed.
+    """
+
+    resolved = context.resolved_profile
+    if resolved is None or not hasattr(resolved, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved compute profile."
+        )
+
+    spec = resolved.spec
+    device = str(getattr(resolved, "device", "cpu"))
+    precision_value = getattr(getattr(resolved, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+
+    effective = getattr(getattr(resolved, "effective", None), "value", "efficient")
+    config = dict(descriptor.default_config)
+    config.update(
+        {
+            "profile": str(effective),
+            "device": device,
+            "precision": precision,
+            "point_budget": max(1, int(spec.point_budget)),
+            "live_point_budget": max(1, int(spec.live_point_budget)),
+            "warmup_size": max(64, int(spec.warmup_size)),
+            "warmup_runs": max(1, int(spec.warmup_runs)),
+            "allow_tf32": bool(spec.allow_tf32),
+            "matmul_precision": str(spec.matmul_precision),
+            "hardware_tier": str(effective),
+        }
+    )
+    if context.point_budget is not None:
+        config["point_budget"] = max(1, int(context.point_budget))
+    config.update(dict(context.overrides))
+    return validate_runtime_config(config)
+
+
+def build_depth_pro_profile_metadata(
+    descriptor: ModelDescriptor,
+    resolved_profile: Any,
+) -> ModelProfileMetadata:
+    """Expose Depth Pro's fixed architecture through generic profile widgets."""
+
+    if resolved_profile is None or not hasattr(resolved_profile, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved profile for presentation."
+        )
+    spec = resolved_profile.spec
+    device = str(getattr(resolved_profile, "device", "cpu"))
+    precision_value = getattr(getattr(resolved_profile, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    precision_label = "FP16" if precision == "fp16" else "FP32"
+
+    tooltip = (
+        "Depth Pro uses the official DINOv2-L architecture and a fixed 1536×1536 "
+        "internal inference size. The selected hardware profile controls precision, "
+        "warm-up, and point-cloud density."
+    )
+    warning = getattr(resolved_profile, "warning", None)
+    if warning:
+        tooltip += f"\nProfile: {warning}"
+    return ModelProfileMetadata(
+        variant_label="Depth Pro · DINOv2-L",
+        detail_label="1536² internal · Metric",
+        precision_label=precision_label,
+        point_budget=max(1, int(spec.point_budget)),
+        live_point_budget=max(1, int(spec.live_point_budget)),
+        tooltip=tooltip,
+    )
+
 def validate_runtime_config(config: Mapping[str, object]) -> dict[str, object]:
     """Return a picklable primitive config or reject the invalid value early."""
 

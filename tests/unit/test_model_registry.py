@@ -9,8 +9,14 @@ import pytest
 
 from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile, resolve_profile
+from core.models.adapters.depth_pro_adapter import DepthProGeometryModel
 from core.models.adapters.mock_adapter import MockGeometryModel
-from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID, SUPPORTED_MODEL_IDS
+from core.models.catalog import (
+    DEPTH_PRO_MODEL_ID,
+    MOGE2_MODEL_ID,
+    MOCK_MODEL_ID,
+    SUPPORTED_MODEL_IDS,
+)
 from core.models.metadata import (
     CheckpointSource,
     DepthScale,
@@ -94,6 +100,7 @@ def test_builtin_registry_is_authoritative_and_phase5_ids_remain_compatible() ->
 
 def test_worker_factory_builds_adapters_lazily_through_registry() -> None:
     assert isinstance(build_model(MOCK_MODEL_ID), MockGeometryModel)
+    assert isinstance(build_model(DEPTH_PRO_MODEL_ID), DepthProGeometryModel)
     with pytest.raises(UnknownModelError, match="Unknown model id"):
         build_model("not-registered")
 
@@ -278,4 +285,73 @@ def test_registry_rejects_inconsistent_intrinsics_and_duplicate_sources() -> Non
     )
     with pytest.raises(ModelRegistryError, match="duplicate source types"):
         ModelRegistry().register(duplicate_sources)
+
+def test_depth_pro_registry_contract_and_profile_dispatch() -> None:
+    descriptor = get_model_descriptor(DEPTH_PRO_MODEL_ID)
+    assert descriptor.capabilities.is_metric is True
+    assert descriptor.capabilities.outputs.depth is True
+    assert descriptor.capabilities.outputs.points is False
+    assert descriptor.capabilities.outputs.intrinsics is True
+    assert descriptor.capabilities.outputs.valid_mask is True
+    assert descriptor.capabilities.intrinsics_source.value == "model_predicted"
+    assert descriptor.capabilities.intrinsics_fallback.value == "estimated"
+    assert descriptor.hardware.supported_precisions == ("fp32", "fp16")
+    assert descriptor.checkpoints[0].source is CheckpointSource.LOCAL
+    assert descriptor.uses_compute_profile is True
+
+    hardware = _gpu()
+    resolved = resolve_profile(ComputeProfile.AUTO, hardware)
+    context = ModelRuntimeContext(
+        hardware_info=hardware,
+        resolved_profile=resolved,
+        point_budget=222_222,
+    )
+    config = resolve_model_runtime_config(DEPTH_PRO_MODEL_ID, context)
+    assert config["checkpoint"] == "checkpoints/depth_pro.pt"
+    assert config["device"] == "cuda:0"
+    assert config["precision"] == "fp16"
+    assert config["point_budget"] == 222_222
+    assert config["live_point_budget"] == 100_000
+    assert config["internal_resolution"] == 1536
+
+    metadata = resolve_model_profile_metadata(DEPTH_PRO_MODEL_ID, resolved)
+    assert metadata.variant_label == "Depth Pro · DINOv2-L"
+    assert metadata.detail_label == "1536² internal · Metric"
+    assert metadata.precision_label == "FP16"
+    assert metadata.point_budget == 250_000
+    assert metadata.live_point_budget == 100_000
+
+
+def test_depth_pro_availability_reports_dependency_and_project_local_checkpoint(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.models.registry as registry_module
+
+    descriptor = get_model_descriptor(DEPTH_PRO_MODEL_ID)
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name: str):
+        if name == "depth_pro":
+            return None
+        return real_find_spec(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(
+        registry_module,
+        "_resolve_local_asset",
+        lambda _identifier: tmp_path / "depth_pro.pt",
+    )
+    availability = check_model_availability(DEPTH_PRO_MODEL_ID, _gpu())
+    assert availability.available is False
+    assert "depth-pro" in availability.missing_dependencies
+    assert availability.checkpoint_status == "missing"
+    assert availability.missing_assets == (descriptor.checkpoints[0].identifier,)
+
+    # Once dependency and checkpoint exist, the same registry entry is ready.
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
+    (tmp_path / "depth_pro.pt").write_bytes(b"weights")
+    availability = check_model_availability(DEPTH_PRO_MODEL_ID, _gpu())
+    assert availability.available is True
+    assert availability.checkpoint_status == "available"
 

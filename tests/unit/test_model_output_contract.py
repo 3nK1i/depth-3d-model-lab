@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.models.catalog import DEPTH_PRO_MODEL_ID, MOGE2_MODEL_ID, MOCK_MODEL_ID
 from core.models.registry import get_model_descriptor
 from core.models.result import GeometryResult
 from core.models.validation import ModelOutputContractError, normalize_geometry_result
@@ -191,4 +191,31 @@ def test_geometry_result_phase5_positional_constructor_remains_compatible() -> N
     assert result.model_id == "legacy-model"
     assert result.vram_total_gib == 6.0
     assert result.depth_scale == ""
+
+def test_depth_pro_predicted_and_estimated_intrinsics_semantics() -> None:
+    predicted = normalize_geometry_result(
+        _result(
+            model_id=DEPTH_PRO_MODEL_ID,
+            intrinsics=np.array(
+                [[500.0, 0.0, 2.5], [0.0, 500.0, 1.5], [0.0, 0.0, 1.0]],
+                dtype=np.float32,
+            ),
+            valid_mask=np.ones((4, 6), dtype=bool),
+        ),
+        get_model_descriptor(DEPTH_PRO_MODEL_ID),
+        _frame(),
+    )
+    assert predicted.is_metric is True
+    assert predicted.intrinsics_source == "model_predicted"
+
+    estimated = normalize_geometry_result(
+        _result(
+            model_id=DEPTH_PRO_MODEL_ID,
+            valid_mask=np.ones((4, 6), dtype=bool),
+        ),
+        get_model_descriptor(DEPTH_PRO_MODEL_ID),
+        _frame(),
+    )
+    assert estimated.intrinsics is not None
+    assert estimated.intrinsics_source == "estimated"
 

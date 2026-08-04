@@ -5,7 +5,7 @@ from __future__ import annotations
 from app.widgets.settings_panel import SettingsPanel
 from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile
-from core.models.catalog import MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.models.catalog import DEPTH_PRO_MODEL_ID, MOGE2_MODEL_ID, MOCK_MODEL_ID
 
 
 class _MemorySettings:
@@ -138,3 +138,24 @@ def test_5090_auto_profile_downgrades_under_startup_memory_pressure(qtbot) -> No
     assert panel.resolved_profile.effective is ComputeProfile.BALANCED
     assert panel.model_runtime_config["pretrained"] == "Ruicheng/moge-2-vitb-normal"
     assert panel.live_point_budget == 250_000
+
+def test_depth_pro_selection_uses_registry_profile_without_importing_model(qtbot) -> None:
+    settings = _MemorySettings(model_id=DEPTH_PRO_MODEL_ID)
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=settings,
+    )
+    qtbot.addWidget(panel)
+
+    assert panel.selected_model_id == DEPTH_PRO_MODEL_ID
+    assert panel._model_combo.currentText() == "Depth Pro"
+    assert panel._gpu_profile.isEnabled()
+    assert panel._model_variant.currentText() == "Depth Pro · DINOv2-L"
+    assert panel._resolution.currentText() == "1536² internal · Metric"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["checkpoint"] == "checkpoints/depth_pro.pt"
+    assert panel.model_runtime_config["precision"] == "fp16"
+    assert panel.model_runtime_config["device"] == "cuda:0"
+    assert panel.point_budget == 250_000
+    assert panel.live_point_budget == 100_000
+

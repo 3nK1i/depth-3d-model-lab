@@ -1,0 +1,9 @@
+# Install a CUDA-enabled PyTorch build compatible with the target GPU first.
+# Then install the official Apple Depth Pro package and its declared runtime
+# dependencies inside the same environment as the application:
+#   python -m pip install -r requirements/models-depth-pro.txt
+#
+# The upstream package currently constrains NumPy to <2.
+
+numpy>=1.26,<2
+depth_pro @ git+https://github.com/apple/ml-depth-pro.git

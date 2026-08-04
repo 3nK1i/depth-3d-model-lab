@@ -18,3 +18,6 @@ outputs/stress/
 
 # Generated Phase 5 release reports.
 outputs/release/
+# Locally downloaded optional model checkpoints.
+checkpoints/depth_pro.pt
+checkpoints/depth_pro.pt.part

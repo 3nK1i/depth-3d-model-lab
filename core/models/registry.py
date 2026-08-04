@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 from core.models.base import BaseGeometryModel
 from core.models.catalog import (
+    DEPTH_PRO_DISPLAY_LABEL,
+    DEPTH_PRO_MODEL_ID,
     MOCK_DISPLAY_LABEL,
     MOCK_MODEL_ID,
     MOGE2_DISPLAY_LABEL,
@@ -185,7 +187,7 @@ class ModelRegistry:
             for checkpoint in descriptor.checkpoints
             if checkpoint.required
             and checkpoint.source is CheckpointSource.LOCAL
-            and not Path(checkpoint.identifier).expanduser().is_file()
+            and not _resolve_local_asset(checkpoint.identifier).is_file()
         )
         if missing_assets:
             checkpoint_status = "missing"
@@ -372,6 +374,117 @@ def _register_builtins() -> None:
     )
     MODEL_REGISTRY.register(
         ModelDescriptor(
+            model_id=DEPTH_PRO_MODEL_ID,
+            display_name=DEPTH_PRO_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.depth_pro_adapter:DepthProGeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_depth_pro_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_depth_pro_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    intrinsics=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.METRIC,
+                intrinsics_source=IntrinsicsSource.MODEL_PREDICTED,
+                intrinsics_fallback=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.NONE,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=True,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="torchvision",
+                    distribution="torchvision",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Official preprocessing transforms",
+                ),
+                ModelDependency(
+                    import_name="timm",
+                    distribution="timm",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Vision Transformer components",
+                ),
+                ModelDependency(
+                    import_name="pillow_heif",
+                    distribution="pillow-heif",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Official image I/O dependency",
+                ),
+                ModelDependency(
+                    import_name="matplotlib",
+                    distribution="matplotlib",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Official package dependency",
+                ),
+                ModelDependency(
+                    import_name="depth_pro",
+                    distribution="depth-pro",
+                    requirement_file="requirements/models-depth-pro.txt",
+                    purpose="Official Apple Depth Pro implementation",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=6.0,
+                recommended_cuda_vram_gib=8.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "The official architecture has a fixed 1536×1536 internal "
+                    "inference size. RTX 2060 uses the conservative FP16 profile; "
+                    "RTX 5090 uses the high-density profile automatically."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "Zero-shot metric monocular depth with model-predicted focal "
+                    "length and registry-managed estimated-intrinsics fallback."
+                ),
+                header_label="DEPTH PRO",
+                header_badge_kind="compatible",
+                idle_badge="READY",
+                active_badge="METRIC READY",
+            ),
+            license=ModelLicense(
+                name="Apple Depth Pro sample-code license",
+                status="review_required",
+                reference="https://github.com/apple/ml-depth-pro/blob/main/LICENSE",
+            ),
+            default_config={
+                "checkpoint": "checkpoints/depth_pro.pt",
+                "model_label": DEPTH_PRO_DISPLAY_LABEL,
+                "internal_resolution": 1536,
+                "point_budget": 250_000,
+                "live_point_budget": 100_000,
+                "warmup_size": 256,
+                "warmup_runs": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "checkpoints/depth_pro.pt",
+                    source=CheckpointSource.LOCAL,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
             model_id=MOCK_MODEL_ID,
             display_name="Development Mock",
             adapter_path="core.models.adapters.mock_adapter:MockGeometryModel",
@@ -542,6 +655,16 @@ def _dependency_available(import_name: str) -> bool:
         return importlib.util.find_spec(import_name) is not None
     except (ImportError, ModuleNotFoundError, ValueError):
         return False
+
+
+def _resolve_local_asset(identifier: str) -> Path:
+    """Resolve registry-local assets independently of the process CWD."""
+
+    path = Path(identifier).expanduser()
+    if path.is_absolute():
+        return path
+    project_root = Path(__file__).resolve().parents[2]
+    return project_root / path
 
 
 def _hardware_backend_name(hardware_info: Any) -> str:
