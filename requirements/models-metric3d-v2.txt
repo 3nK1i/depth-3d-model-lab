@@ -1,0 +1,14 @@
+# Metric3D v2 optional runtime.
+# Keep the project's existing CUDA PyTorch, Torchvision, OpenCV, and NumPy builds.
+mmengine>=0.10.4,<1
+mmcv-lite>=2.1,<2.3
+timm>=1.0,<2
+einops>=0.7,<1
+iopath>=0.1.10,<1
+plyfile>=1.0,<2
+tensorboardX>=2.6,<3
+imgaug>=0.4,<1
+imagecorruptions>=1.1,<2
+matplotlib>=3.8,<4
+Pillow>=10,<12
+huggingface-hub>=0.22,<2

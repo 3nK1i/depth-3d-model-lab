@@ -23,6 +23,8 @@ from core.models.catalog import (
     MOCK_MODEL_ID,
     MOGE2_DISPLAY_LABEL,
     MOGE2_MODEL_ID,
+    METRIC3D_V2_DISPLAY_LABEL,
+    METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_DISPLAY_LABEL,
     UNIDEPTH_V2_MODEL_ID,
 )
@@ -609,6 +611,144 @@ def _register_builtins() -> None:
                 ),
                 ModelCheckpoint(
                     "lpiccinelli/unidepth-v2-vitl14",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
+            model_id=METRIC3D_V2_MODEL_ID,
+            display_name=METRIC3D_V2_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.metric3d_v2_adapter:Metric3DV2GeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_metric3d_v2_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_metric3d_v2_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    points=True,
+                    colors=True,
+                    normals=True,
+                    intrinsics=True,
+                    confidence=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.METRIC,
+                intrinsics_source=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.CONFIDENCE,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=True,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="torchvision",
+                    distribution="torchvision",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="Official vision operations",
+                ),
+                ModelDependency(
+                    import_name="cv2",
+                    distribution="opencv-python",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="Official image preprocessing",
+                ),
+                ModelDependency(
+                    import_name="mmengine",
+                    distribution="mmengine",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="Official configuration loader",
+                ),
+                ModelDependency(
+                    import_name="mmcv",
+                    distribution="mmcv-lite",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="OpenMMLab compatibility runtime",
+                ),
+                ModelDependency(
+                    import_name="timm",
+                    distribution="timm",
+                    requirement_file="requirements/models-metric3d-v2.txt",
+                    purpose="Vision Transformer components",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=5.0,
+                recommended_cuda_vram_gib=8.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "Automatic profiles use ViT-S on RTX 2060 and ViT-L on RTX 5090. "
+                    "Metric scale depends on camera intrinsics; estimated intrinsics are "
+                    "used until calibration support is added."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "Zero-shot metric depth and surface normals using estimated camera "
+                    "intrinsics until calibration becomes available."
+                ),
+                header_label="METRIC3D V2",
+                header_badge_kind="compatible",
+                idle_badge="READY",
+                active_badge="METRIC + NORMALS",
+            ),
+            license=ModelLicense(
+                name="BSD 2-Clause",
+                status="permissive_reviewed",
+                reference="https://github.com/YvanYin/Metric3D/blob/main/LICENSE",
+            ),
+            default_config={
+                "source_dir": "third_party/Metric3D",
+                "checkpoint": (
+                    "checkpoints/metric3d-v2/metric_depth_vit_small_800k.pth"
+                ),
+                "entrypoint": "metric3d_vit_small",
+                "variant": "vit-small",
+                "model_label": "Metric3D v2 ViT-S",
+                "decoder_label": "RAFT-4iter",
+                "input_height": 616,
+                "input_width": 1064,
+                "canonical_focal_length": 1000.0,
+                "virtual_fov_degrees": 60.0,
+                "max_depth_m": 300.0,
+                "point_budget": 250_000,
+                "live_point_budget": 100_000,
+                "warmup_size": 256,
+                "warmup_runs": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "third_party/Metric3D/.eia_metric3d_v2_ready.json",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "checkpoints/metric3d-v2/.ready",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "JUGGHM/Metric3D:metric_depth_vit_small_800k.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "JUGGHM/Metric3D:metric_depth_vit_large_800k.pth",
                     source=CheckpointSource.REMOTE,
                     required=False,
                 ),

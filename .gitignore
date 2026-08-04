@@ -24,4 +24,6 @@ checkpoints/depth_pro.pt.part
 # Locally installed UniDepthV2 source and model snapshots.
 third_party/UniDepth/
 checkpoints/unidepth-v2/
-
+# Locally installed Metric3D v2 source and checkpoints.
+third_party/Metric3D/
+checkpoints/metric3d-v2/

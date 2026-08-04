@@ -9,6 +9,7 @@ from core.models.catalog import (
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
+    METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_MODEL_ID,
 )
 from core.models.registry import get_model_descriptor
@@ -244,3 +245,29 @@ def test_unidepth_v2_uncertainty_and_geometry_semantics() -> None:
     assert normalized.depth_scale == "metric"
     assert normalized.intrinsics_source == "model_predicted"
     assert normalized.confidence_kind == "uncertainty"
+
+
+def test_metric3d_v2_metric_normals_confidence_and_estimated_intrinsics() -> None:
+    result = _result(
+        model_id=METRIC3D_V2_MODEL_ID,
+        points=np.zeros((2, 3, 3), dtype=np.float32),
+        colors=np.zeros((2, 3, 3), dtype=np.uint8),
+        normals=np.dstack((
+            np.zeros((2, 3), dtype=np.float32),
+            np.zeros((2, 3), dtype=np.float32),
+            np.ones((2, 3), dtype=np.float32),
+        )),
+        intrinsics=np.eye(3, dtype=np.float32),
+        confidence=np.full((4, 6), 0.8, dtype=np.float32),
+        valid_mask=np.ones((4, 6), dtype=bool),
+        point_stride=2,
+    )
+    normalized = normalize_geometry_result(
+        result, get_model_descriptor(METRIC3D_V2_MODEL_ID), _frame()
+    )
+    assert normalized.is_metric is True
+    assert normalized.depth_scale == "metric"
+    assert normalized.intrinsics_source == "estimated"
+    assert normalized.confidence_kind == "confidence"
+    assert normalized.normals is not None
+    assert normalized.colors is not None

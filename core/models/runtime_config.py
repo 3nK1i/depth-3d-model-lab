@@ -255,6 +255,131 @@ def build_unidepth_v2_profile_metadata(
     )
 
 
+_METRIC3D_V2_PROFILE_VARIANTS: dict[str, dict[str, object]] = {
+    "efficient": {
+        "variant": "vit-small",
+        "entrypoint": "metric3d_vit_small",
+        "checkpoint": "checkpoints/metric3d-v2/metric_depth_vit_small_800k.pth",
+        "model_label": "Metric3D v2 ViT-S",
+        "decoder_label": "RAFT-4iter",
+        "input_height": 616,
+        "input_width": 1064,
+    },
+    "balanced": {
+        "variant": "vit-small",
+        "entrypoint": "metric3d_vit_small",
+        "checkpoint": "checkpoints/metric3d-v2/metric_depth_vit_small_800k.pth",
+        "model_label": "Metric3D v2 ViT-S",
+        "decoder_label": "RAFT-4iter",
+        "input_height": 616,
+        "input_width": 1064,
+    },
+    "ultra": {
+        "variant": "vit-large",
+        "entrypoint": "metric3d_vit_large",
+        "checkpoint": "checkpoints/metric3d-v2/metric_depth_vit_large_800k.pth",
+        "model_label": "Metric3D v2 ViT-L",
+        "decoder_label": "RAFT-8iter",
+        "input_height": 616,
+        "input_width": 1064,
+    },
+}
+
+
+def _metric3d_v2_profile_values(resolved_profile: Any) -> tuple[str, dict[str, object]]:
+    effective = str(
+        getattr(getattr(resolved_profile, "effective", None), "value", "efficient")
+    )
+    if effective not in _METRIC3D_V2_PROFILE_VARIANTS:
+        effective = "efficient"
+    return effective, dict(_METRIC3D_V2_PROFILE_VARIANTS[effective])
+
+
+def build_metric3d_v2_runtime_config(
+    descriptor: ModelDescriptor,
+    context: ModelRuntimeContext,
+) -> dict[str, object]:
+    """Resolve a local, GPU-safe Metric3D v2 configuration via the registry."""
+
+    resolved = context.resolved_profile
+    if resolved is None or not hasattr(resolved, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved compute profile."
+        )
+    spec = resolved.spec
+    effective, variant = _metric3d_v2_profile_values(resolved)
+    device = str(getattr(resolved, "device", "cpu"))
+    precision_value = getattr(getattr(resolved, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+
+    config = dict(descriptor.default_config)
+    config.update(variant)
+    config.update(
+        {
+            "profile": effective,
+            "device": device,
+            "precision": precision,
+            "point_budget": max(1, int(spec.point_budget)),
+            "live_point_budget": max(1, int(spec.live_point_budget)),
+            "warmup_size": max(64, int(spec.warmup_size)),
+            "warmup_runs": max(1, int(spec.warmup_runs)),
+            "allow_tf32": bool(spec.allow_tf32),
+            "matmul_precision": str(spec.matmul_precision),
+            "hardware_tier": effective,
+        }
+    )
+    if context.point_budget is not None:
+        config["point_budget"] = max(1, int(context.point_budget))
+    config.update(dict(context.overrides))
+    return validate_runtime_config(config)
+
+
+def build_metric3d_v2_profile_metadata(
+    descriptor: ModelDescriptor,
+    resolved_profile: Any,
+) -> ModelProfileMetadata:
+    """Expose registry-selected Metric3D v2 variants to the generic UI."""
+
+    if resolved_profile is None or not hasattr(resolved_profile, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved profile for presentation."
+        )
+    spec = resolved_profile.spec
+    _, variant = _metric3d_v2_profile_values(resolved_profile)
+    device = str(getattr(resolved_profile, "device", "cpu"))
+    precision_value = getattr(getattr(resolved_profile, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    precision_label = "FP16" if precision == "fp16" else "FP32"
+    tooltip = (
+        f"Automatic Metric3D v2 selection: {variant['model_label']} with "
+        f"{variant['decoder_label']}, {precision_label}. Metric scale depends on "
+        "camera intrinsics; until calibration is available, the application uses "
+        "estimated intrinsics and labels measurements as estimated."
+    )
+    warning = getattr(resolved_profile, "warning", None)
+    if warning:
+        tooltip += f"\nProfile: {warning}"
+    return ModelProfileMetadata(
+        variant_label=str(variant["model_label"]),
+        detail_label=(
+            f"{int(variant['input_width'])}×{int(variant['input_height'])} · "
+            "Metric + normals"
+        ),
+        precision_label=precision_label,
+        point_budget=max(1, int(spec.point_budget)),
+        live_point_budget=max(1, int(spec.live_point_budget)),
+        tooltip=tooltip,
+    )
+
+
 def validate_runtime_config(config: Mapping[str, object]) -> dict[str, object]:
     """Return a picklable primitive config or reject the invalid value early."""
 

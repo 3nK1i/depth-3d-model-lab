@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,11 +12,13 @@ from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile, resolve_profile
 from core.models.adapters.depth_pro_adapter import DepthProGeometryModel
 from core.models.adapters.mock_adapter import MockGeometryModel
+from core.models.adapters.metric3d_v2_adapter import Metric3DV2GeometryModel
 from core.models.adapters.unidepth_v2_adapter import UniDepthV2GeometryModel
 from core.models.catalog import (
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
+    METRIC3D_V2_MODEL_ID,
     SUPPORTED_MODEL_IDS,
     UNIDEPTH_V2_MODEL_ID,
 )
@@ -104,6 +107,7 @@ def test_worker_factory_builds_adapters_lazily_through_registry() -> None:
     assert isinstance(build_model(MOCK_MODEL_ID), MockGeometryModel)
     assert isinstance(build_model(DEPTH_PRO_MODEL_ID), DepthProGeometryModel)
     assert isinstance(build_model(UNIDEPTH_V2_MODEL_ID), UniDepthV2GeometryModel)
+    assert isinstance(build_model(METRIC3D_V2_MODEL_ID), Metric3DV2GeometryModel)
     with pytest.raises(UnknownModelError, match="Unknown model id"):
         build_model("not-registered")
 
@@ -404,3 +408,85 @@ def test_unidepth_v2_registry_contract_and_gpu_profile_dispatch() -> None:
     assert metadata.variant_label == "UniDepthV2 ViT-L/14"
     assert metadata.detail_label == "Level 8 · Metric + uncertainty"
     assert metadata.precision_label == "FP16"
+
+
+def test_metric3d_v2_registry_contract_and_gpu_profile_dispatch() -> None:
+    descriptor = get_model_descriptor(METRIC3D_V2_MODEL_ID)
+    assert descriptor.capabilities.is_metric is True
+    assert descriptor.capabilities.outputs.points is True
+    assert descriptor.capabilities.outputs.colors is True
+    assert descriptor.capabilities.outputs.normals is True
+    assert descriptor.capabilities.outputs.intrinsics is True
+    assert descriptor.capabilities.outputs.confidence is True
+    assert descriptor.capabilities.intrinsics_source.value == "estimated"
+    assert descriptor.capabilities.confidence_kind.value == "confidence"
+    assert descriptor.hardware.supported_precisions == ("fp32", "fp16")
+    assert descriptor.license.name == "BSD 2-Clause"
+    assert descriptor.license.status == "permissive_reviewed"
+
+    efficient = resolve_profile(ComputeProfile.AUTO, _gpu(6.0))
+    config = resolve_model_runtime_config(
+        METRIC3D_V2_MODEL_ID,
+        ModelRuntimeContext(resolved_profile=efficient, point_budget=123_456),
+    )
+    assert config["entrypoint"] == "metric3d_vit_small"
+    assert config["checkpoint"].endswith("metric_depth_vit_small_800k.pth")
+    assert config["variant"] == "vit-small"
+    assert config["input_height"] == 616
+    assert config["input_width"] == 1064
+    assert config["precision"] == "fp16"
+    assert config["point_budget"] == 123_456
+    metadata = resolve_model_profile_metadata(METRIC3D_V2_MODEL_ID, efficient)
+    assert metadata.variant_label == "Metric3D v2 ViT-S"
+    assert metadata.detail_label == "1064×616 · Metric + normals"
+    assert metadata.precision_label == "FP16"
+
+    ultra_hardware = _gpu(32.0)
+    ultra_hardware = HardwareInfo(
+        backend=ultra_hardware.backend, device=ultra_hardware.device,
+        device_index=ultra_hardware.device_index, name="NVIDIA GeForce RTX 5090",
+        total_memory_bytes=ultra_hardware.total_memory_bytes,
+        free_memory_bytes=ultra_hardware.free_memory_bytes,
+        compute_capability=(12, 0), supports_fp16=True, supports_bf16=True,
+        torch_available=True, torch_cuda_available=True, torch_version="test",
+        torch_cuda_version="test", compiled_architectures=("sm_120",),
+        torch_build_compatible=True,
+    )
+    ultra = resolve_profile(ComputeProfile.AUTO, ultra_hardware)
+    config = resolve_model_runtime_config(
+        METRIC3D_V2_MODEL_ID, ModelRuntimeContext(resolved_profile=ultra)
+    )
+    assert config["entrypoint"] == "metric3d_vit_large"
+    assert config["checkpoint"].endswith("metric_depth_vit_large_800k.pth")
+    assert config["variant"] == "vit-large"
+    metadata = resolve_model_profile_metadata(METRIC3D_V2_MODEL_ID, ultra)
+    assert metadata.variant_label == "Metric3D v2 ViT-L"
+    assert metadata.precision_label == "FP16"
+
+
+def test_metric3d_v2_availability_requires_source_and_checkpoint_markers(
+    monkeypatch, tmp_path
+) -> None:
+    import core.models.registry as registry_module
+
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name: object() if name in {"torch", "torchvision", "cv2", "mmengine", "mmcv", "timm"} else real_find_spec(name),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "_resolve_local_asset",
+        lambda identifier: tmp_path / Path(identifier).name,
+    )
+    availability = check_model_availability(METRIC3D_V2_MODEL_ID, _gpu())
+    assert availability.available is False
+    assert availability.checkpoint_status == "missing"
+    assert len(availability.missing_assets) == 2
+
+    (tmp_path / ".eia_metric3d_v2_ready.json").write_text("{}")
+    (tmp_path / ".ready").write_text("{}")
+    availability = check_model_availability(METRIC3D_V2_MODEL_ID, _gpu())
+    assert availability.available is True
+    assert availability.checkpoint_status == "managed_remote"

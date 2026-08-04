@@ -9,6 +9,7 @@ from core.models.catalog import (
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
+    METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_MODEL_ID,
 )
 
@@ -184,3 +185,37 @@ def test_unidepth_v2_selection_uses_registry_profile_on_rtx2060(qtbot) -> None:
     assert panel.model_runtime_config["resolution_level"] == 2
     assert panel.point_budget == 250_000
     assert panel.live_point_budget == 100_000
+
+
+def test_metric3d_v2_selection_uses_small_profile_on_rtx2060(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=_MemorySettings(model_id=METRIC3D_V2_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+
+    assert panel.selected_model_id == METRIC3D_V2_MODEL_ID
+    assert panel._model_combo.currentText() == "Metric3D v2"
+    assert panel._gpu_profile.isEnabled()
+    assert panel._model_variant.currentText() == "Metric3D v2 ViT-S"
+    assert panel._resolution.currentText() == "1064×616 · Metric + normals"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["entrypoint"] == "metric3d_vit_small"
+    assert panel.model_runtime_config["checkpoint"].endswith("metric_depth_vit_small_800k.pth")
+    assert panel.point_budget == 250_000
+    assert panel.live_point_budget == 100_000
+
+
+def test_metric3d_v2_selection_uses_large_profile_on_rtx5090(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 5090", 32.0, (12, 0)),
+        app_settings=_MemorySettings(model_id=METRIC3D_V2_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+
+    assert panel.selected_model_id == METRIC3D_V2_MODEL_ID
+    assert panel._model_variant.currentText() == "Metric3D v2 ViT-L"
+    assert panel.model_runtime_config["entrypoint"] == "metric3d_vit_large"
+    assert panel.model_runtime_config["checkpoint"].endswith("metric_depth_vit_large_800k.pth")
+    assert panel.point_budget == 1_000_000
+    assert panel.live_point_budget == 500_000
