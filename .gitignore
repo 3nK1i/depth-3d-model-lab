@@ -32,3 +32,6 @@ third_party/Depth-Anything-V2/
 third_party/Video-Depth-Anything/
 checkpoints/depth-anything-v2/
 checkpoints/video-depth-anything/
+
+# Locally downloaded Marigold Diffusers snapshot.
+checkpoints/marigold/

@@ -810,3 +810,22 @@ def test_worker_crash_during_unload_keeps_pending_model_selection(
     assert restart_calls == [True]
     assert load_calls and load_calls[-1][0] == MOCK_MODEL_ID
     assert controller.state_machine.state is ApplicationState.LOADING_MODEL
+
+
+def test_model_metadata_can_extend_inference_timeout_without_model_branching(window) -> None:
+    controller = window._inference_controller
+    controller._active_model_metadata = {
+        "inference_timeout_ms": 120_000,
+        "stop_timeout_ms": 125_000,
+    }
+    controller._apply_active_inference_timeout()
+    assert controller._inference_watchdog_timer.interval() == 120_000
+    assert controller._active_command_timeout_ms == 125_000
+
+    controller._active_model_metadata = {"inference_timeout_ms": "invalid"}
+    controller._apply_active_inference_timeout()
+    assert controller._inference_watchdog_timer.interval() == 30_000
+
+    controller._active_model_metadata = {"inference_timeout_ms": 999_999}
+    controller._apply_active_inference_timeout()
+    assert controller._inference_watchdog_timer.interval() == 600_000

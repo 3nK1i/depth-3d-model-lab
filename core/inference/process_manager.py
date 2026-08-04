@@ -168,6 +168,11 @@ class InferenceProcessManager(QObject):
     def unload_model(self) -> None:
         self._send(Command(type=CommandType.UNLOAD_MODEL), watch=True)
 
+    def set_command_timeout_ms(self, timeout_ms: int) -> None:
+        """Set the generic watched-command timeout for the active model."""
+
+        self._watchdog.set_timeout_ms(max(1, int(timeout_ms)))
+
     def pause(self) -> None:
         self._send(Command(type=CommandType.PAUSE))
 

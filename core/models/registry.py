@@ -21,6 +21,8 @@ from core.models.catalog import (
     DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_DISPLAY_LABEL,
     DEPTH_PRO_MODEL_ID,
+    MARIGOLD_DISPLAY_LABEL,
+    MARIGOLD_MODEL_ID,
     MOCK_DISPLAY_LABEL,
     MOCK_MODEL_ID,
     MOGE2_DISPLAY_LABEL,
@@ -993,6 +995,143 @@ def _register_builtins() -> None:
                 ),
                 ModelCheckpoint(
                     "depth-anything/Metric-Video-Depth-Anything-Large:metric_video_depth_anything_vitl.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
+            model_id=MARIGOLD_MODEL_ID,
+            display_name=MARIGOLD_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.marigold_adapter:MarigoldGeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_marigold_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_marigold_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    points=True,
+                    colors=True,
+                    intrinsics=True,
+                    confidence=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.RELATIVE,
+                intrinsics_source=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.UNCERTAINTY,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=False,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="diffusers",
+                    distribution="diffusers",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Official MarigoldDepthPipeline implementation",
+                ),
+                ModelDependency(
+                    import_name="transformers",
+                    distribution="transformers",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Stable Diffusion text encoder runtime",
+                ),
+                ModelDependency(
+                    import_name="accelerate",
+                    distribution="accelerate",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Memory-safe model CPU offload on 6 GB GPUs",
+                ),
+                ModelDependency(
+                    import_name="huggingface_hub",
+                    distribution="huggingface-hub",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Pinned local snapshot management",
+                ),
+                ModelDependency(
+                    import_name="PIL",
+                    distribution="Pillow",
+                    requirement_file="requirements/models-marigold.txt",
+                    purpose="Image conversion for the official pipeline",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=5.5,
+                recommended_cuda_vram_gib=12.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "Diffusion-based, quality-oriented inference. RTX 2060 uses "
+                    "FP16 model CPU offload and a one-step fast preset; RTX 5090 "
+                    "uses a higher-resolution precision preset with uncertainty."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "High-quality affine-invariant diffusion depth for snapshots and "
+                    "offline inspection. It is not intended as a real-time model."
+                ),
+                header_label="MARIGOLD",
+                header_badge_kind="experimental",
+                idle_badge="QUALITY",
+                active_badge="RELATIVE READY",
+            ),
+            license=ModelLicense(
+                name="Code Apache-2.0; model CreativeML Open RAIL++-M",
+                status="review_required",
+                reference="https://huggingface.co/prs-eth/marigold-depth-v1-1",
+            ),
+            default_config={
+                "repository": "prs-eth/marigold-depth-v1-1",
+                "checkpoint_dir": "checkpoints/marigold/depth-v1-1",
+                "model_label": "Marigold Depth v1.1",
+                "weight_variant": "fp16",
+                "prediction_type": "depth",
+                "processing_resolution": 512,
+                "num_inference_steps": 1,
+                "ensemble_size": 1,
+                "output_uncertainty": False,
+                "model_cpu_offload": True,
+                "attention_slicing": True,
+                "vae_slicing": True,
+                "vae_tiling": True,
+                "seed": 0,
+                "virtual_fov_degrees": 60.0,
+                "point_budget": 100_000,
+                "live_point_budget": 50_000,
+                "warmup_size": 192,
+                "warmup_runs": 1,
+                "warmup_inference_steps": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+                "inference_timeout_ms": 120_000,
+                "stop_timeout_ms": 120_000,
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "checkpoints/marigold/depth-v1-1/.ready",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "checkpoints/marigold/depth-v1-1/model_index.json",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "prs-eth/marigold-depth-v1-1",
                     source=CheckpointSource.REMOTE,
                     required=False,
                 ),

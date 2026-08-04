@@ -598,6 +598,156 @@ def build_video_depth_anything_profile_metadata(
         tooltip=tooltip,
     )
 
+
+_MARIGOLD_PROFILE_VARIANTS: dict[str, dict[str, object]] = {
+    "efficient": {
+        "model_label": "Marigold Depth v1.1 · Fast",
+        "processing_resolution": 512,
+        "num_inference_steps": 1,
+        "ensemble_size": 1,
+        "output_uncertainty": False,
+        "model_cpu_offload": True,
+        "attention_slicing": True,
+        "vae_slicing": True,
+        "vae_tiling": True,
+        "inference_timeout_ms": 120_000,
+        "stop_timeout_ms": 120_000,
+    },
+    "balanced": {
+        "model_label": "Marigold Depth v1.1 · Balanced",
+        "processing_resolution": 640,
+        "num_inference_steps": 4,
+        "ensemble_size": 1,
+        "output_uncertainty": False,
+        "model_cpu_offload": False,
+        "attention_slicing": True,
+        "vae_slicing": True,
+        "vae_tiling": True,
+        "inference_timeout_ms": 120_000,
+        "stop_timeout_ms": 120_000,
+    },
+    "ultra": {
+        "model_label": "Marigold Depth v1.1 · Precision",
+        "processing_resolution": 768,
+        "num_inference_steps": 10,
+        "ensemble_size": 3,
+        "output_uncertainty": True,
+        "model_cpu_offload": False,
+        "attention_slicing": False,
+        "vae_slicing": True,
+        "vae_tiling": True,
+        "inference_timeout_ms": 180_000,
+        "stop_timeout_ms": 180_000,
+    },
+}
+
+
+def _marigold_profile_values(resolved_profile: Any) -> tuple[str, dict[str, object]]:
+    effective = str(
+        getattr(getattr(resolved_profile, "effective", None), "value", "efficient")
+    )
+    if effective not in _MARIGOLD_PROFILE_VARIANTS:
+        effective = "efficient"
+    return effective, dict(_MARIGOLD_PROFILE_VARIANTS[effective])
+
+
+def build_marigold_runtime_config(
+    descriptor: ModelDescriptor,
+    context: ModelRuntimeContext,
+) -> dict[str, object]:
+    """Resolve conservative diffusion-depth presets through the registry."""
+
+    resolved = context.resolved_profile
+    if resolved is None or not hasattr(resolved, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved compute profile."
+        )
+    spec = resolved.spec
+    effective, variant = _marigold_profile_values(resolved)
+    device = str(getattr(resolved, "device", "cpu"))
+    precision_value = getattr(getattr(resolved, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+        variant["model_cpu_offload"] = False
+        variant["processing_resolution"] = min(
+            384, int(variant["processing_resolution"])
+        )
+        variant["num_inference_steps"] = 1
+        variant["ensemble_size"] = 1
+        variant["output_uncertainty"] = False
+        variant["inference_timeout_ms"] = 300_000
+        variant["stop_timeout_ms"] = 300_000
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+
+    config = dict(descriptor.default_config)
+    config.update(variant)
+    config.update(
+        {
+            "profile": effective,
+            "device": device,
+            "precision": precision,
+            "point_budget": max(1, int(spec.point_budget)),
+            "live_point_budget": max(1, min(int(spec.live_point_budget), 100_000)),
+            "warmup_size": max(64, min(256, int(spec.warmup_size))),
+            "warmup_runs": 1,
+            "warmup_inference_steps": 1,
+            "allow_tf32": bool(spec.allow_tf32),
+            "matmul_precision": str(spec.matmul_precision),
+            "hardware_tier": effective,
+        }
+    )
+    if context.point_budget is not None:
+        config["point_budget"] = max(1, int(context.point_budget))
+    config.update(dict(context.overrides))
+    return validate_runtime_config(config)
+
+
+def build_marigold_profile_metadata(
+    descriptor: ModelDescriptor,
+    resolved_profile: Any,
+) -> ModelProfileMetadata:
+    """Expose quality/speed trade-offs without adding Marigold UI branches."""
+
+    if resolved_profile is None or not hasattr(resolved_profile, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved profile for presentation."
+        )
+    spec = resolved_profile.spec
+    _, variant = _marigold_profile_values(resolved_profile)
+    device = str(getattr(resolved_profile, "device", "cpu"))
+    precision_value = getattr(getattr(resolved_profile, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    precision_label = "FP16" if precision == "fp16" else "FP32"
+    steps = int(variant["num_inference_steps"])
+    ensemble = int(variant["ensemble_size"])
+    uncertainty = " + uncertainty" if bool(variant["output_uncertainty"]) else ""
+    offload = " · CPU offload" if bool(variant["model_cpu_offload"]) else ""
+    tooltip = (
+        f"Automatic Marigold preset: {variant['model_label']}, "
+        f"{variant['processing_resolution']} px, {steps} diffusion step(s), "
+        f"ensemble {ensemble}, {precision_label}{offload}. Output is affine-invariant "
+        "relative depth and is intended for quality-oriented snapshot/offline use."
+    )
+    warning = getattr(resolved_profile, "warning", None)
+    if warning:
+        tooltip += f"\nProfile: {warning}"
+    return ModelProfileMetadata(
+        variant_label=str(variant["model_label"]),
+        detail_label=(
+            f"{int(variant['processing_resolution'])} px · {steps} step(s){uncertainty}"
+        ),
+        precision_label=precision_label,
+        point_budget=max(1, int(spec.point_budget)),
+        live_point_budget=max(1, min(int(spec.live_point_budget), 100_000)),
+        tooltip=tooltip,
+    )
+
 def validate_runtime_config(config: Mapping[str, object]) -> dict[str, object]:
     """Return a picklable primitive config or reject the invalid value early."""
 

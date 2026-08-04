@@ -8,6 +8,7 @@ import pytest
 from core.models.catalog import (
     DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_MODEL_ID,
+    MARIGOLD_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
     METRIC3D_V2_MODEL_ID,
@@ -308,3 +309,22 @@ def test_video_depth_anything_metric_stateful_geometry_semantics() -> None:
     assert normalized.is_metric is True
     assert normalized.depth_scale == "metric"
     assert normalized.intrinsics_source == "estimated"
+
+
+def test_marigold_relative_uncertainty_semantics() -> None:
+    result = _result(
+        model_id=MARIGOLD_MODEL_ID,
+        points=np.zeros((2, 3, 3), dtype=np.float32),
+        colors=np.zeros((2, 3, 3), dtype=np.uint8),
+        intrinsics=np.eye(3, dtype=np.float32),
+        confidence=np.full((4, 6), 0.15, dtype=np.float32),
+        valid_mask=np.ones((4, 6), dtype=bool),
+        point_stride=2,
+    )
+    normalized = normalize_geometry_result(
+        result, get_model_descriptor(MARIGOLD_MODEL_ID), _frame()
+    )
+    assert normalized.is_metric is False
+    assert normalized.depth_scale == "relative"
+    assert normalized.intrinsics_source == "estimated"
+    assert normalized.confidence_kind == "uncertainty"

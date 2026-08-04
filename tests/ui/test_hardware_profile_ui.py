@@ -13,6 +13,7 @@ from core.models.catalog import (
     METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_MODEL_ID,
     VIDEO_DEPTH_ANYTHING_MODEL_ID,
+    MARIGOLD_MODEL_ID,
 )
 
 
@@ -253,3 +254,35 @@ def test_video_depth_anything_selection_uses_streaming_small_profile_on_rtx2060(
     assert panel.model_runtime_config["encoder"] == "vits"
     assert panel.model_runtime_config["max_resolution"] == 960
     assert panel.live_point_budget == 100_000
+
+
+def test_marigold_selection_uses_fast_offload_profile_on_rtx2060(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=_MemorySettings(model_id=MARIGOLD_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+    assert panel._model_combo.currentText() == "Marigold"
+    assert panel._model_variant.currentText() == "Marigold Depth v1.1 · Fast"
+    assert panel._resolution.currentText() == "512 px · 1 step(s)"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["num_inference_steps"] == 1
+    assert panel.model_runtime_config["ensemble_size"] == 1
+    assert panel.model_runtime_config["model_cpu_offload"] is True
+    assert panel.model_runtime_config["inference_timeout_ms"] == 120_000
+    assert panel.model_runtime_config["stop_timeout_ms"] == 120_000
+
+
+def test_marigold_selection_uses_precision_uncertainty_profile_on_rtx5090(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 5090", 32.0, (12, 0)),
+        app_settings=_MemorySettings(model_id=MARIGOLD_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+    assert panel._model_variant.currentText() == "Marigold Depth v1.1 · Precision"
+    assert "uncertainty" in panel._resolution.currentText()
+    assert panel.model_runtime_config["processing_resolution"] == 768
+    assert panel.model_runtime_config["num_inference_steps"] == 10
+    assert panel.model_runtime_config["ensemble_size"] == 3
+    assert panel.model_runtime_config["output_uncertainty"] is True
+    assert panel.model_runtime_config["model_cpu_offload"] is False

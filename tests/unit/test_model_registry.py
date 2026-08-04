@@ -14,11 +14,13 @@ from core.models.adapters.depth_pro_adapter import DepthProGeometryModel
 from core.models.adapters.depth_anything_v2_adapter import DepthAnythingV2GeometryModel
 from core.models.adapters.mock_adapter import MockGeometryModel
 from core.models.adapters.metric3d_v2_adapter import Metric3DV2GeometryModel
+from core.models.adapters.marigold_adapter import MarigoldGeometryModel
 from core.models.adapters.unidepth_v2_adapter import UniDepthV2GeometryModel
 from core.models.adapters.video_depth_anything_adapter import VideoDepthAnythingGeometryModel
 from core.models.catalog import (
     DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_MODEL_ID,
+    MARIGOLD_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
     METRIC3D_V2_MODEL_ID,
@@ -114,6 +116,7 @@ def test_worker_factory_builds_adapters_lazily_through_registry() -> None:
     assert isinstance(build_model(METRIC3D_V2_MODEL_ID), Metric3DV2GeometryModel)
     assert isinstance(build_model(DEPTH_ANYTHING_V2_MODEL_ID), DepthAnythingV2GeometryModel)
     assert isinstance(build_model(VIDEO_DEPTH_ANYTHING_MODEL_ID), VideoDepthAnythingGeometryModel)
+    assert isinstance(build_model(MARIGOLD_MODEL_ID), MarigoldGeometryModel)
     with pytest.raises(UnknownModelError, match="Unknown model id"):
         build_model("not-registered")
 
@@ -584,3 +587,41 @@ def test_depth_anything_ultra_profiles_select_large_variants() -> None:
     assert video["encoder"] == "vitl"
     assert video["input_size"] == 518
     assert video["max_resolution"] == 1920
+
+
+def test_marigold_registry_profiles_and_capabilities() -> None:
+    descriptor = get_model_descriptor(MARIGOLD_MODEL_ID)
+    assert descriptor.capabilities.depth_scale is DepthScale.RELATIVE
+    assert descriptor.capabilities.outputs.confidence is True
+    assert descriptor.capabilities.confidence_kind.value == "uncertainty"
+    assert descriptor.capabilities.supports_live is False
+    assert descriptor.license.status == "review_required"
+
+    efficient_hw = _gpu(6.0)
+    efficient = resolve_profile(ComputeProfile.AUTO, efficient_hw)
+    config = resolve_model_runtime_config(
+        MARIGOLD_MODEL_ID,
+        ModelRuntimeContext(hardware_info=efficient_hw, resolved_profile=efficient),
+    )
+    assert config["processing_resolution"] == 512
+    assert config["num_inference_steps"] == 1
+    assert config["ensemble_size"] == 1
+    assert config["model_cpu_offload"] is True
+    assert config["inference_timeout_ms"] == 120_000
+    assert config["stop_timeout_ms"] == 120_000
+
+    ultra_hw = _gpu(32.0)
+    ultra = resolve_profile(ComputeProfile.AUTO, ultra_hw)
+    ultra_config = resolve_model_runtime_config(
+        MARIGOLD_MODEL_ID,
+        ModelRuntimeContext(hardware_info=ultra_hw, resolved_profile=ultra),
+    )
+    assert ultra_config["processing_resolution"] == 768
+    assert ultra_config["num_inference_steps"] == 10
+    assert ultra_config["ensemble_size"] == 3
+    assert ultra_config["output_uncertainty"] is True
+    assert ultra_config["model_cpu_offload"] is False
+
+    metadata = resolve_model_profile_metadata(MARIGOLD_MODEL_ID, efficient)
+    assert "Fast" in metadata.variant_label
+    assert "1 step" in metadata.detail_label

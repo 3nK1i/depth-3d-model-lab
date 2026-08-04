@@ -158,3 +158,9 @@ def test_worker_crash_signal_is_emitted_only_once(qtbot) -> None:
     manager._emit_worker_crashed_once()
 
     assert emissions == [True]
+
+
+def test_active_model_can_extend_generic_command_timeout(qapp) -> None:
+    manager = InferenceProcessManager(stop_timeout_ms=5_000)
+    manager.set_command_timeout_ms(120_000)
+    assert manager._watchdog._timeout_ms == 120_000

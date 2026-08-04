@@ -66,7 +66,7 @@ _RECENT_FRAMES_CACHE_SIZE = 3
 _LIVE_PIPELINE_FPS = 12.0
 _LIVE_PIPELINE_INTERVAL_S = 1.0 / _LIVE_PIPELINE_FPS
 _PIPELINE_TICK_MS = 10
-_INFERENCE_RESULT_TIMEOUT_MS = 30_000
+_DEFAULT_INFERENCE_RESULT_TIMEOUT_MS = 30_000
 _MAX_AUTO_WORKER_RECOVERIES = 1
 
 _STATE_TO_FOOTER_BADGE: dict[ApplicationState, tuple[BadgeKind, str]] = {
@@ -172,7 +172,9 @@ class InferenceController(QObject):
 
         self._inference_watchdog_timer = QTimer(self)
         self._inference_watchdog_timer.setSingleShot(True)
-        self._inference_watchdog_timer.setInterval(_INFERENCE_RESULT_TIMEOUT_MS)
+        self._active_inference_timeout_ms = _DEFAULT_INFERENCE_RESULT_TIMEOUT_MS
+        self._active_command_timeout_ms = _STOP_TIMEOUT_MS
+        self._inference_watchdog_timer.setInterval(self._active_inference_timeout_ms)
         self._inference_watchdog_timer.timeout.connect(self._on_inference_result_timeout)
 
         self._settings_refresh_timer = QTimer(self)
@@ -475,6 +477,7 @@ class InferenceController(QObject):
         self._active_model_id = None
         self._active_model_config_signature = None
         self._active_model_metadata.clear()
+        self._reset_inference_timeout()
         self._viewport_panel.set_surface_normals_available(False)
         self._settings_panel.set_model_unloaded()
 
@@ -744,6 +747,7 @@ class InferenceController(QObject):
             self._active_model_id = None
             self._active_model_config_signature = None
             self._active_model_metadata.clear()
+            self._reset_inference_timeout()
             self._viewport_panel.set_surface_normals_available(False)
             self._clear_cached_geometry()
             self._depth_view.clear_frame()
@@ -773,6 +777,7 @@ class InferenceController(QObject):
             self._requested_model_config
         )
         self._active_model_metadata = dict(ack.metadata or {})
+        self._apply_active_inference_timeout()
         if ack.load_time_ms is not None:
             self._active_model_metadata["load_time_ms"] = ack.load_time_ms
         if ack.model_load_time_ms is not None:
@@ -801,6 +806,33 @@ class InferenceController(QObject):
             self._sync_model_controls_for_state()
             if should_start:
                 self._begin_running_session()
+
+
+    def _apply_active_inference_timeout(self) -> None:
+        """Apply a registry/adapter-provided timeout without model branching."""
+
+        raw = self._active_model_metadata.get(
+            "inference_timeout_ms", _DEFAULT_INFERENCE_RESULT_TIMEOUT_MS
+        )
+        try:
+            timeout_ms = int(raw)
+        except (TypeError, ValueError):
+            timeout_ms = _DEFAULT_INFERENCE_RESULT_TIMEOUT_MS
+        self._active_inference_timeout_ms = min(600_000, max(5_000, timeout_ms))
+        self._inference_watchdog_timer.setInterval(self._active_inference_timeout_ms)
+        raw_command = self._active_model_metadata.get("stop_timeout_ms", _STOP_TIMEOUT_MS)
+        try:
+            command_timeout_ms = int(raw_command)
+        except (TypeError, ValueError):
+            command_timeout_ms = _STOP_TIMEOUT_MS
+        self._active_command_timeout_ms = min(600_000, max(1_000, command_timeout_ms))
+        self._process_manager.set_command_timeout_ms(self._active_command_timeout_ms)
+
+    def _reset_inference_timeout(self) -> None:
+        self._active_inference_timeout_ms = _DEFAULT_INFERENCE_RESULT_TIMEOUT_MS
+        self._active_command_timeout_ms = _STOP_TIMEOUT_MS
+        self._inference_watchdog_timer.setInterval(self._active_inference_timeout_ms)
+        self._process_manager.set_command_timeout_ms(self._active_command_timeout_ms)
 
     def _handle_model_unload_failure(self, failure: FailureInfo) -> None:
         logger.error("Model unload failed: %s", failure.technical_details or failure.message)
@@ -834,6 +866,7 @@ class InferenceController(QObject):
         self._active_model_id = None
         self._active_model_config_signature = None
         self._active_model_metadata.clear()
+        self._reset_inference_timeout()
         self._viewport_panel.set_surface_normals_available(False)
 
     def _present_recoverable_failure(
