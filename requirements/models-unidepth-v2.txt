@@ -1,0 +1,26 @@
+# UniDepthV2 inference dependencies compatible with the existing Depth Pro
+# environment. PyTorch and Torchvision must already be installed with the CUDA
+# build selected for the target GPU.
+#
+# Install through the compatibility-aware helper, not directly:
+#   python scripts/install_unidepth_v2.py
+#
+# The helper installs the official UniDepth repository with --no-deps and
+# isolates the V2 import path from legacy V1/xFormers modules.
+
+numpy>=1.26,<2
+einops>=0.7.0
+huggingface-hub>=0.22.0
+h5py>=3.10.0
+imageio
+matplotlib
+pandas
+pillow>=10.2.0
+protobuf>=4.25.3
+scipy
+tables
+tabulate
+termcolor
+timm
+tqdm
+trimesh

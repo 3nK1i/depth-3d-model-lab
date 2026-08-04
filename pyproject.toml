@@ -24,6 +24,12 @@ depth-pro = [
     "numpy>=1.26,<2",
     "depth_pro @ git+https://github.com/apple/ml-depth-pro.git",
 ]
+unidepth-v2 = [
+    "numpy>=1.26,<2",
+    "einops>=0.7",
+    "huggingface-hub>=0.22",
+    "timm>=1.0",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

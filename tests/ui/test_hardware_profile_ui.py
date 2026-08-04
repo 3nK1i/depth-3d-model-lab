@@ -5,7 +5,12 @@ from __future__ import annotations
 from app.widgets.settings_panel import SettingsPanel
 from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile
-from core.models.catalog import DEPTH_PRO_MODEL_ID, MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.models.catalog import (
+    DEPTH_PRO_MODEL_ID,
+    MOGE2_MODEL_ID,
+    MOCK_MODEL_ID,
+    UNIDEPTH_V2_MODEL_ID,
+)
 
 
 class _MemorySettings:
@@ -159,3 +164,23 @@ def test_depth_pro_selection_uses_registry_profile_without_importing_model(qtbot
     assert panel.point_budget == 250_000
     assert panel.live_point_budget == 100_000
 
+
+
+def test_unidepth_v2_selection_uses_registry_profile_on_rtx2060(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=_MemorySettings(model_id=UNIDEPTH_V2_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+
+    assert panel.selected_model_id == UNIDEPTH_V2_MODEL_ID
+    assert panel._model_combo.currentText() == "UniDepthV2"
+    assert panel._gpu_profile.isEnabled()
+    assert panel._model_variant.currentText() == "UniDepthV2 ViT-S/14"
+    assert panel._resolution.currentText() == "Level 2 · Metric + uncertainty"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["checkpoint_dir"] == "checkpoints/unidepth-v2/vits14"
+    assert panel.model_runtime_config["variant"] == "vits14"
+    assert panel.model_runtime_config["resolution_level"] == 2
+    assert panel.point_budget == 250_000
+    assert panel.live_point_budget == 100_000

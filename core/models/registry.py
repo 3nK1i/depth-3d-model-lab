@@ -23,6 +23,8 @@ from core.models.catalog import (
     MOCK_MODEL_ID,
     MOGE2_DISPLAY_LABEL,
     MOGE2_MODEL_ID,
+    UNIDEPTH_V2_DISPLAY_LABEL,
+    UNIDEPTH_V2_MODEL_ID,
 )
 from core.models.metadata import (
     CheckpointSource,
@@ -478,6 +480,137 @@ def _register_builtins() -> None:
                 ModelCheckpoint(
                     "checkpoints/depth_pro.pt",
                     source=CheckpointSource.LOCAL,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
+            model_id=UNIDEPTH_V2_MODEL_ID,
+            display_name=UNIDEPTH_V2_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.unidepth_v2_adapter:UniDepthV2GeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_unidepth_v2_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_unidepth_v2_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    points=True,
+                    intrinsics=True,
+                    confidence=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.METRIC,
+                intrinsics_source=IntrinsicsSource.MODEL_PREDICTED,
+                intrinsics_fallback=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.UNCERTAINTY,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=True,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="torchvision",
+                    distribution="torchvision",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Official preprocessing operations",
+                ),
+                ModelDependency(
+                    import_name="einops",
+                    distribution="einops",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Tensor rearrangement operations",
+                ),
+                ModelDependency(
+                    import_name="huggingface_hub",
+                    distribution="huggingface-hub",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Local model snapshot management",
+                ),
+                ModelDependency(
+                    import_name="timm",
+                    distribution="timm",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Vision backbone components",
+                ),
+                ModelDependency(
+                    import_name="unidepth",
+                    distribution="unidepth",
+                    requirement_file="requirements/models-unidepth-v2.txt",
+                    purpose="Official UniDepthV2 implementation",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=4.0,
+                recommended_cuda_vram_gib=8.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "Automatic profiles select ViT-S on RTX 2060, ViT-B on mid-range "
+                    "GPUs, and ViT-L on RTX 5090 class hardware. The isolated V2 "
+                    "installer avoids the legacy UniDepthV1 xFormers import path."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "Universal metric monocular geometry with direct 3D points, "
+                    "model-predicted intrinsics, and relative uncertainty."
+                ),
+                header_label="UNIDEPTH V2",
+                header_badge_kind="compatible",
+                idle_badge="READY",
+                active_badge="METRIC + UNCERTAINTY",
+            ),
+            license=ModelLicense(
+                name="Creative Commons Attribution-NonCommercial 4.0",
+                status="noncommercial_review_required",
+                reference="https://github.com/lpiccinelli-eth/UniDepth/blob/main/LICENSE",
+            ),
+            default_config={
+                "checkpoint_dir": "checkpoints/unidepth-v2/vits14",
+                "repository": "lpiccinelli/unidepth-v2-vits14",
+                "variant": "vits14",
+                "model_label": "UniDepthV2 ViT-S/14",
+                "resolution_level": 2,
+                "interpolation_mode": "bilinear",
+                "point_budget": 250_000,
+                "live_point_budget": 100_000,
+                "warmup_size": 256,
+                "warmup_runs": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "checkpoints/unidepth-v2/.ready",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "lpiccinelli/unidepth-v2-vits14",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "lpiccinelli/unidepth-v2-vitb14",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "lpiccinelli/unidepth-v2-vitl14",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
                 ),
             ),
             uses_compute_profile=True,

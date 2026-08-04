@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.models.catalog import DEPTH_PRO_MODEL_ID, MOGE2_MODEL_ID, MOCK_MODEL_ID
+from core.models.catalog import (
+    DEPTH_PRO_MODEL_ID,
+    MOGE2_MODEL_ID,
+    MOCK_MODEL_ID,
+    UNIDEPTH_V2_MODEL_ID,
+)
 from core.models.registry import get_model_descriptor
 from core.models.result import GeometryResult
 from core.models.validation import ModelOutputContractError, normalize_geometry_result
@@ -219,3 +224,23 @@ def test_depth_pro_predicted_and_estimated_intrinsics_semantics() -> None:
     assert estimated.intrinsics is not None
     assert estimated.intrinsics_source == "estimated"
 
+
+
+def test_unidepth_v2_uncertainty_and_geometry_semantics() -> None:
+    result = _result(
+        model_id=UNIDEPTH_V2_MODEL_ID,
+        points=np.zeros((4, 6, 3), dtype=np.float32),
+        intrinsics=np.array(
+            [[500.0, 0.0, 2.5], [0.0, 500.0, 1.5], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        ),
+        confidence=np.full((4, 6), 0.2, dtype=np.float32),
+        valid_mask=np.ones((4, 6), dtype=bool),
+    )
+    normalized = normalize_geometry_result(
+        result, get_model_descriptor(UNIDEPTH_V2_MODEL_ID), _frame()
+    )
+    assert normalized.is_metric is True
+    assert normalized.depth_scale == "metric"
+    assert normalized.intrinsics_source == "model_predicted"
+    assert normalized.confidence_kind == "uncertainty"
