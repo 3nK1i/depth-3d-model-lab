@@ -27,3 +27,8 @@ checkpoints/unidepth-v2/
 # Locally installed Metric3D v2 source and checkpoints.
 third_party/Metric3D/
 checkpoints/metric3d-v2/
+# Locally installed Depth Anything sources and checkpoints.
+third_party/Depth-Anything-V2/
+third_party/Video-Depth-Anything/
+checkpoints/depth-anything-v2/
+checkpoints/video-depth-anything/

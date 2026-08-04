@@ -380,6 +380,224 @@ def build_metric3d_v2_profile_metadata(
     )
 
 
+
+_DEPTH_ANYTHING_V2_PROFILE_VARIANTS: dict[str, dict[str, object]] = {
+    "efficient": {
+        "encoder": "vits",
+        "checkpoint": "checkpoints/depth-anything-v2/depth_anything_v2_vits.pth",
+        "model_label": "Depth Anything V2 Small",
+        "input_size": 518,
+    },
+    "balanced": {
+        "encoder": "vitb",
+        "checkpoint": "checkpoints/depth-anything-v2/depth_anything_v2_vitb.pth",
+        "model_label": "Depth Anything V2 Base",
+        "input_size": 518,
+    },
+    "ultra": {
+        "encoder": "vitl",
+        "checkpoint": "checkpoints/depth-anything-v2/depth_anything_v2_vitl.pth",
+        "model_label": "Depth Anything V2 Large",
+        "input_size": 700,
+    },
+}
+
+
+def _depth_anything_v2_profile_values(resolved_profile: Any) -> tuple[str, dict[str, object]]:
+    effective = str(getattr(getattr(resolved_profile, "effective", None), "value", "efficient"))
+    if effective not in _DEPTH_ANYTHING_V2_PROFILE_VARIANTS:
+        effective = "efficient"
+    return effective, dict(_DEPTH_ANYTHING_V2_PROFILE_VARIANTS[effective])
+
+
+def build_depth_anything_v2_runtime_config(
+    descriptor: ModelDescriptor,
+    context: ModelRuntimeContext,
+) -> dict[str, object]:
+    """Resolve image Depth Anything V2 variants through the registry."""
+
+    resolved = context.resolved_profile
+    if resolved is None or not hasattr(resolved, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved compute profile."
+        )
+    spec = resolved.spec
+    effective, variant = _depth_anything_v2_profile_values(resolved)
+    device = str(getattr(resolved, "device", "cpu"))
+    precision_value = getattr(getattr(resolved, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    config = dict(descriptor.default_config)
+    config.update(variant)
+    config.update(
+        {
+            "profile": effective,
+            "device": device,
+            "precision": precision,
+            "point_budget": max(1, int(spec.point_budget)),
+            "live_point_budget": max(1, int(spec.live_point_budget)),
+            "warmup_size": max(64, int(spec.warmup_size)),
+            "warmup_runs": max(1, int(spec.warmup_runs)),
+            "allow_tf32": bool(spec.allow_tf32),
+            "matmul_precision": str(spec.matmul_precision),
+            "hardware_tier": effective,
+        }
+    )
+    if context.point_budget is not None:
+        config["point_budget"] = max(1, int(context.point_budget))
+    config.update(dict(context.overrides))
+    return validate_runtime_config(config)
+
+
+def build_depth_anything_v2_profile_metadata(
+    descriptor: ModelDescriptor,
+    resolved_profile: Any,
+) -> ModelProfileMetadata:
+    if resolved_profile is None or not hasattr(resolved_profile, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved profile for presentation."
+        )
+    spec = resolved_profile.spec
+    _, variant = _depth_anything_v2_profile_values(resolved_profile)
+    device = str(getattr(resolved_profile, "device", "cpu"))
+    precision_value = getattr(getattr(resolved_profile, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    precision_label = "FP16" if precision == "fp16" else "FP32"
+    tooltip = (
+        f"Automatic Depth Anything V2 selection: {variant['model_label']}, "
+        f"input size {variant['input_size']}, {precision_label}. Output is relative "
+        "depth; 3D scale is arbitrary and measurements are unavailable."
+    )
+    warning = getattr(resolved_profile, "warning", None)
+    if warning:
+        tooltip += f"\nProfile: {warning}"
+    return ModelProfileMetadata(
+        variant_label=str(variant["model_label"]),
+        detail_label=f"{int(variant['input_size'])} px · Relative depth",
+        precision_label=precision_label,
+        point_budget=max(1, int(spec.point_budget)),
+        live_point_budget=max(1, int(spec.live_point_budget)),
+        tooltip=tooltip,
+    )
+
+
+_VIDEO_DEPTH_ANYTHING_PROFILE_VARIANTS: dict[str, dict[str, object]] = {
+    "efficient": {
+        "encoder": "vits",
+        "checkpoint": "checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth",
+        "model_label": "Metric Video Depth Anything Small",
+        "input_size": 392,
+        "max_resolution": 960,
+    },
+    "balanced": {
+        "encoder": "vitb",
+        "checkpoint": "checkpoints/video-depth-anything/metric_video_depth_anything_vitb.pth",
+        "model_label": "Metric Video Depth Anything Base",
+        "input_size": 448,
+        "max_resolution": 1280,
+    },
+    "ultra": {
+        "encoder": "vitl",
+        "checkpoint": "checkpoints/video-depth-anything/metric_video_depth_anything_vitl.pth",
+        "model_label": "Metric Video Depth Anything Large",
+        "input_size": 518,
+        "max_resolution": 1920,
+    },
+}
+
+
+def _video_depth_anything_profile_values(resolved_profile: Any) -> tuple[str, dict[str, object]]:
+    effective = str(getattr(getattr(resolved_profile, "effective", None), "value", "efficient"))
+    if effective not in _VIDEO_DEPTH_ANYTHING_PROFILE_VARIANTS:
+        effective = "efficient"
+    return effective, dict(_VIDEO_DEPTH_ANYTHING_PROFILE_VARIANTS[effective])
+
+
+def build_video_depth_anything_runtime_config(
+    descriptor: ModelDescriptor,
+    context: ModelRuntimeContext,
+) -> dict[str, object]:
+    """Resolve metric streaming VDA variants and conservative cache sizes."""
+
+    resolved = context.resolved_profile
+    if resolved is None or not hasattr(resolved, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved compute profile."
+        )
+    spec = resolved.spec
+    effective, variant = _video_depth_anything_profile_values(resolved)
+    device = str(getattr(resolved, "device", "cpu"))
+    precision_value = getattr(getattr(resolved, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    config = dict(descriptor.default_config)
+    config.update(variant)
+    config.update(
+        {
+            "profile": effective,
+            "device": device,
+            "precision": precision,
+            "point_budget": max(1, int(spec.point_budget)),
+            "live_point_budget": max(1, int(spec.live_point_budget)),
+            "warmup_size": max(64, min(256, int(spec.warmup_size))),
+            "warmup_runs": 1,
+            "allow_tf32": bool(spec.allow_tf32),
+            "matmul_precision": str(spec.matmul_precision),
+            "hardware_tier": effective,
+        }
+    )
+    if context.point_budget is not None:
+        config["point_budget"] = max(1, int(context.point_budget))
+    config.update(dict(context.overrides))
+    return validate_runtime_config(config)
+
+
+def build_video_depth_anything_profile_metadata(
+    descriptor: ModelDescriptor,
+    resolved_profile: Any,
+) -> ModelProfileMetadata:
+    if resolved_profile is None or not hasattr(resolved_profile, "spec"):
+        raise ValueError(
+            f"Model {descriptor.model_id!r} requires a resolved profile for presentation."
+        )
+    spec = resolved_profile.spec
+    _, variant = _video_depth_anything_profile_values(resolved_profile)
+    device = str(getattr(resolved_profile, "device", "cpu"))
+    precision_value = getattr(getattr(resolved_profile, "precision", None), "value", "fp32")
+    precision = str(precision_value).lower()
+    if device.startswith("cpu"):
+        precision = "fp32"
+    elif precision not in {"fp32", "fp16"}:
+        precision = "fp16"
+    precision_label = "FP16" if precision == "fp16" else "FP32"
+    tooltip = (
+        f"Automatic Video Depth Anything selection: {variant['model_label']}, "
+        f"streaming input size {variant['input_size']}, {precision_label}. The "
+        "upstream streaming path is experimental; temporal caches persist through "
+        "Pause/Resume and reset on Stop or source changes."
+    )
+    warning = getattr(resolved_profile, "warning", None)
+    if warning:
+        tooltip += f"\nProfile: {warning}"
+    return ModelProfileMetadata(
+        variant_label=str(variant["model_label"]),
+        detail_label=f"{int(variant['input_size'])} px · Temporal metric",
+        precision_label=precision_label,
+        point_budget=max(1, int(spec.point_budget)),
+        live_point_budget=max(1, int(spec.live_point_budget)),
+        tooltip=tooltip,
+    )
+
 def validate_runtime_config(config: Mapping[str, object]) -> dict[str, object]:
     """Return a picklable primitive config or reject the invalid value early."""
 

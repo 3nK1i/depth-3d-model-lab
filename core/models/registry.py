@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 from core.models.base import BaseGeometryModel
 from core.models.catalog import (
+    DEPTH_ANYTHING_V2_DISPLAY_LABEL,
+    DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_DISPLAY_LABEL,
     DEPTH_PRO_MODEL_ID,
     MOCK_DISPLAY_LABEL,
@@ -27,6 +29,8 @@ from core.models.catalog import (
     METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_DISPLAY_LABEL,
     UNIDEPTH_V2_MODEL_ID,
+    VIDEO_DEPTH_ANYTHING_DISPLAY_LABEL,
+    VIDEO_DEPTH_ANYTHING_MODEL_ID,
 )
 from core.models.metadata import (
     CheckpointSource,
@@ -749,6 +753,246 @@ def _register_builtins() -> None:
                 ),
                 ModelCheckpoint(
                     "JUGGHM/Metric3D:metric_depth_vit_large_800k.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
+            model_id=DEPTH_ANYTHING_V2_MODEL_ID,
+            display_name=DEPTH_ANYTHING_V2_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.depth_anything_v2_adapter:DepthAnythingV2GeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_depth_anything_v2_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_depth_anything_v2_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    points=True,
+                    colors=True,
+                    intrinsics=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.RELATIVE,
+                intrinsics_source=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.NONE,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=True,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-depth-anything-v2.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="torchvision",
+                    distribution="torchvision",
+                    requirement_file="requirements/models-depth-anything-v2.txt",
+                    purpose="Official DINOv2/DPT operations",
+                ),
+                ModelDependency(
+                    import_name="cv2",
+                    distribution="opencv-python",
+                    requirement_file="requirements/models-depth-anything-v2.txt",
+                    purpose="Official image preprocessing",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=2.0,
+                recommended_cuda_vram_gib=6.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "Automatic profiles use ViT-S on RTX 2060, ViT-B on mid-range "
+                    "GPUs, and ViT-L on RTX 5090. Output scale is relative."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "Robust frame-based relative depth. Point-cloud scale is arbitrary "
+                    "and must not be used for metric measurements."
+                ),
+                header_label="DEPTH ANYTHING V2",
+                header_badge_kind="compatible",
+                idle_badge="READY",
+                active_badge="RELATIVE READY",
+            ),
+            license=ModelLicense(
+                name="Mixed: Small Apache-2.0; Base/Large CC BY-NC 4.0",
+                status="variant_dependent_review_required",
+                reference="https://github.com/DepthAnything/Depth-Anything-V2#license",
+            ),
+            default_config={
+                "source_dir": "third_party/Depth-Anything-V2",
+                "checkpoint": "checkpoints/depth-anything-v2/depth_anything_v2_vits.pth",
+                "encoder": "vits",
+                "model_label": "Depth Anything V2 Small",
+                "input_size": 518,
+                "virtual_fov_degrees": 60.0,
+                "point_budget": 250_000,
+                "live_point_budget": 100_000,
+                "warmup_size": 256,
+                "warmup_runs": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "third_party/Depth-Anything-V2/.eia_depth_anything_v2_ready.json",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "checkpoints/depth-anything-v2/.ready",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Depth-Anything-V2-Small:depth_anything_v2_vits.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Depth-Anything-V2-Base:depth_anything_v2_vitb.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Depth-Anything-V2-Large:depth_anything_v2_vitl.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+            ),
+            uses_compute_profile=True,
+        )
+    )
+    MODEL_REGISTRY.register(
+        ModelDescriptor(
+            model_id=VIDEO_DEPTH_ANYTHING_MODEL_ID,
+            display_name=VIDEO_DEPTH_ANYTHING_DISPLAY_LABEL,
+            adapter_path=(
+                "core.models.adapters.video_depth_anything_adapter:VideoDepthAnythingGeometryModel"
+            ),
+            runtime_config_builder=(
+                "core.models.runtime_config:build_video_depth_anything_runtime_config"
+            ),
+            profile_metadata_builder=(
+                "core.models.runtime_config:build_video_depth_anything_profile_metadata"
+            ),
+            capabilities=ModelCapabilities(
+                outputs=ModelOutputs(
+                    depth=True,
+                    points=True,
+                    colors=True,
+                    intrinsics=True,
+                    valid_mask=True,
+                ),
+                depth_scale=DepthScale.METRIC,
+                intrinsics_source=IntrinsicsSource.ESTIMATED,
+                confidence_kind=ConfidenceKind.NONE,
+                source_types=("image", "video", "camera", "rtsp"),
+                supports_live=True,
+                stateful_sequence=True,
+            ),
+            dependencies=(
+                ModelDependency(
+                    import_name="torch",
+                    distribution="torch",
+                    requirement_file="requirements/models-video-depth-anything.txt",
+                    purpose="Tensor inference runtime",
+                ),
+                ModelDependency(
+                    import_name="torchvision",
+                    distribution="torchvision",
+                    requirement_file="requirements/models-video-depth-anything.txt",
+                    purpose="Official temporal DPT operations",
+                ),
+                ModelDependency(
+                    import_name="cv2",
+                    distribution="opencv-python",
+                    requirement_file="requirements/models-video-depth-anything.txt",
+                    purpose="Streaming frame preprocessing",
+                ),
+                ModelDependency(
+                    import_name="einops",
+                    distribution="einops",
+                    requirement_file="requirements/models-video-depth-anything.txt",
+                    purpose="Temporal tensor rearrangement",
+                ),
+            ),
+            hardware=HardwareRequirements(
+                supported_backends=("cpu", "cuda"),
+                minimum_cuda_vram_gib=5.0,
+                recommended_cuda_vram_gib=8.0,
+                supported_precisions=("fp32", "fp16"),
+                notes=(
+                    "Official streaming temporal caches are stateful. RTX 2060 uses "
+                    "the metric ViT-S checkpoint at 392 px; RTX 5090 uses metric ViT-L."
+                ),
+            ),
+            presentation=ModelPresentation(
+                description=(
+                    "Official experimental streaming path for temporally consistent "
+                    "metric depth. Estimated camera intrinsics are used until "
+                    "calibration is available."
+                ),
+                header_label="VIDEO DEPTH ANYTHING",
+                header_badge_kind="compatible",
+                idle_badge="READY",
+                active_badge="TEMPORAL METRIC",
+            ),
+            license=ModelLicense(
+                name="Mixed: Small Apache-2.0; Base/Large CC BY-NC 4.0",
+                status="variant_dependent_review_required",
+                reference="https://github.com/DepthAnything/Video-Depth-Anything#license",
+            ),
+            default_config={
+                "source_dir": "third_party/Video-Depth-Anything",
+                "checkpoint": "checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth",
+                "encoder": "vits",
+                "model_label": "Metric Video Depth Anything Small",
+                "input_size": 392,
+                "max_resolution": 960,
+                "virtual_fov_degrees": 60.0,
+                "max_depth_m": 300.0,
+                "point_budget": 100_000,
+                "live_point_budget": 100_000,
+                "warmup_size": 224,
+                "warmup_runs": 1,
+                "allow_tf32": False,
+                "matmul_precision": "high",
+                "hardware_tier": "efficient",
+            },
+            checkpoints=(
+                ModelCheckpoint(
+                    "third_party/Video-Depth-Anything/.eia_video_depth_anything_ready.json",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "checkpoints/video-depth-anything/.ready",
+                    source=CheckpointSource.LOCAL,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Metric-Video-Depth-Anything-Small:metric_video_depth_anything_vits.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Metric-Video-Depth-Anything-Base:metric_video_depth_anything_vitb.pth",
+                    source=CheckpointSource.REMOTE,
+                    required=False,
+                ),
+                ModelCheckpoint(
+                    "depth-anything/Metric-Video-Depth-Anything-Large:metric_video_depth_anything_vitl.pth",
                     source=CheckpointSource.REMOTE,
                     required=False,
                 ),

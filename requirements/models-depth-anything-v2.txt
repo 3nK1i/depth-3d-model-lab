@@ -1,0 +1,4 @@
+# Depth Anything V2 optional runtime.
+# Keep the project's existing CUDA PyTorch, Torchvision, OpenCV, and NumPy builds.
+huggingface-hub>=0.22,<2
+matplotlib>=3.8,<4

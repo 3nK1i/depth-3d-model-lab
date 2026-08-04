@@ -6,11 +6,13 @@ import numpy as np
 import pytest
 
 from core.models.catalog import (
+    DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
     METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_MODEL_ID,
+    VIDEO_DEPTH_ANYTHING_MODEL_ID,
 )
 from core.models.registry import get_model_descriptor
 from core.models.result import GeometryResult
@@ -271,3 +273,38 @@ def test_metric3d_v2_metric_normals_confidence_and_estimated_intrinsics() -> Non
     assert normalized.confidence_kind == "confidence"
     assert normalized.normals is not None
     assert normalized.colors is not None
+
+
+
+def test_depth_anything_v2_relative_geometry_semantics() -> None:
+    result = _result(
+        model_id=DEPTH_ANYTHING_V2_MODEL_ID,
+        points=np.zeros((2, 3, 3), dtype=np.float32),
+        colors=np.zeros((2, 3, 3), dtype=np.uint8),
+        intrinsics=np.eye(3, dtype=np.float32),
+        valid_mask=np.ones((4, 6), dtype=bool),
+        point_stride=2,
+    )
+    normalized = normalize_geometry_result(
+        result, get_model_descriptor(DEPTH_ANYTHING_V2_MODEL_ID), _frame()
+    )
+    assert normalized.is_metric is False
+    assert normalized.depth_scale == "relative"
+    assert normalized.intrinsics_source == "estimated"
+
+
+def test_video_depth_anything_metric_stateful_geometry_semantics() -> None:
+    descriptor = get_model_descriptor(VIDEO_DEPTH_ANYTHING_MODEL_ID)
+    assert descriptor.capabilities.stateful_sequence is True
+    result = _result(
+        model_id=VIDEO_DEPTH_ANYTHING_MODEL_ID,
+        points=np.zeros((2, 3, 3), dtype=np.float32),
+        colors=np.zeros((2, 3, 3), dtype=np.uint8),
+        intrinsics=np.eye(3, dtype=np.float32),
+        valid_mask=np.ones((4, 6), dtype=bool),
+        point_stride=2,
+    )
+    normalized = normalize_geometry_result(result, descriptor, _frame())
+    assert normalized.is_metric is True
+    assert normalized.depth_scale == "metric"
+    assert normalized.intrinsics_source == "estimated"

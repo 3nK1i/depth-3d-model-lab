@@ -6,11 +6,13 @@ from app.widgets.settings_panel import SettingsPanel
 from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile
 from core.models.catalog import (
+    DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
     METRIC3D_V2_MODEL_ID,
     UNIDEPTH_V2_MODEL_ID,
+    VIDEO_DEPTH_ANYTHING_MODEL_ID,
 )
 
 
@@ -219,3 +221,35 @@ def test_metric3d_v2_selection_uses_large_profile_on_rtx5090(qtbot) -> None:
     assert panel.model_runtime_config["checkpoint"].endswith("metric_depth_vit_large_800k.pth")
     assert panel.point_budget == 1_000_000
     assert panel.live_point_budget == 500_000
+
+
+
+def test_depth_anything_v2_selection_uses_small_profile_on_rtx2060(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=_MemorySettings(model_id=DEPTH_ANYTHING_V2_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+    assert panel._model_combo.currentText() == "Depth Anything V2"
+    assert panel._model_variant.currentText() == "Depth Anything V2 Small"
+    assert panel._resolution.currentText() == "518 px · Relative depth"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["encoder"] == "vits"
+    assert panel.model_runtime_config["input_size"] == 518
+    assert panel.point_budget == 250_000
+    assert panel.live_point_budget == 100_000
+
+
+def test_video_depth_anything_selection_uses_streaming_small_profile_on_rtx2060(qtbot) -> None:
+    panel = SettingsPanel(
+        hardware_info=_gpu("NVIDIA GeForce RTX 2060", 6.0, (7, 5)),
+        app_settings=_MemorySettings(model_id=VIDEO_DEPTH_ANYTHING_MODEL_ID),
+    )
+    qtbot.addWidget(panel)
+    assert panel._model_combo.currentText() == "Video Depth Anything"
+    assert panel._model_variant.currentText() == "Metric Video Depth Anything Small"
+    assert panel._resolution.currentText() == "392 px · Temporal metric"
+    assert panel._precision.currentText() == "FP16"
+    assert panel.model_runtime_config["encoder"] == "vits"
+    assert panel.model_runtime_config["max_resolution"] == 960
+    assert panel.live_point_budget == 100_000

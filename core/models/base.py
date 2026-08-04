@@ -29,6 +29,16 @@ class BaseGeometryModel(ABC):
     def infer(self, frame: FrameRequest) -> GeometryResult:
         """Run one frame and return the normalized geometry result contract."""
 
+    def reset_sequence(self) -> dict[str, Any] | None:
+        """Reset optional temporal state while keeping model weights loaded.
+
+        Stateless Phase 5/6 adapters inherit this no-op implementation. Stateful
+        adapters override it. The generic worker calls it on STOP, so temporal
+        caches never leak into a restarted source session.
+        """
+
+        return None
+
     @abstractmethod
     def unload(self) -> dict[str, Any] | None:
         """Release resources and optionally return primitive cleanup telemetry."""

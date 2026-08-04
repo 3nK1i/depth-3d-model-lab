@@ -11,16 +11,20 @@ import pytest
 from core.hardware.gpu_info import AcceleratorBackend, HardwareInfo
 from core.hardware.profiles import ComputeProfile, resolve_profile
 from core.models.adapters.depth_pro_adapter import DepthProGeometryModel
+from core.models.adapters.depth_anything_v2_adapter import DepthAnythingV2GeometryModel
 from core.models.adapters.mock_adapter import MockGeometryModel
 from core.models.adapters.metric3d_v2_adapter import Metric3DV2GeometryModel
 from core.models.adapters.unidepth_v2_adapter import UniDepthV2GeometryModel
+from core.models.adapters.video_depth_anything_adapter import VideoDepthAnythingGeometryModel
 from core.models.catalog import (
+    DEPTH_ANYTHING_V2_MODEL_ID,
     DEPTH_PRO_MODEL_ID,
     MOGE2_MODEL_ID,
     MOCK_MODEL_ID,
     METRIC3D_V2_MODEL_ID,
     SUPPORTED_MODEL_IDS,
     UNIDEPTH_V2_MODEL_ID,
+    VIDEO_DEPTH_ANYTHING_MODEL_ID,
 )
 from core.models.metadata import (
     CheckpointSource,
@@ -108,6 +112,8 @@ def test_worker_factory_builds_adapters_lazily_through_registry() -> None:
     assert isinstance(build_model(DEPTH_PRO_MODEL_ID), DepthProGeometryModel)
     assert isinstance(build_model(UNIDEPTH_V2_MODEL_ID), UniDepthV2GeometryModel)
     assert isinstance(build_model(METRIC3D_V2_MODEL_ID), Metric3DV2GeometryModel)
+    assert isinstance(build_model(DEPTH_ANYTHING_V2_MODEL_ID), DepthAnythingV2GeometryModel)
+    assert isinstance(build_model(VIDEO_DEPTH_ANYTHING_MODEL_ID), VideoDepthAnythingGeometryModel)
     with pytest.raises(UnknownModelError, match="Unknown model id"):
         build_model("not-registered")
 
@@ -490,3 +496,91 @@ def test_metric3d_v2_availability_requires_source_and_checkpoint_markers(
     availability = check_model_availability(METRIC3D_V2_MODEL_ID, _gpu())
     assert availability.available is True
     assert availability.checkpoint_status == "managed_remote"
+
+
+
+def test_depth_anything_v2_registry_contract_and_profile_dispatch() -> None:
+    descriptor = get_model_descriptor(DEPTH_ANYTHING_V2_MODEL_ID)
+    assert descriptor.capabilities.is_metric is False
+    assert descriptor.capabilities.depth_scale is DepthScale.RELATIVE
+    assert descriptor.capabilities.outputs.depth is True
+    assert descriptor.capabilities.outputs.points is True
+    assert descriptor.capabilities.outputs.colors is True
+    assert descriptor.capabilities.outputs.intrinsics is True
+    assert descriptor.capabilities.intrinsics_source.value == "estimated"
+    assert descriptor.capabilities.stateful_sequence is False
+    assert descriptor.license.status == "variant_dependent_review_required"
+
+    efficient = resolve_profile(ComputeProfile.AUTO, _gpu(6.0))
+    config = resolve_model_runtime_config(
+        DEPTH_ANYTHING_V2_MODEL_ID,
+        ModelRuntimeContext(resolved_profile=efficient, point_budget=123_456),
+    )
+    assert config["encoder"] == "vits"
+    assert config["checkpoint"].endswith("depth_anything_v2_vits.pth")
+    assert config["input_size"] == 518
+    assert config["precision"] == "fp16"
+    assert config["point_budget"] == 123_456
+    metadata = resolve_model_profile_metadata(DEPTH_ANYTHING_V2_MODEL_ID, efficient)
+    assert metadata.variant_label == "Depth Anything V2 Small"
+    assert metadata.detail_label == "518 px · Relative depth"
+
+
+def test_video_depth_anything_registry_contract_and_profile_dispatch() -> None:
+    descriptor = get_model_descriptor(VIDEO_DEPTH_ANYTHING_MODEL_ID)
+    assert descriptor.capabilities.is_metric is True
+    assert descriptor.capabilities.depth_scale is DepthScale.METRIC
+    assert descriptor.capabilities.outputs.points is True
+    assert descriptor.capabilities.outputs.colors is True
+    assert descriptor.capabilities.outputs.intrinsics is True
+    assert descriptor.capabilities.intrinsics_source.value == "estimated"
+    assert descriptor.capabilities.stateful_sequence is True
+    assert descriptor.capabilities.supports_live is True
+    assert descriptor.license.status == "variant_dependent_review_required"
+
+    efficient = resolve_profile(ComputeProfile.AUTO, _gpu(6.0))
+    config = resolve_model_runtime_config(
+        VIDEO_DEPTH_ANYTHING_MODEL_ID,
+        ModelRuntimeContext(resolved_profile=efficient, point_budget=77_777),
+    )
+    assert config["encoder"] == "vits"
+    assert config["checkpoint"].endswith("metric_video_depth_anything_vits.pth")
+    assert config["input_size"] == 392
+    assert config["max_resolution"] == 960
+    assert config["point_budget"] == 77_777
+    metadata = resolve_model_profile_metadata(VIDEO_DEPTH_ANYTHING_MODEL_ID, efficient)
+    assert metadata.variant_label == "Metric Video Depth Anything Small"
+    assert metadata.detail_label == "392 px · Temporal metric"
+
+
+def test_depth_anything_ultra_profiles_select_large_variants() -> None:
+    hardware = _gpu(32.0)
+    hardware = HardwareInfo(
+        backend=hardware.backend,
+        device=hardware.device,
+        device_index=hardware.device_index,
+        name="NVIDIA GeForce RTX 5090",
+        total_memory_bytes=hardware.total_memory_bytes,
+        free_memory_bytes=hardware.free_memory_bytes,
+        compute_capability=(12, 0),
+        supports_fp16=True,
+        supports_bf16=True,
+        torch_available=True,
+        torch_cuda_available=True,
+        torch_version="test",
+        torch_cuda_version="test",
+        compiled_architectures=("sm_120",),
+        torch_build_compatible=True,
+    )
+    ultra = resolve_profile(ComputeProfile.AUTO, hardware)
+    image = resolve_model_runtime_config(
+        DEPTH_ANYTHING_V2_MODEL_ID, ModelRuntimeContext(resolved_profile=ultra)
+    )
+    video = resolve_model_runtime_config(
+        VIDEO_DEPTH_ANYTHING_MODEL_ID, ModelRuntimeContext(resolved_profile=ultra)
+    )
+    assert image["encoder"] == "vitl"
+    assert image["input_size"] == 700
+    assert video["encoder"] == "vitl"
+    assert video["input_size"] == 518
+    assert video["max_resolution"] == 1920

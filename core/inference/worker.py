@@ -39,6 +39,12 @@ def _build_model(model_id: str) -> BaseGeometryModel:
     return build_model(model_id)
 
 
+def _reset_model_sequence(model: BaseGeometryModel) -> dict[str, Any]:
+    """Reset optional adapter temporal state without knowing the model family."""
+
+    return dict(model.reset_sequence() or {})
+
+
 def worker_main(
     control_conn: Connection,
     frame_queue: MPQueue,
@@ -227,7 +233,30 @@ def worker_main(
                 paused = True
                 _drain(frame_queue)
                 _drain(result_queue)
-                control_conn.send(Ack(command.type, True))
+                metadata: dict[str, Any] = {}
+                failure = None
+                message = ""
+                if active_model is not None:
+                    try:
+                        metadata = _reset_model_sequence(active_model)
+                    except Exception as exc:  # noqa: BLE001 - preserve worker lifecycle
+                        logger.exception("Model sequence reset failed during STOP")
+                        message = str(exc)
+                        failure = classify_failure(
+                            exc,
+                            stage=FailureStage.INFERENCE,
+                            model_id=active_model_id or "",
+                        )
+                control_conn.send(
+                    Ack(
+                        command.type,
+                        failure is None,
+                        message,
+                        model_id=active_model_id or "",
+                        metadata=metadata,
+                        failure=failure,
+                    )
+                )
 
             elif command.type == CommandType.SHUTDOWN:
                 message = ""

@@ -1,0 +1,11 @@
+# Video Depth Anything optional streaming runtime.
+# Deliberately do not install the upstream pins for torch/torchvision/xformers;
+# they would replace the project's validated CUDA stack.
+huggingface-hub>=0.22,<2
+einops>=0.7,<1
+easydict>=1.13,<2
+imageio>=2.34,<3
+imageio-ffmpeg>=0.4.9,<1
+matplotlib>=3.8,<4
+Pillow>=10,<12
+tqdm>=4.66,<5
