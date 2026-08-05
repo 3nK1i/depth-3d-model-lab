@@ -31,6 +31,7 @@ from app.benchmark_controller import (
 from app.inference_controller import InferenceController
 from app.settings import AppSettings
 from app.snapshot_controller import SnapshotController, SnapshotRunState
+from app.stable_video_controller import StableVideoController, StableVideoRunState
 from app.theme import (
     BODY_SPACING,
     PAGE_MARGIN_BOTTOM,
@@ -47,8 +48,10 @@ from app.widgets.original_view import OriginalSourceView
 from app.widgets.performance_bar import PerformanceBar
 from app.widgets.settings_panel import SettingsPanel
 from app.widgets.snapshot_page import SnapshotPage
+from app.widgets.stable_video_page import StableVideoPage
 from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
+from core.models.registry import get_model_descriptor
 from core.runtime.state_machine import ApplicationState
 
 MIN_WINDOW_WIDTH = 1366
@@ -105,13 +108,45 @@ class MainWindow(QMainWindow):
         self._benchmark_controller.log_received.connect(self._benchmark_page.append_log)
         self._benchmark_controller.results_ready.connect(self._benchmark_page.set_results)
         self._snapshot_controller = SnapshotController(Path(__file__).resolve().parents[1], self)
+        self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
         self._snapshot_frame: np.ndarray | None = None
+        self._stable_previous_smoothing: float | None = None
         self._snapshot_page.capture_requested.connect(self._capture_snapshot_frame)
         self._snapshot_page.run_requested.connect(self._run_snapshot)
         self._snapshot_page.cancel_requested.connect(self._snapshot_controller.cancel)
         self._snapshot_controller.state_changed.connect(self._on_snapshot_state_changed)
         self._snapshot_controller.log_received.connect(self._snapshot_page.append_log)
         self._snapshot_controller.result_ready.connect(self._snapshot_page.show_result)
+        self._stable_video_page.start_requested.connect(self._start_stable_video)
+        self._stable_video_page.pause_resume_requested.connect(self._pause_resume_stable_video)
+        self._stable_video_page.stop_requested.connect(self._stop_stable_video)
+        self._stable_video_page.stabilization_changed.connect(
+            self._settings_panel.set_temporal_smoothing
+        )
+        self._stable_video_controller.state_changed.connect(
+            self._stable_video_page.apply_state
+        )
+        self._stable_video_controller.log_received.connect(
+            self._stable_video_page.append_log
+        )
+        self._stable_video_controller.result_ready.connect(
+            self._stable_video_page.show_result
+        )
+        self._stable_video_controller.statistics_changed.connect(
+            self._stable_video_page.update_statistics
+        )
+        self._stable_video_controller.export_ready.connect(
+            self._stable_video_page.set_export_dir
+        )
+        self._inference_controller.frame_rendered.connect(
+            self._stable_video_controller.consume_result
+        )
+        self._inference_controller.state_machine.state_changed.connect(
+            self._on_stable_runtime_state_changed
+        )
+        self._controller.source_type_changed.connect(
+            lambda _source: self._on_stable_sequence_reset("source changed")
+        )
         self._mode_tabs.mode_changed.connect(self._on_mode_changed)
         self._inference_controller.state_machine.state_changed.connect(
             self._refresh_benchmark_safety
@@ -141,8 +176,10 @@ class MainWindow(QMainWindow):
         self._page = self._build_page()
         self._benchmark_page = BenchmarkPage()
         self._snapshot_page = SnapshotPage()
+        self._stable_video_page = StableVideoPage()
         self._mode_stack = QStackedWidget()
         self._mode_stack.addWidget(self._page)
+        self._mode_stack.addWidget(self._stable_video_page)
         self._mode_stack.addWidget(self._snapshot_page)
         self._mode_stack.addWidget(self._benchmark_page)
         outer.addWidget(self._mode_stack, stretch=1)
@@ -256,6 +293,11 @@ class MainWindow(QMainWindow):
         if mode is AppMode.LIVE_3D:
             self._mode_stack.setCurrentWidget(self._page)
             return
+        if mode is AppMode.STABLE_VIDEO:
+            self._exit_focus_mode()
+            self._refresh_stable_video_context()
+            self._mode_stack.setCurrentWidget(self._stable_video_page)
+            return
         if mode is AppMode.SNAPSHOT:
             self._exit_focus_mode()
             self._snapshot_page.set_model(self._settings_panel.selected_model_label)
@@ -265,6 +307,111 @@ class MainWindow(QMainWindow):
             self._exit_focus_mode()
             self._refresh_benchmark_safety()
             self._mode_stack.setCurrentWidget(self._benchmark_page)
+
+    def _refresh_stable_video_context(self) -> None:
+        descriptor = get_model_descriptor(self._settings_panel.selected_model_id)
+        self._stable_video_page.set_model(
+            self._settings_panel.selected_model_label,
+            native_temporal=descriptor.capabilities.stateful_sequence,
+        )
+        eligible = (
+            self._controller.active_source is not None
+            and self._controller.is_stream_source
+            and self._inference_controller.current_state in {
+                ApplicationState.SOURCE_READY,
+                ApplicationState.MODEL_READY,
+                ApplicationState.RESULT_READY,
+            }
+        )
+        reason = "" if eligible else (
+            "Connect a Video, USB Camera, or RTSP source in Live 3D first. "
+            "Static images belong in Snapshot Mode."
+        )
+        self._stable_video_page.set_source_eligible(eligible, reason)
+
+    def _start_stable_video(self) -> None:
+        if self._benchmark_controller.is_running or self._snapshot_controller.is_running:
+            self._stable_video_page.append_log(
+                "Stop the active Benchmark or Snapshot job before Stable Video."
+            )
+            return
+        if self._controller.active_source is None or not self._controller.is_stream_source:
+            self._refresh_stable_video_context()
+            return
+        state = self._inference_controller.current_state
+        if state not in {
+            ApplicationState.SOURCE_READY,
+            ApplicationState.MODEL_READY,
+            ApplicationState.RESULT_READY,
+        }:
+            self._stable_video_page.append_log(
+                "Stable Video requires a connected, idle continuous source."
+            )
+            return
+        descriptor = get_model_descriptor(self._settings_panel.selected_model_id)
+        strength = self._stable_video_page.smoothing_strength
+        self._stable_previous_smoothing = self._settings_panel.temporal_smoothing
+        self._settings_panel.set_temporal_smoothing(strength)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        output = Path.cwd() / "outputs" / "stable_video" / f"stable_video_{stamp}"
+        temporal_mode = (
+            "native_temporal_cache_plus_smoothing"
+            if descriptor.capabilities.stateful_sequence
+            else "generic_geometry_smoothing"
+        )
+        try:
+            self._stable_video_controller.begin(
+                output_dir=output,
+                model_id=descriptor.model_id,
+                model_name=descriptor.display_name,
+                temporal_mode=temporal_mode,
+                smoothing_strength=strength,
+                export_enabled=self._stable_video_page.export_enabled,
+                export_numeric_depth=self._stable_video_page.export_numeric_depth,
+                export_fps=self._stable_video_page.export_fps,
+            )
+            self._mode_tabs.set_navigation_locked(True)
+            self._inference_controller.start_inference()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._stable_video_page.append_log(f"Stable Video could not start: {exc}")
+            self._stable_video_controller.abort()
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _pause_resume_stable_video(self) -> None:
+        state = self._inference_controller.current_state
+        if state not in {ApplicationState.RUNNING, ApplicationState.PAUSED}:
+            return
+        self._inference_controller.pause_or_resume_inference()
+
+    def _stop_stable_video(self) -> None:
+        self._inference_controller.stop_inference()
+        self._stable_video_controller.finish(completed=True)
+        if self._stable_previous_smoothing is not None:
+            self._settings_panel.set_temporal_smoothing(self._stable_previous_smoothing)
+            self._stable_previous_smoothing = None
+        self._mode_tabs.set_navigation_locked(False)
+        self._refresh_stable_video_context()
+
+    def _on_stable_runtime_state_changed(self, _old: object, new: ApplicationState) -> None:
+        if not self._stable_video_controller.is_active:
+            self._refresh_stable_video_context()
+            return
+        if new is ApplicationState.RUNNING:
+            self._stable_video_controller.mark_running()
+        elif new is ApplicationState.PAUSED:
+            self._stable_video_controller.mark_paused()
+        elif new is ApplicationState.RECOVERING_WORKER:
+            self._on_stable_sequence_reset(new.value)
+        elif new is ApplicationState.ERROR:
+            self._stable_video_controller.fail("Stable Video stopped because the inference runtime entered ERROR.")
+            if self._stable_previous_smoothing is not None:
+                self._settings_panel.set_temporal_smoothing(self._stable_previous_smoothing)
+                self._stable_previous_smoothing = None
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _on_stable_sequence_reset(self, reason: str) -> None:
+        if self._stable_video_controller.is_active:
+            self._stable_video_controller.mark_reset(reason)
 
     def _capture_snapshot_frame(self) -> None:
         frame = self._controller.latest_source_frame
@@ -473,6 +620,7 @@ class MainWindow(QMainWindow):
             self._set_focus_target(None)
         self._benchmark_controller.shutdown()
         self._snapshot_controller.shutdown()
+        self._stable_video_controller.shutdown()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()

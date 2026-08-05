@@ -575,6 +575,17 @@ class SettingsPanel(QFrame):
     def temporal_smoothing(self) -> float:
         return self._temporal_smoothing_slider.value() / 100.0
 
+    def set_temporal_smoothing(self, strength: float) -> None:
+        """Set the generic temporal smoother from an operational mode.
+
+        The value remains owned by the shared settings panel so Live 3D and
+        Stable Video use the same model-agnostic smoothing implementation.
+        """
+        value = int(round(max(0.0, min(0.95, float(strength))) * 100.0))
+        if self._temporal_smoothing_slider.value() == value:
+            return
+        self._temporal_smoothing_slider.setValue(value)
+
     @property
     def background_removal_enabled(self) -> bool:
         return self._bg_removal.isChecked()

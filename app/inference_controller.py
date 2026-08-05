@@ -99,6 +99,7 @@ class InferenceController(QObject):
     """Drive model lifecycle, live backpressure, and geometry rendering."""
 
     viewport_escape_requested = pyqtSignal()
+    frame_rendered = pyqtSignal(object, object, object)
 
     def __init__(
         self,
@@ -442,6 +443,22 @@ class InferenceController(QObject):
             max(0.0, used_gib),
             max(0.0, total_gib),
         )
+
+    # -- Public operational-mode facade ---------------------------------
+
+    @property
+    def current_state(self) -> ApplicationState:
+        return self._state_machine.state
+
+    def start_inference(self) -> None:
+        self._on_start_clicked()
+
+    def pause_or_resume_inference(self) -> None:
+        self._on_pause_resume_clicked()
+
+    def stop_inference(self) -> None:
+        if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
+            self._on_stop_clicked()
 
     # -- Runtime toolbar handlers ----------------------------------------
 
@@ -1030,6 +1047,11 @@ class InferenceController(QObject):
             geometry=geometry,
             pipeline_latency_ms=pipeline_latency_ms,
             source_to_render_ms=source_to_render_ms,
+        )
+        self.frame_rendered.emit(
+            self._cached_render_result or result,
+            rgb,
+            self._performance_bar.snapshot,
         )
 
         if not self._app_controller.is_stream_source:

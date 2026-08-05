@@ -37,3 +37,6 @@ checkpoints/video-depth-anything/
 
 # Locally downloaded Marigold Diffusers snapshot.
 checkpoints/marigold/
+
+# Stable Video exports.
+outputs/stable_video/
