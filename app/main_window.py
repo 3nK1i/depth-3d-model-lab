@@ -8,6 +8,11 @@ Phase 1 demo lifecycle that used to live here has been fully replaced.
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
+import numpy as np
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -25,6 +30,7 @@ from app.benchmark_controller import (
 )
 from app.inference_controller import InferenceController
 from app.settings import AppSettings
+from app.snapshot_controller import SnapshotController, SnapshotRunState
 from app.theme import (
     BODY_SPACING,
     PAGE_MARGIN_BOTTOM,
@@ -40,6 +46,7 @@ from app.widgets.mode_tabs import AppMode, ModeTabs
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.performance_bar import PerformanceBar
 from app.widgets.settings_panel import SettingsPanel
+from app.widgets.snapshot_page import SnapshotPage
 from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
 from core.runtime.state_machine import ApplicationState
@@ -97,6 +104,14 @@ class MainWindow(QMainWindow):
         self._benchmark_controller.event_received.connect(self._benchmark_page.handle_event)
         self._benchmark_controller.log_received.connect(self._benchmark_page.append_log)
         self._benchmark_controller.results_ready.connect(self._benchmark_page.set_results)
+        self._snapshot_controller = SnapshotController(Path(__file__).resolve().parents[1], self)
+        self._snapshot_frame: np.ndarray | None = None
+        self._snapshot_page.capture_requested.connect(self._capture_snapshot_frame)
+        self._snapshot_page.run_requested.connect(self._run_snapshot)
+        self._snapshot_page.cancel_requested.connect(self._snapshot_controller.cancel)
+        self._snapshot_controller.state_changed.connect(self._on_snapshot_state_changed)
+        self._snapshot_controller.log_received.connect(self._snapshot_page.append_log)
+        self._snapshot_controller.result_ready.connect(self._snapshot_page.show_result)
         self._mode_tabs.mode_changed.connect(self._on_mode_changed)
         self._inference_controller.state_machine.state_changed.connect(
             self._refresh_benchmark_safety
@@ -125,8 +140,10 @@ class MainWindow(QMainWindow):
 
         self._page = self._build_page()
         self._benchmark_page = BenchmarkPage()
+        self._snapshot_page = SnapshotPage()
         self._mode_stack = QStackedWidget()
         self._mode_stack.addWidget(self._page)
+        self._mode_stack.addWidget(self._snapshot_page)
         self._mode_stack.addWidget(self._benchmark_page)
         outer.addWidget(self._mode_stack, stretch=1)
 
@@ -239,10 +256,57 @@ class MainWindow(QMainWindow):
         if mode is AppMode.LIVE_3D:
             self._mode_stack.setCurrentWidget(self._page)
             return
+        if mode is AppMode.SNAPSHOT:
+            self._exit_focus_mode()
+            self._snapshot_page.set_model(self._settings_panel.selected_model_label)
+            self._mode_stack.setCurrentWidget(self._snapshot_page)
+            return
         if mode is AppMode.BENCHMARK:
             self._exit_focus_mode()
             self._refresh_benchmark_safety()
             self._mode_stack.setCurrentWidget(self._benchmark_page)
+
+    def _capture_snapshot_frame(self) -> None:
+        frame = self._controller.latest_source_frame
+        if frame is None:
+            self._snapshot_page.append_log(
+                "No source frame is available. Connect or load a source in Live 3D first."
+            )
+            return
+        self._snapshot_frame = np.array(frame.image, dtype=np.uint8, copy=True)
+        self._snapshot_page.set_model(self._settings_panel.selected_model_label)
+        self._snapshot_page.set_captured_frame(self._snapshot_frame)
+
+    def _run_snapshot(self) -> None:
+        if self._snapshot_frame is None:
+            self._snapshot_page.append_log("Capture a frame before running Snapshot Mode.")
+            return
+        if self._benchmark_controller.is_running:
+            self._snapshot_page.append_log("Stop the active benchmark before running a snapshot.")
+            return
+        state = self._inference_controller.state_machine.state
+        if state not in {ApplicationState.DISCONNECTED, ApplicationState.SOURCE_READY}:
+            self._snapshot_page.append_log(
+                "Stop Live 3D inference before running isolated snapshot inference."
+            )
+            return
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        output = Path.cwd() / "outputs" / "snapshots" / f"snapshot_{stamp}"
+        try:
+            self._snapshot_controller.start(
+                image=self._snapshot_frame,
+                model_id=self._settings_panel.selected_model_id,
+                config=dict(self._settings_panel.model_runtime_config),
+                output_dir=output,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._snapshot_page.append_log(f"Snapshot could not start: {exc}")
+            self._snapshot_page.apply_state(SnapshotRunState.FAILED)
+
+    def _on_snapshot_state_changed(self, state: SnapshotRunState) -> None:
+        self._snapshot_page.apply_state(state)
+        running = state in {SnapshotRunState.RUNNING, SnapshotRunState.CANCELLING}
+        self._mode_tabs.set_navigation_locked(running)
 
     def _on_benchmark_run_requested(
         self, configuration: BenchmarkRunConfiguration
@@ -408,6 +472,7 @@ class MainWindow(QMainWindow):
         if self._focus_target is not None:
             self._set_focus_target(None)
         self._benchmark_controller.shutdown()
+        self._snapshot_controller.shutdown()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()

@@ -92,8 +92,8 @@ def test_minimum_resolution_supported(window):
     assert window.size().height() >= 768
 
 
-def test_live_3d_and_benchmark_modes_are_enabled(window):
-    enabled = {AppMode.LIVE_3D, AppMode.BENCHMARK}
+def test_live_3d_snapshot_and_benchmark_modes_are_enabled(window):
+    enabled = {AppMode.LIVE_3D, AppMode.SNAPSHOT, AppMode.BENCHMARK}
     for mode, btn in window._mode_tabs._buttons.items():
         assert btn.isEnabled() is (mode in enabled)
 

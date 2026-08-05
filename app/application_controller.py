@@ -77,6 +77,7 @@ class ApplicationController(QObject):
         # at a smooth, bounded 30 FPS. The raw SourceFrame still reaches the
         # inference controller immediately through ``frame_captured``.
         self._latest_preview_frame: SourceFrame | None = None
+        self._latest_source_frame: SourceFrame | None = None
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(_PREVIEW_INTERVAL_MS)
         self._preview_timer.timeout.connect(self._present_latest_preview)
@@ -148,6 +149,7 @@ class ApplicationController(QObject):
         self._original_view.set_live(False)
         self._original_view.clear_frame()
         self._latest_preview_frame = None
+        self._latest_source_frame = None
         self._reset_capture_fps()
 
     # -- Browse handlers -----------------------------------------------------
@@ -244,6 +246,7 @@ class ApplicationController(QObject):
         source.start()
 
     def _on_frame_ready(self, frame: SourceFrame) -> None:
+        self._latest_source_frame = frame
         if self._shutdown_started:
             return
         if self.is_stream_source:
@@ -301,6 +304,16 @@ class ApplicationController(QObject):
         if self._shutdown_started:
             return
         logger.error("Source error: %s", message)
+
+
+    @property
+    def latest_source_frame(self) -> SourceFrame | None:
+        """Newest captured source frame for Snapshot Mode.
+
+        The frame object is immutable by contract; callers must copy its image
+        before asynchronous processing.
+        """
+        return self._latest_source_frame
 
     def shutdown(self) -> None:
         """Stop capture activity and the one-shot device probe exactly once."""

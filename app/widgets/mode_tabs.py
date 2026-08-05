@@ -1,6 +1,6 @@
 """Primary navigation: Live 3D / Stable Video / Snapshot / Reconstruction / Benchmark.
 
-Live 3D and Benchmark are functional. Future modes remain visible but disabled
+Live 3D, Snapshot, and Benchmark are functional. Future modes remain visible but disabled
 so the architecture reads as extensible without pretending unfinished modes work.
 """
 
@@ -29,7 +29,7 @@ _MODE_LABELS: dict[AppMode, str] = {
 }
 
 # Modes not yet implemented remain visible but disabled, per spec §3.
-_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.BENCHMARK}
+_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.SNAPSHOT, AppMode.BENCHMARK}
 
 
 class ModeTabs(QFrame):

@@ -1,0 +1,40 @@
+{
+  "model_id": "moge-2",
+  "model_name": "MoGe-2 ViT-S Normal",
+  "precision": "FP16",
+  "depth_scale": "metric",
+  "is_metric": true,
+  "intrinsics_source": "model_predicted",
+  "confidence_kind": "none",
+  "latency_ms": 87.84671783447266,
+  "preprocess_ms": 6.921462991158478,
+  "postprocess_ms": 4.376347991637886,
+  "worker_total_ms": 99.33938599715475,
+  "point_stride": 2,
+  "rgb_shape": [
+    576,
+    1024,
+    3
+  ],
+  "depth_shape": [
+    576,
+    1024
+  ],
+  "intrinsics": [
+    [
+      1.0815538167953491,
+      0.0,
+      0.5
+    ],
+    [
+      0.0,
+      1.9227622747421265,
+      0.5
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ]
+}
