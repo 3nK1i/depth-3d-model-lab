@@ -29,8 +29,9 @@ def test_confidence_validity_is_semantic_and_does_not_threshold_quality():
     assert np.array_equal(valid_uncertainty, np.array([[1, 1], [0, 0]], bool))
 
 
-def test_absent_confidence_produces_explicit_false_validity_map():
+def test_absent_confidence_keeps_pixels_eligible_without_confidence_filtering():
     valid = compose_confidence_valid_mask(None, ConfidenceKind.NONE, (2, 3))
-    assert not np.any(valid)
+    assert np.all(valid)
+    assert not valid.flags.writeable
     with pytest.raises(ContractValidationError):
         compose_confidence_valid_mask(None, ConfidenceKind.CONFIDENCE, (2, 3))

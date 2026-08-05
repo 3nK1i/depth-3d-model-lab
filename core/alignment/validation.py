@@ -33,8 +33,12 @@ def compose_confidence_valid_mask(
             raise ContractValidationError(
                 "confidence is required when confidence_kind is not NONE."
             )
+        # No confidence output means there is no confidence-based restriction.
+        # The validity map therefore keeps every pixel eligible; depth validity
+        # remains authoritative and later policies may apply explicit thresholds
+        # only when confidence/uncertainty values actually exist.
         return readonly_array(
-            np.zeros(shape, dtype=np.bool_),
+            np.ones(shape, dtype=np.bool_),
             field_name="confidence_valid_mask",
             dtype=np.bool_,
             shape=shape,

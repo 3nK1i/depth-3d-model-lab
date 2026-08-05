@@ -119,6 +119,8 @@ class RejectionReason(str, Enum):
     FITTING_FAILED = "shape_or_box_fitting_failed"
     INVALID_COORDINATE_FRAME = "invalid_coordinate_frame_relationship"
     MASK_UNAVAILABLE = "validated_mask_unavailable"
+    AMBIGUOUS_ORIENTATION = "ambiguous_orientation"
+    MEASUREMENT_INPUT_UNAVAILABLE = "measurement_input_unavailable"
     OTHER = "other"
 
 
@@ -133,6 +135,18 @@ _NONNEGATIVE_MEASUREMENTS = {
     MeasurementKind.HEIGHT,
     MeasurementKind.DEPTH,
     MeasurementKind.CAMERA_DISTANCE,
+    MeasurementKind.VOLUME,
+}
+
+
+_SCALE_DEPENDENT_MEASUREMENTS = {
+    MeasurementKind.WIDTH,
+    MeasurementKind.HEIGHT,
+    MeasurementKind.DEPTH,
+    MeasurementKind.CAMERA_DISTANCE,
+    MeasurementKind.CENTRE_X,
+    MeasurementKind.CENTRE_Y,
+    MeasurementKind.CENTRE_Z,
     MeasurementKind.VOLUME,
 }
 
@@ -598,7 +612,11 @@ class MeasurementEstimate:
                 raise ContractValidationError(
                     f"{self.kind.value} value_si must not be negative."
                 )
-            if self.depth_scale is DepthScale.RELATIVE and self.scale_recovery.status is not ScaleRecoveryStatus.SUCCEEDED:
+            if (
+                self.kind in _SCALE_DEPENDENT_MEASUREMENTS
+                and self.depth_scale is DepthScale.RELATIVE
+                and self.scale_recovery.status is not ScaleRecoveryStatus.SUCCEEDED
+            ):
                 raise ContractValidationError(
                     "Relative-depth metric measurements require successful scale recovery."
                 )

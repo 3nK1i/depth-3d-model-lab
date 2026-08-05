@@ -66,3 +66,29 @@ __all__ = [
     "validate_measurement_estimate",
     "validate_serialized_measurement_bounds",
 ]
+
+
+_STEP6_EXPORTS = {
+    "MeasurementBatchResult": ("core.measurement.computation_contracts", "MeasurementBatchResult"),
+    "MeasurementComputationStatus": ("core.measurement.computation_contracts", "MeasurementComputationStatus"),
+    "MeasurementDiagnostics": ("core.measurement.computation_contracts", "MeasurementDiagnostics"),
+    "ObjectMeasurementComputationResult": ("core.measurement.computation_contracts", "ObjectMeasurementComputationResult"),
+    "MeasurementComputationPolicy": ("core.measurement.policy", "MeasurementComputationPolicy"),
+    "MeasurementSelectionPolicy": ("core.measurement.policy", "MeasurementSelectionPolicy"),
+    "PerturbationPolicy": ("core.measurement.policy", "PerturbationPolicy"),
+    "ReliabilityPolicy": ("core.measurement.policy", "ReliabilityPolicy"),
+    "MeasurementComputationRequest": ("core.measurement.pipeline", "MeasurementComputationRequest"),
+    "compute_measurements": ("core.measurement.pipeline", "compute_measurements"),
+    "make_measurement_request": ("core.measurement.factories", "make_measurement_request"),
+}
+
+__all__ += list(_STEP6_EXPORTS)
+
+def __getattr__(name):
+    target = _STEP6_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(name)
+    from importlib import import_module
+    value = getattr(import_module(target[0]), target[1])
+    globals()[name] = value
+    return value
