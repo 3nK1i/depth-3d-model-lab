@@ -164,6 +164,11 @@ class DenseMaskPayload:
         )
         object.__setattr__(self, "data", array)
 
+    def __reduce__(self):
+        # Reconstruct through __init__ after multiprocessing/pickle so the
+        # public immutable-array invariant is restored in the receiver.
+        return (type(self), (self.data,))
+
     @property
     def height(self) -> int:
         return int(self.data.shape[0])
@@ -468,6 +473,7 @@ class ObjectObservation:
     border_contacts: tuple[str, ...] = ()
     estimated_occlusion_fraction: float | None = None
     warnings: tuple[str, ...] = ()
+    refinements: tuple[PromptedMaskRefinement, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -484,6 +490,18 @@ class ObjectObservation:
         for mask in self.masks:
             if mask.frame_reference != self.frame_reference:
                 raise ContractValidationError("Mask and observation refer to different frames.")
+        refinement_ids = [value.refinement_id for value in self.refinements]
+        if len(refinement_ids) != len(set(refinement_ids)):
+            raise ContractValidationError("Refinement IDs must be unique within an observation.")
+        mask_ids = {mask.mask_id for mask in self.masks}
+        for refinement in self.refinements:
+            if refinement.output_mask.frame_reference != self.frame_reference:
+                raise ContractValidationError("Refinement and observation refer to different frames.")
+            if refinement.output_mask.mask_id not in mask_ids:
+                raise ContractValidationError("Every refinement output mask must be present in masks.")
+            if self.detection is not None and refinement.input_detection_id:
+                if refinement.input_detection_id != self.detection.detection_id:
+                    raise ContractValidationError("Refinement input detection does not match observation detection.")
         selected = select_authoritative_mask(tuple(self.masks))
         expected_id = selected.mask_id if selected is not None else ""
         if self.selected_mask_id and self.selected_mask_id != expected_id:

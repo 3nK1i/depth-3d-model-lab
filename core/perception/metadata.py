@@ -185,6 +185,9 @@ class PerceptionDescriptor:
     enabled: bool = True
     selectable: bool = True
     development_only: bool = False
+    license_name: str = ""
+    license_scope: str = ""
+    checkpoints: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_id", require_nonempty(self.model_id, field_name="model_id"))
@@ -198,6 +201,12 @@ class PerceptionDescriptor:
             )
         object.__setattr__(self, "adapter_path", adapter_path)
         object.__setattr__(self, "default_config", normalize_metadata(self.default_config))
+        object.__setattr__(self, "license_name", str(self.license_name).strip())
+        object.__setattr__(self, "license_scope", str(self.license_scope).strip())
+        checkpoints = tuple(require_nonempty(value, field_name="checkpoint") for value in self.checkpoints)
+        if len(checkpoints) != len(set(checkpoints)):
+            raise ContractValidationError("checkpoints must be unique.")
+        object.__setattr__(self, "checkpoints", checkpoints)
 
     def as_metadata(self) -> dict[str, Any]:
         return {
@@ -211,4 +220,7 @@ class PerceptionDescriptor:
             "enabled": self.enabled,
             "selectable": self.selectable,
             "development_only": self.development_only,
+            "license_name": self.license_name,
+            "license_scope": self.license_scope,
+            "checkpoints": list(self.checkpoints),
         }

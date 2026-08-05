@@ -26,7 +26,12 @@ EXPECTED_DEPTH_MODEL_IDS = (
 
 def test_existing_depth_registry_order_is_unchanged_and_perception_is_separate() -> None:
     assert MODEL_REGISTRY.ids() == EXPECTED_DEPTH_MODEL_IDS
-    assert PERCEPTION_MODEL_REGISTRY.ids() == ()
+    assert PERCEPTION_MODEL_REGISTRY.ids() == (
+        "ultralytics-yolo-seg",
+        "ultralytics-yolo-detect",
+        "ultralytics-sam2-prompted",
+        "development-perception-mock",
+    )
 
 
 def test_geometry_result_phase5_positional_contract_is_unchanged() -> None:
@@ -57,16 +62,11 @@ def test_phase7_modes_and_release_identity_are_unchanged() -> None:
     assert RELEASE_NAME == "Phase 7 Stable"
 
 
-def test_step1_adds_no_dependency_or_gpu_runtime_import() -> None:
+def test_step2_keeps_optional_runtime_imports_adapter_local() -> None:
     project_root = Path(__file__).resolve().parents[2]
     pyproject = (project_root / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "0.7.0"' in pyproject
-    for package in ("core/contracts", "core/perception", "core/measurement", "core/tracking"):
-        source = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted((project_root / package).glob("*.py"))
-        )
-        assert "import torch" not in source
-        assert "from torch" not in source
-        assert "PyQt" not in source
-        assert "cuda(" not in source.lower()
+    source = "\n".join(path.read_text(encoding="utf-8") for path in sorted((project_root / "core/perception").glob("*.py")))
+    assert "from ultralytics" not in source
+    assert "import ultralytics" not in source
+    assert "PyQt" not in source

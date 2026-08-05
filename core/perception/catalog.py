@@ -1,0 +1,17 @@
+"""Built-in perception descriptors. Imports no optional model runtime."""
+from __future__ import annotations
+from core.models.metadata import ModelDependency
+from core.perception.metadata import AdapterCapability, CoResidencyPolicy, PerceptionCapabilities, PerceptionDescriptor, PerceptionResourceMetadata, PerceptionTask, PreferredDevice
+_ULTRA_DEP = (ModelDependency('ultralytics', 'ultralytics>=8.4,<9', 'requirements/models-ultralytics-perception.txt', 'YOLO and SAM 2.1 perception runtime'),)
+
+def _yolo(model_id: str, name: str, segmentation: bool) -> PerceptionDescriptor:
+    tasks = (PerceptionTask.DETECTION, PerceptionTask.INSTANCE_SEGMENTATION) if segmentation else (PerceptionTask.DETECTION,)
+    cls = 'UltralyticsYOLOSegmentationAdapter' if segmentation else 'UltralyticsYOLODetectionAdapter'
+    return PerceptionDescriptor(model_id, name, f'core.perception.adapters.ultralytics_yolo:{cls}', PerceptionCapabilities(tasks, (AdapterCapability.FRAME_PERCEPTION,), ('image', 'video', 'camera', 'rtsp'), True, False), PerceptionResourceMetadata(None, None, PreferredDevice.CUDA, True, CoResidencyPolicy.PREFER_ISOLATED, False, ('fp32', 'fp16'), ('rtx2060', 'rtx5090'), 'VRAM must be measured on target hardware before co-residency.'), _ULTRA_DEP, development_only=False, selectable=True, license_name='Ultralytics Enterprise', license_scope='Commercial use under the EIA TECH Enterprise license', checkpoints=('yolo11n-seg.pt', 'yolo11s-seg.pt') if segmentation else ('yolo11n.pt', 'yolo11s.pt'))
+
+def builtin_perception_descriptors() -> tuple[PerceptionDescriptor, ...]:
+    return (_yolo('ultralytics-yolo-seg', 'Ultralytics YOLO Instance Segmentation', True), _yolo('ultralytics-yolo-detect', 'Ultralytics YOLO Detection', False), PerceptionDescriptor('ultralytics-sam2-prompted', 'Ultralytics SAM 2.1 Prompted Segmentation', 'core.perception.adapters.ultralytics_sam:UltralyticsSAM2PromptedAdapter', PerceptionCapabilities((PerceptionTask.PROMPTED_SEGMENTATION,), (AdapterCapability.PROMPTED_SEGMENTATION,), ('image', 'video', 'camera', 'rtsp'), False, False), PerceptionResourceMetadata(None, None, PreferredDevice.CUDA, True, CoResidencyPolicy.PREFER_ISOLATED, False, ('fp32', 'fp16'), ('rtx2060', 'rtx5090'), 'Prompted refinement is disabled by default on 6 GB live sessions until profiling.'), _ULTRA_DEP, selectable=False, license_name='Ultralytics Enterprise', license_scope='Commercial use under the EIA TECH Enterprise license', checkpoints=('sam2.1_t.pt', 'sam2.1_s.pt', 'sam2.1_b.pt')), PerceptionDescriptor('development-perception-mock', 'Development Perception Mock', 'core.perception.adapters.mock_adapter:DevelopmentPerceptionMockAdapter', PerceptionCapabilities((PerceptionTask.DETECTION, PerceptionTask.INSTANCE_SEGMENTATION, PerceptionTask.PROMPTED_SEGMENTATION), (AdapterCapability.FRAME_PERCEPTION, AdapterCapability.PROMPTED_SEGMENTATION, AdapterCapability.SEQUENCE_PERCEPTION), ('image', 'video', 'camera', 'rtsp'), True, True), PerceptionResourceMetadata(None, None, PreferredDevice.CPU, True, CoResidencyPolicy.ALLOW, False, ('fp32',), ('rtx2060', 'rtx5090'), 'Dependency-free deterministic validation adapter.'), development_only=True, selectable=False, license_name='Internal development', license_scope='EIA TECH validation only'))
+
+def register_builtin_perception_models(registry) -> None:
+    for descriptor in builtin_perception_descriptors():
+        registry.register(descriptor)

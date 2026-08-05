@@ -1,0 +1,10 @@
+# Optional Phase 7.5 perception runtime.
+# EIA TECH holds an Ultralytics Enterprise license.
+#
+# Preserve the validated CUDA PyTorch/Torchvision build and the package
+# versions required by the existing depth-model adapters.
+
+numpy>=1.26,<2
+Pillow>=10.2,<11
+opencv-python>=4.10,<4.12
+ultralytics>=8.4,<9
