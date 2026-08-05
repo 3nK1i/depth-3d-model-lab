@@ -46,3 +46,30 @@ __all__ = [
     "make_depth_camera_frame",
     "make_extraction_request",
 ]
+
+from .fitting_contracts import (
+    BoxFitDiagnostics,
+    GeometryDegeneracy,
+    ObjectFrameEstimate,
+    ObjectGeometryFitBatchResult,
+    ObjectGeometryFitResult,
+    ObjectGeometryFitStatus,
+    OrientationStability,
+    PrincipalAxesEstimate,
+)
+from .fitting_factories import make_fitting_request
+from .fitting_pipeline import ObjectGeometryFitRequest, fit_object_geometry
+from .fitting_policy import (
+    BoxFitPolicy,
+    GenericShapeFitPolicy,
+    ObjectGeometryFittingPolicy,
+    RobustPcaPolicy,
+)
+
+__all__ += [
+    "BoxFitDiagnostics", "BoxFitPolicy", "GenericShapeFitPolicy",
+    "GeometryDegeneracy", "ObjectFrameEstimate", "ObjectGeometryFitBatchResult",
+    "ObjectGeometryFitRequest", "ObjectGeometryFitResult", "ObjectGeometryFitStatus",
+    "ObjectGeometryFittingPolicy", "OrientationStability", "PrincipalAxesEstimate",
+    "RobustPcaPolicy", "fit_object_geometry", "make_fitting_request",
+]
