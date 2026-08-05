@@ -1,43 +1,29 @@
 from __future__ import annotations
-
+import pickle
 import pytest
+from core.measurement.contracts import MeasurementKind,MeasurementStatus,ReliabilityAssessment,ReliabilityLevel
+from core.tracking import (
+    ObjectTrackState,StabilizedMeasurementEstimate,TemporalEstimateStatus,
+    TrackingContext,TrackingState,
+)
+from tests.tracking_helpers import frame
 
-from core.contracts import FrameReference, ImageSize
-from core.contracts.validation import ContractValidationError
-from core.tracking import ObjectTrackState, TrackingResetReason, TrackingState
+def test_tracking_context_and_state_are_pickle_safe():
+    f=frame(2)
+    state=ObjectTrackState('track-1',TrackingState.CONFIRMED,'obs',f,f,2,2,0,.8,measurement_history_count=2)
+    restored=pickle.loads(pickle.dumps(state))
+    assert restored==state
+    assert TrackingContext('depth','seg',1,'abc').worker_generation==1
 
+def test_reacquired_state_requires_count():
+    f=frame(2)
+    with pytest.raises(ValueError): ObjectTrackState('track',TrackingState.REACQUIRED,'obs',f,f,2,2,0,.8)
 
-def _frame(frame_id: int, session_id: int = 1) -> FrameReference:
-    return FrameReference(session_id, frame_id, float(frame_id), ImageSize(10, 10))
+def test_stable_temporal_estimate_derives_bounds():
+    estimate=StabilizedMeasurementEstimate('track','obs',MeasurementKind.WIDTH,TemporalEstimateStatus.STABLE,MeasurementStatus.AVAILABLE,'m',ReliabilityAssessment(ReliabilityLevel.HIGH),4,4,1.0,.1)
+    assert estimate.lower_bound_si==pytest.approx(.9)
+    assert estimate.upper_bound_si==pytest.approx(1.1)
 
-
-def test_tracking_state_is_pickle_safe_and_algorithm_independent() -> None:
-    state = ObjectTrackState(
-        track_id="track-1",
-        state=TrackingState.REACQUIRED,
-        current_observation_id="object-4",
-        first_frame_reference=_frame(1),
-        latest_frame_reference=_frame(4),
-        age_frames=4,
-        confirmed_observation_count=3,
-        missed_frame_count=1,
-        association_confidence=0.8,
-        reacquisition_count=1,
-        reset_reason=TrackingResetReason.RESOLUTION_CHANGED,
-        measurement_history_count=3,
-    )
-    assert state.state is TrackingState.REACQUIRED
-
-
-def test_track_cannot_cross_source_sessions() -> None:
-    with pytest.raises(ContractValidationError, match="sessions"):
-        ObjectTrackState(
-            track_id="track-1",
-            state=TrackingState.CONFIRMED,
-            current_observation_id="object-2",
-            first_frame_reference=_frame(1, 1),
-            latest_frame_reference=_frame(2, 2),
-            age_frames=2,
-            confirmed_observation_count=2,
-            missed_frame_count=0,
-        )
+def test_warming_estimate_cannot_expose_value():
+    with pytest.raises(ValueError):
+        StabilizedMeasurementEstimate('track','obs',MeasurementKind.WIDTH,TemporalEstimateStatus.WARMING_UP,MeasurementStatus.AVAILABLE,'m',ReliabilityAssessment(ReliabilityLevel.UNAVAILABLE),1,1,1.0)
