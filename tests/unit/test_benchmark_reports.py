@@ -13,6 +13,7 @@ from core.benchmark.reports import (
     write_json,
 )
 from core.benchmark.runner import production_benchmark_descriptors
+from core.version import __version__
 
 
 def _result() -> dict[str, object]:
@@ -49,7 +50,7 @@ def _result() -> dict[str, object]:
 def test_benchmark_reports_are_machine_and_human_readable(tmp_path: Path) -> None:
     result = _result()
     payload = {
-        "application": {"version": "0.6.0"},
+        "application": {"version": __version__},
         "hardware": {"name": "Test GPU"},
         "results": [result],
     }
@@ -74,7 +75,7 @@ def test_benchmark_reports_are_machine_and_human_readable(tmp_path: Path) -> Non
 
 def test_cancelled_runs_are_visible_in_human_summary(tmp_path: Path) -> None:
     payload = {
-        "application": {"version": "0.6.0"},
+        "application": {"version": __version__},
         "hardware": {"name": "Test GPU"},
         "cancelled": True,
         "results": [

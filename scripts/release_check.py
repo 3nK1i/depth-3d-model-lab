@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the reproducible Phase 6 release gate and write a JSON report."""
+"""Run the reproducible Phase 7 release gate and write a JSON report."""
 
 from __future__ import annotations
 
@@ -20,13 +20,18 @@ from core.runtime.release import (  # noqa: E402
     benchmark_report_check,
     build_release_report,
     collect_static_checks,
+    latest_output_directory,
     release_failed,
+    snapshot_export_check,
+    stable_video_export_check,
     write_release_report,
 )
 from core.version import RELEASE_NAME, __version__  # noqa: E402
 
-_DEFAULT_REPORT = ROOT / "outputs" / "release" / "phase6_release_report.json"
+_DEFAULT_REPORT = ROOT / "outputs" / "release" / "phase7_release_report.json"
 _DEFAULT_BENCHMARK = ROOT / "outputs" / "phase6" / "benchmark_results.json"
+_DEFAULT_SNAPSHOT_ROOT = ROOT / "outputs" / "snapshots"
+_DEFAULT_STABLE_ROOT = ROOT / "outputs" / "stable_video"
 
 
 def _run_command(
@@ -118,6 +123,12 @@ def _print_result(name: str, passed: bool, detail: str = "", *, required: bool =
     print(f"  {status:<4}  {name}{suffix}")
 
 
+def _resolve_artifact(explicit: Path | None, root: Path, prefix: str) -> Path | None:
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    return latest_output_directory(root, prefix)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("quick", "full"), default="full")
@@ -129,6 +140,10 @@ def main() -> int:
     parser.add_argument("--benchmark-smoke-test", action="store_true")
     parser.add_argument("--require-benchmark", action="store_true")
     parser.add_argument("--benchmark-report", type=Path, default=_DEFAULT_BENCHMARK)
+    parser.add_argument("--snapshot-export", type=Path)
+    parser.add_argument("--stable-video-export", type=Path)
+    parser.add_argument("--require-snapshot-export", action="store_true")
+    parser.add_argument("--require-stable-video-export", action="store_true")
     parser.add_argument(
         "--moge-stress-cycles",
         type=int,
@@ -209,13 +224,13 @@ def main() -> int:
         test_env.setdefault("QT_OPENGL", "software")
         test_env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
         test_env.setdefault("DEPTH3D_TEST_FAKE_VISPY", "1")
-        command = ["bash", "scripts/run_phase6_step7_tests.sh", "quick" if args.mode == "quick" else "full"]
+        command = ["bash", "scripts/run_phase7_step4_tests.sh", "quick" if args.mode == "quick" else "full"]
         commands.append(
             _run_command(
                 "focused_test_suite" if args.mode == "quick" else "complete_test_suite",
                 command,
                 env=test_env,
-                timeout_seconds=1200,
+                timeout_seconds=1800,
             )
         )
 
@@ -233,7 +248,7 @@ def main() -> int:
             command.append("--smoke-test")
         commands.append(
             _run_command(
-                "phase6_cross_model_benchmark",
+                "cross_model_benchmark",
                 command,
                 timeout_seconds=7200,
             )
@@ -252,6 +267,40 @@ def main() -> int:
             required=args.require_benchmark or args.run_benchmark,
         )
         checks.append(benchmark_check)
+
+    snapshot_payload: dict[str, object] | None = None
+    snapshot_path = _resolve_artifact(args.snapshot_export, _DEFAULT_SNAPSHOT_ROOT, "snapshot_")
+    if args.require_snapshot_export or snapshot_path is not None:
+        if snapshot_path is None:
+            snapshot_check = ReleaseCheck(
+                "snapshot_export", False, f"no finalized snapshot under {_DEFAULT_SNAPSHOT_ROOT}"
+            )
+        else:
+            snapshot_check, snapshot_payload = snapshot_export_check(snapshot_path)
+        snapshot_check = ReleaseCheck(
+            snapshot_check.name,
+            snapshot_check.passed,
+            snapshot_check.detail,
+            required=args.require_snapshot_export,
+        )
+        checks.append(snapshot_check)
+
+    stable_payload: dict[str, object] | None = None
+    stable_path = _resolve_artifact(args.stable_video_export, _DEFAULT_STABLE_ROOT, "stable_video_")
+    if args.require_stable_video_export or stable_path is not None:
+        if stable_path is None:
+            stable_check = ReleaseCheck(
+                "stable_video_export", False, f"no finalized Stable Video run under {_DEFAULT_STABLE_ROOT}"
+            )
+        else:
+            stable_check, stable_payload = stable_video_export_check(stable_path)
+        stable_check = ReleaseCheck(
+            stable_check.name,
+            stable_check.passed,
+            stable_check.detail,
+            required=args.require_stable_video_export,
+        )
+        checks.append(stable_check)
 
     if args.moge_stress_cycles > 0:
         commands.append(
@@ -277,10 +326,12 @@ def main() -> int:
         mode=args.mode,
         git=git,
         benchmark=benchmark_payload,
+        snapshot=snapshot_payload,
+        stable_video=stable_payload,
     )
     report_path = write_release_report(args.output, payload)
 
-    print("Static checks:")
+    print("Static and artifact checks:")
     for check in checks:
         _print_result(check.name, check.passed, check.detail, required=check.required)
 

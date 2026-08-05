@@ -4,18 +4,18 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Version `0.6.0` is the stable Phase 6 multi-model release:
+Version `0.7.0` is the stable Phase 7 operational-modes release:
 
-- Image, video, USB camera and RTSP capture
+- Live 3D for Image, Video, USB camera and RTSP sources
+- Interactive Benchmark mode backed by isolated registry-driven model processes
+- Snapshot mode with frozen-frame inference, depth/point-cloud inspection and atomic export
+- Stable Video mode with native temporal-model state or generic smoothing, backpressure and synchronized RGB/depth export
 - Process-isolated, model-agnostic inference runtime with bounded crash, timeout and OOM recovery
 - Registry-driven adapters, capabilities, dependencies, checkpoints, licensing and GPU profiles
 - Automatic RTX 2060 Efficient and RTX 5090 Ultra selection without code changes
 - MoGe-2, Depth Pro, UniDepthV2, Metric3D v2, Depth Anything V2, Video Depth Anything and Marigold
-- Metric, relative, predicted-intrinsics, estimated-intrinsics, confidence, uncertainty and normals semantics
-- Interactive depth and 3D point-cloud visualization
 - Explicit total-device VRAM in the header and model/process allocator VRAM in the footer
-- Reproducible isolated-process cross-model benchmarking with JSON, CSV and Markdown reports
-- Full unit, UI, integration, stress and release gates
+- Unit, UI, integration, stress and release gates with machine-readable release reports
 
 ## Requirements
 
@@ -101,6 +101,22 @@ python main.py
 Select a source, choose **MoGe-2** in the MODEL card, connect the source, then press **Start Inference**. The optional **Development Mock** remains available when testing the UI without model weights.
 
 Hover over the footer metrics for exact definitions and timing/VRAM breakdowns. The **LATENCY** value is end-to-end from worker submission to the completed depth/3D update; the tooltip also shows the model forward pass, worker preprocessing/postprocessing, UI geometry time and source-to-render age. The **MODEL VRAM** value is PyTorch reserved memory, with allocated, peak-reserved and device-wide usage listed in its tooltip. The MODEL info button shows checkpoint, device, precision, token count, load time and warm-up time.
+
+
+## Phase 7 operational modes
+
+### Interactive Benchmark
+
+The Benchmark tab runs one or more registry models in isolated processes and displays load time, warm-up, latency, FPS, model VRAM, output resolution, depth scale and intrinsics provenance. Reports are written as JSON, CSV and Markdown.
+
+### Snapshot
+
+Snapshot captures an independent copy of the latest source frame, runs one selected model outside the Live 3D worker and atomically exports RGB, numerical depth, preview depth, point cloud, supported confidence/normals/mask arrays and a manifest. Live inference must be stopped, but the source may remain connected.
+
+### Stable Video
+
+Stable Video supports Video, USB camera and RTSP. Temporal models preserve their native sequence state; stateless models use generic smoothing. Latest-frame backpressure prevents queue growth, Pause/Resume preserves the sequence, and Stop resets it. Finalized runs export synchronized RGB/depth MP4 files, per-frame performance CSV, a manifest and optional numerical depth frames.
+
 
 ## Viewport controls
 

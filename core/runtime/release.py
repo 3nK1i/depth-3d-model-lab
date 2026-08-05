@@ -1,4 +1,4 @@
-"""Phase 6 release-gate diagnostics and atomic report helpers."""
+"""Phase 7 release-gate diagnostics and atomic report helpers."""
 
 from __future__ import annotations
 
@@ -23,8 +23,12 @@ _REQUIRED_PROJECT_FILES = (
     "pyproject.toml",
     "README.md",
     "app/main_window.py",
-    "app/inference_controller.py",
-    "app/widgets/performance_bar.py",
+    "app/benchmark_controller.py",
+    "app/snapshot_controller.py",
+    "app/stable_video_controller.py",
+    "app/widgets/benchmark_page.py",
+    "app/widgets/snapshot_page.py",
+    "app/widgets/stable_video_page.py",
     "core/benchmark/assets.py",
     "core/benchmark/reports.py",
     "core/benchmark/runner.py",
@@ -32,15 +36,17 @@ _REQUIRED_PROJECT_FILES = (
     "core/models/registry.py",
     "core/runtime/logging_setup.py",
     "core/runtime/release.py",
+    "core/snapshot/export.py",
+    "core/stable_video/export.py",
     "core/version.py",
     "scripts/check_hardware.py",
     "scripts/release_check.py",
     "scripts/run_phase6_benchmark.py",
-    "scripts/run_phase6_release.sh",
-    "scripts/run_phase6_step7_tests.sh",
+    "scripts/run_phase7_release.sh",
+    "scripts/run_phase7_step4_tests.sh",
     "scripts/run_phase5_tests.sh",
-    "PHASE6_STEP7_VALIDATION.md",
-    "TEST_STRATEGY_PHASE6_RELEASE.md",
+    "PHASE7_STEP4_VALIDATION.md",
+    "TEST_STRATEGY_PHASE7_RELEASE.md",
 )
 
 _BASE_DEPENDENCIES = (
@@ -132,12 +138,12 @@ def benchmark_report_check(
     *,
     require_all_models: bool = True,
 ) -> tuple[ReleaseCheck, dict[str, object] | None]:
-    """Validate a Phase 6 benchmark report without rerunning inference."""
+    """Validate the current cross-model benchmark report without rerunning inference."""
 
     report_path = Path(path)
     if not report_path.is_file():
         return ReleaseCheck(
-            "phase6_benchmark_report",
+            "cross_model_benchmark_report",
             False,
             f"missing: {report_path}",
         ), None
@@ -173,17 +179,124 @@ def benchmark_report_check(
         if nonpassing:
             details.append("non-passing: " + ", ".join(nonpassing))
         return ReleaseCheck(
-            "phase6_benchmark_report",
+            "cross_model_benchmark_report",
             passed,
             "; ".join(details),
         ), payload
     except Exception as exc:  # noqa: BLE001
         return ReleaseCheck(
-            "phase6_benchmark_report",
+            "cross_model_benchmark_report",
             False,
             f"invalid report: {exc}",
         ), None
 
+
+
+def latest_output_directory(root: str | os.PathLike[str], prefix: str) -> Path | None:
+    """Return the newest finalized output directory matching ``prefix``."""
+
+    base = Path(root)
+    if not base.is_dir():
+        return None
+    candidates = [
+        item for item in base.iterdir()
+        if item.is_dir() and item.name.startswith(prefix) and not item.name.startswith(".")
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item.stat().st_mtime_ns, item.name))
+
+
+def snapshot_export_check(
+    path: str | os.PathLike[str],
+) -> tuple[ReleaseCheck, dict[str, object] | None]:
+    """Validate a completed Snapshot package without rerunning a model."""
+
+    directory = Path(path)
+    required = (
+        "rgb.png",
+        "depth.npy",
+        "depth_preview.png",
+        "point_cloud.ply",
+        "snapshot_manifest.json",
+    )
+    try:
+        if not directory.is_dir():
+            raise ValueError(f"missing directory: {directory}")
+        missing = [name for name in required if not (directory / name).is_file()]
+        if missing:
+            raise ValueError("missing: " + ", ".join(missing))
+
+        manifest = json.loads((directory / "snapshot_manifest.json").read_text(encoding="utf-8"))
+        for key in ("model_id", "model_name", "depth_scale", "intrinsics_source", "rgb_shape"):
+            if key not in manifest:
+                raise ValueError(f"manifest key {key!r} is missing")
+        if manifest.get("intrinsics_source") == "calibrated":
+            raise ValueError("Snapshot incorrectly claims calibrated intrinsics")
+
+        import numpy as np
+
+        depth = np.load(directory / "depth.npy", mmap_mode="r", allow_pickle=False)
+        if depth.ndim != 2 or depth.size == 0:
+            raise ValueError(f"invalid depth shape: {depth.shape}")
+        if (directory / "point_cloud.ply").stat().st_size <= 100:
+            raise ValueError("point_cloud.ply is empty or incomplete")
+
+        detail = f"{manifest['model_name']} · {depth.shape[1]}x{depth.shape[0]} · {manifest['depth_scale']}"
+        return ReleaseCheck("snapshot_export", True, detail), manifest
+    except Exception as exc:  # noqa: BLE001
+        return ReleaseCheck("snapshot_export", False, f"invalid export: {exc}"), None
+
+
+def stable_video_export_check(
+    path: str | os.PathLike[str],
+) -> tuple[ReleaseCheck, dict[str, object] | None]:
+    """Validate a finalized Stable Video package without replaying it."""
+
+    directory = Path(path)
+    required = ("rgb_video.mp4", "depth_video.mp4", "performance.csv", "run_manifest.json")
+    try:
+        if not directory.is_dir():
+            raise ValueError(f"missing directory: {directory}")
+        missing = [name for name in required if not (directory / name).is_file()]
+        if missing:
+            raise ValueError("missing: " + ", ".join(missing))
+
+        manifest = json.loads((directory / "run_manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("status") != "completed":
+            raise ValueError(f"status is {manifest.get('status')!r}, expected 'completed'")
+        frame_count = int(manifest.get("frame_count", 0))
+        if frame_count <= 0:
+            raise ValueError("frame_count must be positive")
+        resolution = manifest.get("resolution")
+        if not isinstance(resolution, list) or len(resolution) != 2 or min(map(int, resolution)) <= 0:
+            raise ValueError(f"invalid resolution: {resolution!r}")
+        for name in ("rgb_video.mp4", "depth_video.mp4"):
+            if (directory / name).stat().st_size <= 0:
+                raise ValueError(f"{name} is empty")
+
+        import csv
+
+        with (directory / "performance.csv").open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        if len(rows) != frame_count:
+            raise ValueError(
+                f"performance rows ({len(rows)}) do not match frame_count ({frame_count})"
+            )
+        if bool(manifest.get("numeric_depth_exported")):
+            depth_files = list((directory / "depth_frames").glob("depth_*.npy"))
+            if len(depth_files) != frame_count:
+                raise ValueError(
+                    f"numeric depth frames ({len(depth_files)}) do not match frame_count ({frame_count})"
+                )
+
+        detail = (
+            f"{manifest.get('model_name', manifest.get('model_id', 'unknown'))} · "
+            f"{frame_count} frames · {resolution[0]}x{resolution[1]}"
+        )
+        return ReleaseCheck("stable_video_export", True, detail), manifest
+    except Exception as exc:  # noqa: BLE001
+        return ReleaseCheck("stable_video_export", False, f"invalid export: {exc}"), None
 
 def build_release_report(
     *,
@@ -192,6 +305,8 @@ def build_release_report(
     mode: str,
     git: dict[str, object] | None = None,
     benchmark: dict[str, object] | None = None,
+    snapshot: dict[str, object] | None = None,
+    stable_video: dict[str, object] | None = None,
 ) -> dict[str, object]:
     check_list = list(checks)
     command_list = list(commands)
@@ -220,6 +335,8 @@ def build_release_report(
             for item in command_list
         ],
         "benchmark": benchmark or {},
+        "snapshot": snapshot or {},
+        "stable_video": stable_video or {},
         "git": git or {},
     }
 
@@ -378,7 +495,7 @@ def _model_registry_checks(*, required: bool) -> list[ReleaseCheck]:
 
 def _writable_directory_checks(root: Path) -> list[ReleaseCheck]:
     results: list[ReleaseCheck] = []
-    for relative in ("logs", "outputs/release", "outputs/stress", "outputs/phase6"):
+    for relative in ("logs", "outputs/release", "outputs/stress", "outputs/phase6", "outputs/snapshots", "outputs/stable_video"):
         directory = root / relative
         try:
             directory.mkdir(parents=True, exist_ok=True)

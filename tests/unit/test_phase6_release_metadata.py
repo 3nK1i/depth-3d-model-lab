@@ -1,4 +1,4 @@
-"""Phase 6 release and benchmark-report integrity tests."""
+"""Cross-model benchmark-report integrity tests retained for Phase 7."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from core.runtime.release import benchmark_report_check
 from core.version import RELEASE_NAME, RELEASE_PHASE, __version__
 
 
-def test_phase6_release_identity() -> None:
-    assert __version__ == "0.6.0"
-    assert RELEASE_NAME == "Phase 6 Stable"
-    assert RELEASE_PHASE == 6
+def test_current_release_identity_for_benchmark_reports() -> None:
+    assert __version__ == "0.7.0"
+    assert RELEASE_NAME == "Phase 7 Stable"
+    assert RELEASE_PHASE == 7
 
 
 def test_benchmark_report_requires_every_production_model(tmp_path: Path) -> None:
