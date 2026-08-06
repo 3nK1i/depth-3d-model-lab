@@ -371,3 +371,5 @@ core/runtime/        State, sessions, watchdog, logs and release diagnostics
 requirements/        Optional model dependency groups
 tests/               Unit, UI, integration, stress and release tests
 ```
+
+Measurements are engineering estimates; calibrated known-size validation is deferred.

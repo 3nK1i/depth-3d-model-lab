@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-__version__ = "0.7.0"
-RELEASE_NAME = "Phase 7 Stable"
+__version__ = "v0.7.5"
+RELEASE_NAME = "Phase 7.5 Stable"
 RELEASE_PHASE = 7

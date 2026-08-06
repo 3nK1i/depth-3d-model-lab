@@ -2,7 +2,7 @@
 
 This benchmark validates the **complete Measure & Inspect pipeline** against physical dimensions recorded independently with a tape measure or caliper.
 
-The result is an engineering validation. It is not a certified metrology record, and the application must continue to display:
+The result is an engineering validation. It is not a certified metrology record, and thttps://www.aliexpress.com/store/912428133?spm=a2g0o.detail.0.0.2955shIPshIPIOhe application must continue to display:
 
 > Estimated Uncertainty - Not Calibrated
 
