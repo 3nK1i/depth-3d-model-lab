@@ -19,6 +19,7 @@ def test_phase7_operational_modes_enabled_and_reconstruction_deferred(qtbot) -> 
     qtbot.addWidget(tabs)
     expected = {
         AppMode.LIVE_3D,
+        AppMode.INSPECTION,
         AppMode.STABLE_VIDEO,
         AppMode.SNAPSHOT,
         AppMode.BENCHMARK,
@@ -32,6 +33,7 @@ def test_repeated_mode_navigation_remains_consistent(qtbot) -> None:
     qtbot.addWidget(tabs)
     sequence = (
         AppMode.LIVE_3D,
+        AppMode.INSPECTION,
         AppMode.BENCHMARK,
         AppMode.SNAPSHOT,
         AppMode.STABLE_VIDEO,

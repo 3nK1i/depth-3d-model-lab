@@ -141,7 +141,11 @@ def compute_measurements(request: MeasurementComputationRequest) -> MeasurementB
             result=ObjectMeasurementResult(oid,bundle.frame_reference,tuple(estimates),warnings=tuple(object_warnings))
             diag=MeasurementDiagnostics(oid,rejected_kinds=request.policy.selection.requested_kinds,warnings=("required object geometry is unavailable",))
             results.append(ObjectMeasurementComputationResult(oid,bundle.frame_reference,MeasurementComputationStatus.REJECTED,result,diag)); continue
-        box, box_reason=select_measurement_box(fit,prefer_stable_oriented=request.policy.selection.prefer_stable_oriented_box)
+        box, box_reason=select_measurement_box(
+            fit,
+            prefer_stable_oriented=request.policy.selection.prefer_stable_oriented_box,
+            forced_kind=request.policy.selection.forced_box_kind,
+        )
         if box is None:
             for kind in request.policy.selection.requested_kinds:
                 estimates.append(_unavailable(observation_id=oid,kind=kind,status=MeasurementStatus.REJECTED,reasons=(RejectionReason.FITTING_FAILED,),warnings=("no measurement box is available",),bundle=bundle,scale_recovery=scale))

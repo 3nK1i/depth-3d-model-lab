@@ -19,7 +19,7 @@ def window(qtbot, monkeypatch):
 
 
 def test_phase7_modes_remain_enabled_and_reconstruction_disabled(window) -> None:
-    enabled = {AppMode.LIVE_3D, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
+    enabled = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
     for mode, button in window._mode_tabs._buttons.items():
         assert button.isEnabled() is (mode in enabled)
 
@@ -27,6 +27,7 @@ def test_phase7_modes_remain_enabled_and_reconstruction_disabled(window) -> None
 def test_repeated_operational_mode_switching_keeps_correct_pages(window, qtbot) -> None:
     expected = {
         AppMode.LIVE_3D: window._page,
+        AppMode.INSPECTION: window._inspection_page,
         AppMode.STABLE_VIDEO: window._stable_video_page,
         AppMode.SNAPSHOT: window._snapshot_page,
         AppMode.BENCHMARK: window._benchmark_page,

@@ -14,7 +14,20 @@ def fitted_boxes(fit: ObjectGeometryFitResult) -> tuple[BoundingBox3D, ...]:
 def box_by_id(fit: ObjectGeometryFitResult, box_id: str) -> BoundingBox3D | None:
     return next((b for b in fitted_boxes(fit) if b.box_id == box_id), None)
 
-def select_measurement_box(fit: ObjectGeometryFitResult, *, prefer_stable_oriented: bool = True) -> tuple[BoundingBox3D | None, str]:
+def select_measurement_box(
+    fit: ObjectGeometryFitResult,
+    *,
+    prefer_stable_oriented: bool = True,
+    forced_kind: BoundingBoxKind | None = None,
+) -> tuple[BoundingBox3D | None, str]:
+    if forced_kind is not None:
+        by_kind = {
+            BoundingBoxKind.AXIS_ALIGNED: fit.axis_aligned_box,
+            BoundingBoxKind.CAMERA_ALIGNED: fit.camera_aligned_box,
+            BoundingBoxKind.ORIENTED: fit.oriented_box,
+        }
+        selected = by_kind[forced_kind]
+        return (selected, f"operator-selected {forced_kind.value} box") if selected is not None else (None, f"operator-selected {forced_kind.value} box unavailable")
     stable = fit.object_frame is not None and fit.object_frame.orientation_stability is OrientationStability.STABLE
     if prefer_stable_oriented and stable and fit.oriented_box is not None:
         return fit.oriented_box, "stable oriented box"

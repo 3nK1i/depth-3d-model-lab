@@ -61,7 +61,10 @@ class _FakeMoGeModel:
         normal[..., 2] = 1.0
         mask = torch.ones((height, width), dtype=torch.bool)
         mask[0, 0] = False
-        intrinsics = torch.eye(3, dtype=torch.float32)
+        intrinsics = torch.tensor(
+            [[0.75, 0.0, 0.50], [0.0, 1.20, 0.50], [0.0, 0.0, 1.0]],
+            dtype=torch.float32,
+        )
         return {
             "depth": depth,
             "points": points,
@@ -106,6 +109,13 @@ def test_adapter_returns_metric_direct_geometry_with_bounded_points() -> None:
     assert result.points.shape[:2] == result.depth[:: result.point_stride, :: result.point_stride].shape
     assert result.points.shape[0] * result.points.shape[1] <= 1_000
     assert result.intrinsics is not None and result.intrinsics.shape == (3, 3)
+    np.testing.assert_allclose(
+        result.intrinsics,
+        np.array(
+            [[150.0, 0.0, 100.0], [0.0, 120.0, 50.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        ),
+    )
     assert result.precision == "FP32"
     assert result.preprocess_ms is not None and result.preprocess_ms >= 0.0
     assert result.postprocess_ms is not None and result.postprocess_ms >= 0.0

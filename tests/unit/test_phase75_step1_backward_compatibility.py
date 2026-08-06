@@ -56,7 +56,7 @@ def test_inference_result_ipc_contract_remains_pickle_compatible() -> None:
 def test_phase7_modes_and_release_identity_are_unchanged() -> None:
     project_root = Path(__file__).resolve().parents[2]
     mode_source = (project_root / "app/widgets/mode_tabs.py").read_text(encoding="utf-8")
-    assert "_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}" in mode_source
+    assert "_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}" in mode_source
     assert "AppMode.RECONSTRUCTION" not in mode_source.split("_ENABLED_MODES =", 1)[1].split("\n", 1)[0]
     assert __version__ == "0.7.0"
     assert RELEASE_NAME == "Phase 7 Stable"

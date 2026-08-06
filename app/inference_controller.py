@@ -460,6 +460,52 @@ class InferenceController(QObject):
         if self._state_machine.state in (ApplicationState.RUNNING, ApplicationState.PAUSED):
             self._on_stop_clicked()
 
+    def release_model_for_external_job(self) -> bool:
+        """Release the resident depth model before an isolated GPU job.
+
+        Measure & Inspect runs perception and depth sequentially in a separate
+        process. Keeping the Live 3D model resident would create avoidable VRAM
+        co-residency on the RTX 2060. This operation never disconnects or
+        discards the captured source frame. It is allowed only from idle states.
+        """
+        if self._shutdown_started:
+            return False
+        if self._state_machine.state in {
+            ApplicationState.CONNECTING,
+            ApplicationState.LOADING_MODEL,
+            ApplicationState.RUNNING,
+            ApplicationState.PAUSED,
+            ApplicationState.STOPPING,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.RECONNECTING,
+            ApplicationState.SHUTTING_DOWN,
+        }:
+            return False
+        if self._model_loaded or self._process_manager.is_running:
+            self._process_manager.shutdown()
+        self._model_lifecycle.reset()
+        self._model_loaded = False
+        self._requested_model_id = None
+        self._requested_model_config.clear()
+        self._pending_model_request = None
+        self._active_model_id = None
+        self._active_model_config_signature = None
+        self._active_model_metadata.clear()
+        self._reset_pipeline_runtime()
+        self._clear_cached_geometry()
+        self._settings_panel.set_model_unloaded()
+        target = (
+            ApplicationState.SOURCE_READY
+            if self._app_controller.active_source is not None
+            else ApplicationState.DISCONNECTED
+        )
+        self._state_machine.transition_to(target, strict=False)
+        self._apply_button_states()
+        self._sync_model_controls_for_state()
+        self._sync_source_controls_for_state()
+        return True
+
     # -- Runtime toolbar handlers ----------------------------------------
 
     def _on_connect_clicked(self) -> None:

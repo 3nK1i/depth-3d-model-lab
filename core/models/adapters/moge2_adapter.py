@@ -40,6 +40,34 @@ _HF_LOGGER_NAMES = (
 )
 
 
+def _pixel_intrinsics_from_moge(
+    normalized_intrinsics: np.ndarray,
+    *,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Convert MoGe's normalized camera matrix to full-resolution pixels.
+
+    The official MoGe API returns a normalized 3×3 intrinsic matrix. The rest
+    of this application deliberately uses pixel-space intrinsics, so focal
+    lengths and principal points must be scaled by the corresponding image
+    dimensions before depth back-projection or RGB box projection.
+    """
+
+    matrix = np.asarray(normalized_intrinsics, dtype=np.float32)
+    if matrix.shape != (3, 3):
+        raise RuntimeError(
+            f"Expected normalized MoGe intrinsics with shape 3×3, got {matrix.shape}."
+        )
+    if width <= 0 or height <= 0:
+        raise RuntimeError("MoGe output dimensions must be positive.")
+    scale = np.array(
+        [[float(width), 0.0, 0.0], [0.0, float(height), 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    return np.ascontiguousarray(scale @ matrix, dtype=np.float32)
+
+
 class _PublicHubAdvisoryFilter(logging.Filter):
     """Suppress only the harmless public-download rate-limit advisory."""
 
@@ -492,7 +520,15 @@ class Moge2GeometryModel(BaseGeometryModel):
         intrinsics = None
         intrinsics_tensor = output.get("intrinsics")
         if intrinsics_tensor is not None:
-            intrinsics = self._tensor_to_numpy(intrinsics_tensor, dtype=np.float32)
+            normalized_intrinsics = self._tensor_to_numpy(
+                intrinsics_tensor,
+                dtype=np.float32,
+            )
+            intrinsics = _pixel_intrinsics_from_moge(
+                normalized_intrinsics,
+                width=width,
+                height=height,
+            )
 
         (
             allocated_gib,

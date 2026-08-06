@@ -1061,6 +1061,111 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
 
+    /* ---- Phase 7.5 Measure & Inspect ---- */
+
+    QWidget#inspectionPage {{ background-color: {p.bg_root}; }}
+    QFrame#inspectionToolbar, QFrame#inspectionStatusRow {{
+        background-color: {p.toolbar_card_bg};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 7px;
+    }}
+    QLabel#inspectionTitle {{
+        color: {p.text_primary}; font-size: 13px; font-weight: 800; letter-spacing: 0.7px;
+    }}
+    QLabel#inspectionModelBadge {{
+        color: {p.info_cyan}; background-color: #122a33; border: 1px solid #23505d;
+        border-radius: 5px; padding: 3px 9px; font-size: 10px; font-weight: 700;
+    }}
+    QLabel#inspectionStatusBadge {{
+        color: {p.success}; background-color: {p.footer_status_green_bg};
+        border: 1px solid {p.footer_status_green_border}; border-radius: 5px;
+        padding: 3px 10px; font-size: 10px; font-weight: 800;
+    }}
+    QLabel#inspectionStatusBadge[statusKind="ready"] {{
+        color: {p.success}; background-color: {p.footer_status_green_bg};
+        border-color: {p.footer_status_green_border};
+    }}
+    QLabel#inspectionStatusBadge[statusKind="running"] {{
+        color: {p.info_cyan}; background-color: #122a33; border-color: #23505d;
+    }}
+    QLabel#inspectionStatusBadge[statusKind="warning"] {{
+        color: {p.warning}; background-color: {p.footer_status_amber_bg};
+        border-color: {p.footer_status_amber_border};
+    }}
+    QLabel#inspectionStatusBadge[statusKind="error"] {{
+        color: {p.error}; background-color: {p.footer_status_red_bg};
+        border-color: {p.footer_status_red_border};
+    }}
+    QLabel#inspectionStatusText, QLabel#inspectionMuted {{
+        color: {p.text_secondary}; font-size: 11px;
+    }}
+    QProgressBar#inspectionProgress {{
+        background-color: {p.footer_track_bg}; border: 1px solid {p.border};
+        border-radius: 4px; min-height: 7px; max-height: 7px;
+    }}
+    QProgressBar#inspectionProgress::chunk {{ background-color: {p.success}; border-radius: 3px; }}
+    QProgressBar#inspectionProgress[statusKind="ready"]::chunk {{ background-color: {p.success}; }}
+    QProgressBar#inspectionProgress[statusKind="running"]::chunk {{ background-color: {p.info_cyan}; }}
+    QProgressBar#inspectionProgress[statusKind="warning"]::chunk {{ background-color: {p.warning}; }}
+    QProgressBar#inspectionProgress[statusKind="error"]::chunk {{ background-color: {p.error}; }}
+    QFrame#inspectionPanel {{
+        background-color: {p.viewport_card_bg}; border: 1px solid {p.viewport_border}; border-radius: 7px;
+    }}
+    QLabel#inspectionPanelTitle, QLabel#inspectionCardTitle {{
+        color: {p.text_primary}; font-size: 11px; font-weight: 800; letter-spacing: 0.55px;
+    }}
+    QScrollArea#inspectionSidebar {{
+        background-color: {p.settings_sidebar_bg}; border: 1px solid {p.settings_card_border}; border-radius: 7px;
+    }}
+    QScrollArea#inspectionSidebar > QWidget > QWidget {{ background-color: {p.settings_sidebar_bg}; }}
+    QFrame#inspectionCard {{
+        background-color: {p.settings_card_bg}; border: 1px solid {p.settings_card_border}; border-radius: 7px;
+    }}
+    QComboBox#inspectionCombo, QSpinBox#inspectionSpin {{
+        background-color: {p.settings_input_bg}; border: 1px solid {p.settings_input_border};
+        border-radius: 5px; padding: 5px 8px; color: {p.settings_text}; min-height: 20px;
+    }}
+    QListWidget#inspectionObjectList, QTableWidget#inspectionMeasurementTable, QTextEdit#inspectionDetails {{
+        background-color: {p.bg_input}; border: 1px solid {p.settings_input_border};
+        border-radius: 5px; color: {p.settings_text}; selection-background-color: #2a1417;
+        selection-color: {p.text_primary};
+    }}
+    QListWidget#inspectionObjectList::item {{ padding: 7px 6px; border-bottom: 1px solid {p.border}; }}
+    QListWidget#inspectionObjectList::item:selected {{ border-left: 3px solid {p.accent}; }}
+    QTableWidget#inspectionMeasurementTable QHeaderView::section {{
+        background-color: {p.settings_card_bg}; color: {p.text_secondary}; border: none;
+        border-bottom: 1px solid {p.border}; padding: 5px; font-size: 10px; font-weight: 700;
+    }}
+    QPushButton#inspectionPrimaryButton, QPushButton#inspectionSecondaryButton,
+    QPushButton#inspectionDangerButton, QPushButton#inspectionMiniButton,
+    QPushButton#inspectionToolButton {{
+        border-radius: 5px; padding: 6px 10px; font-size: 11px; font-weight: 700;
+    }}
+    QPushButton#inspectionPrimaryButton {{
+        background-color: {p.toolbar_green_bg}; border: 1px solid {p.toolbar_green_border}; color: {p.toolbar_green_fg};
+    }}
+    QPushButton#inspectionSecondaryButton, QPushButton#inspectionMiniButton {{
+        background-color: {p.toolbar_hover_bg}; border: 1px solid {p.toolbar_card_border}; color: {p.toolbar_text};
+    }}
+    QPushButton#inspectionDangerButton {{
+        background-color: {p.toolbar_red_bg}; border: 1px solid {p.toolbar_red_border}; color: {p.toolbar_red_fg};
+    }}
+    QPushButton#inspectionToolButton {{
+        background-color: transparent; border: 1px solid {p.settings_input_border}; color: {p.settings_text_secondary};
+    }}
+    QPushButton#inspectionToolButton:checked {{
+        background-color: {p.toolbar_active_bg}; border-color: {p.accent}; color: {p.accent};
+    }}
+    QPushButton#inspectionPrimaryButton:disabled, QPushButton#inspectionSecondaryButton:disabled,
+    QPushButton#inspectionDangerButton:disabled, QPushButton#inspectionToolButton:disabled {{
+        background-color: transparent; border-color: {p.border}; color: {p.text_muted};
+    }}
+    QLabel#inspectionWarningText {{
+        color: {p.warning}; background-color: {p.footer_status_amber_bg}; border: 1px solid {p.footer_status_amber_border};
+        border-radius: 5px; padding: 6px 8px; font-size: 10px; font-weight: 700;
+    }}
+
+
     /* ---- Performance footer ---- */
 
     QFrame#performanceFooter {{

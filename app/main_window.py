@@ -29,6 +29,10 @@ from app.benchmark_controller import (
     BenchmarkRunState,
 )
 from app.inference_controller import InferenceController
+from app.measurement_inspection_controller import (
+    InspectionControllerState,
+    MeasurementInspectionController,
+)
 from app.settings import AppSettings
 from app.snapshot_controller import SnapshotController, SnapshotRunState
 from app.stable_video_controller import StableVideoController, StableVideoRunState
@@ -43,6 +47,7 @@ from app.theme import (
 from app.widgets.benchmark_page import BenchmarkPage
 from app.widgets.depth_view import DepthMapView
 from app.widgets.header_widget import HeaderWidget
+from app.widgets.inspection_page import InspectionPage
 from app.widgets.mode_tabs import AppMode, ModeTabs
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.performance_bar import PerformanceBar
@@ -51,6 +56,7 @@ from app.widgets.snapshot_page import SnapshotPage
 from app.widgets.stable_video_page import StableVideoPage
 from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
+from core.inspection import load_inspection_bundle
 from core.models.registry import get_model_descriptor
 from core.runtime.state_machine import ApplicationState
 
@@ -109,6 +115,8 @@ class MainWindow(QMainWindow):
         self._benchmark_controller.results_ready.connect(self._benchmark_page.set_results)
         self._snapshot_controller = SnapshotController(Path(__file__).resolve().parents[1], self)
         self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
+        self._inspection_controller = MeasurementInspectionController(Path(__file__).resolve().parents[1], self)
+        self._inspection_frame: np.ndarray | None = None
         self._snapshot_frame: np.ndarray | None = None
         self._stable_previous_smoothing: float | None = None
         self._snapshot_page.capture_requested.connect(self._capture_snapshot_frame)
@@ -117,6 +125,15 @@ class MainWindow(QMainWindow):
         self._snapshot_controller.state_changed.connect(self._on_snapshot_state_changed)
         self._snapshot_controller.log_received.connect(self._snapshot_page.append_log)
         self._snapshot_controller.result_ready.connect(self._snapshot_page.show_result)
+        self._inspection_page.capture_requested.connect(self._capture_inspection_frame)
+        self._inspection_page.analysis_requested.connect(self._start_inspection_analysis)
+        self._inspection_page.cancel_requested.connect(self._inspection_controller.cancel)
+        self._inspection_page.recompute_requested.connect(self._recompute_inspection)
+        self._inspection_controller.state_changed.connect(self._on_inspection_state_changed)
+        self._inspection_controller.progress_changed.connect(self._inspection_page.set_progress)
+        self._inspection_controller.result_ready.connect(self._on_inspection_result)
+        self._inspection_controller.log_received.connect(self._inspection_page.append_job_log)
+        self._inspection_controller.failure_received.connect(self._inspection_page.show_failure)
         self._stable_video_page.start_requested.connect(self._start_stable_video)
         self._stable_video_page.pause_resume_requested.connect(self._pause_resume_stable_video)
         self._stable_video_page.stop_requested.connect(self._stop_stable_video)
@@ -174,11 +191,13 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._mode_tabs)
 
         self._page = self._build_page()
+        self._inspection_page = InspectionPage()
         self._benchmark_page = BenchmarkPage()
         self._snapshot_page = SnapshotPage()
         self._stable_video_page = StableVideoPage()
         self._mode_stack = QStackedWidget()
         self._mode_stack.addWidget(self._page)
+        self._mode_stack.addWidget(self._inspection_page)
         self._mode_stack.addWidget(self._stable_video_page)
         self._mode_stack.addWidget(self._snapshot_page)
         self._mode_stack.addWidget(self._benchmark_page)
@@ -293,6 +312,11 @@ class MainWindow(QMainWindow):
         if mode is AppMode.LIVE_3D:
             self._mode_stack.setCurrentWidget(self._page)
             return
+        if mode is AppMode.INSPECTION:
+            self._exit_focus_mode()
+            self._refresh_inspection_context()
+            self._mode_stack.setCurrentWidget(self._inspection_page)
+            return
         if mode is AppMode.STABLE_VIDEO:
             self._exit_focus_mode()
             self._refresh_stable_video_context()
@@ -307,6 +331,104 @@ class MainWindow(QMainWindow):
             self._exit_focus_mode()
             self._refresh_benchmark_safety()
             self._mode_stack.setCurrentWidget(self._benchmark_page)
+
+    def _refresh_inspection_context(self) -> None:
+        self._inspection_page.set_context(
+            source_available=self._controller.latest_source_frame is not None,
+            depth_model_id=self._settings_panel.selected_model_id,
+            depth_model_label=self._settings_panel.selected_model_label,
+        )
+
+    def _capture_inspection_frame(self) -> None:
+        frame = self._controller.latest_source_frame
+        if frame is None:
+            self._inspection_page.show_failure(
+                "No source frame is available. Connect or load a source in Live 3D first."
+            )
+            return
+        self._inspection_frame = np.array(frame.image, dtype=np.uint8, copy=True)
+        self._inspection_page.set_context(
+            source_available=True,
+            depth_model_id=self._settings_panel.selected_model_id,
+            depth_model_label=self._settings_panel.selected_model_label,
+        )
+        self._inspection_page.set_captured_frame(self._inspection_frame)
+
+    def _inspection_jobs_conflict(self) -> str:
+        if self._benchmark_controller.is_running:
+            return "Stop the active Benchmark before measurement inspection."
+        if self._snapshot_controller.is_running:
+            return "Stop the active Snapshot job before measurement inspection."
+        if self._stable_video_controller.is_active:
+            return "Stop Stable Video before measurement inspection."
+        return ""
+
+    def _start_inspection_analysis(self, configuration: dict[str, object]) -> None:
+        conflict = self._inspection_jobs_conflict()
+        if conflict:
+            self._inspection_page.show_failure(conflict)
+            return
+        image = configuration.get("image_bgr")
+        if not isinstance(image, np.ndarray):
+            self._inspection_page.show_failure("Capture a frame before analysis.")
+            return
+        if not self._inference_controller.release_model_for_external_job():
+            self._inspection_page.show_failure(
+                "Stop or finish the active Live 3D inference operation before analysis."
+            )
+            return
+        try:
+            self._inspection_controller.start_analysis(
+                image_bgr=image,
+                depth_model_id=str(configuration["depth_model_id"]),
+                depth_config=dict(self._settings_panel.model_runtime_config),
+                perception_model_id=str(configuration["perception_model_id"]),
+                depth_profile=str(configuration["depth_profile"]),
+                perception_profile=str(configuration["perception_profile"]),
+                max_objects=int(configuration["max_objects"]),
+                box_method=str(configuration.get("box_method", "auto")),
+            )
+            self._mode_tabs.set_navigation_locked(True)
+        except (OSError, RuntimeError, ValueError, KeyError) as exc:
+            self._inspection_page.show_failure(str(exc))
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _recompute_inspection(self, configuration: dict[str, object]) -> None:
+        conflict = self._inspection_jobs_conflict()
+        if conflict:
+            self._inspection_page.show_failure(conflict)
+            return
+        try:
+            self._inspection_controller.recompute(
+                base_state_path=Path(configuration["base_state_path"]),
+                observation_id=str(configuration["observation_id"]),
+                manual_mask=configuration.get("manual_mask"),
+                manual_revision=int(configuration["manual_revision"]),
+                box_method=str(configuration.get("box_method", "auto")),
+                reset_manual=bool(configuration.get("reset_manual", False)),
+            )
+            self._mode_tabs.set_navigation_locked(True)
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
+            self._inspection_page.show_failure(str(exc))
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _on_inspection_state_changed(self, state: InspectionControllerState) -> None:
+        self._inspection_page.set_controller_state(state)
+        if state in {
+            InspectionControllerState.COMPLETED,
+            InspectionControllerState.FAILED,
+            InspectionControllerState.CANCELLED,
+        }:
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _on_inspection_result(self, bundle_dir: str) -> None:
+        try:
+            summary, arrays = load_inspection_bundle(bundle_dir)
+            self._inspection_page.load_bundle(summary, arrays)
+        except (OSError, ValueError, TypeError) as exc:
+            self._inspection_page.show_failure(f"Inspection bundle could not be loaded: {exc}")
+        finally:
+            self._mode_tabs.set_navigation_locked(False)
 
     def _refresh_stable_video_context(self) -> None:
         descriptor = get_model_descriptor(self._settings_panel.selected_model_id)
@@ -621,6 +743,8 @@ class MainWindow(QMainWindow):
         self._benchmark_controller.shutdown()
         self._snapshot_controller.shutdown()
         self._stable_video_controller.shutdown()
+        self._inspection_controller.shutdown()
+        self._inspection_page.close()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()

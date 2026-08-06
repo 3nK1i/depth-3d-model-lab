@@ -186,3 +186,70 @@ def isolated_qsettings(tmp_path_factory):
     yield
     settings.clear()
     settings.sync()
+
+
+def _install_fake_inspection_canvas() -> None:
+    """Install a Qt-only inspection 3D canvas before Step 8 UI collection."""
+    if os.environ.get("DEPTH3D_TEST_FAKE_VISPY", "1") != "1":
+        return
+    module_name = "app.widgets.inspection_3d_canvas"
+    if module_name in sys.modules:
+        return
+    try:
+        import numpy as np
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtWidgets import QWidget
+    except ModuleNotFoundError:
+        return
+
+    class Inspection3DCanvas(QObject):
+        escape_pressed = pyqtSignal()
+
+        def __init__(self, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+            self._native = QWidget()
+            self.last_object = None
+            self.last_arrays = {}
+            self.point_mode = None
+            self.box_method = None
+            self.show_boxes = True
+            self.fit_calls = 0
+            self.reset_calls = 0
+            self.closed = False
+
+        @property
+        def native(self):
+            return self._native
+
+        def close(self) -> None:
+            self.closed = True
+            self._native.close()
+
+        def clear(self) -> None:
+            self.last_object = None
+            self.last_arrays = {}
+
+        def set_object(self, obj, arrays, *, point_mode, box_method, show_boxes) -> None:
+            self.last_object = obj
+            self.last_arrays = {key: np.asarray(value) for key, value in arrays.items()}
+            self.point_mode = point_mode
+            self.box_method = box_method
+            self.show_boxes = bool(show_boxes)
+
+        def refresh_style(self, *, point_size=None, show_boxes=None) -> None:
+            if show_boxes is not None:
+                self.show_boxes = bool(show_boxes)
+
+        def fit_scene(self) -> None:
+            self.fit_calls += 1
+
+        def reset_view(self) -> None:
+            self.reset_calls += 1
+            self.fit_scene()
+
+    fake_module = types.ModuleType(module_name)
+    fake_module.Inspection3DCanvas = Inspection3DCanvas
+    sys.modules[module_name] = fake_module
+
+
+_install_fake_inspection_canvas()

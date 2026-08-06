@@ -1,6 +1,6 @@
-"""Primary navigation: Live 3D / Stable Video / Snapshot / Reconstruction / Benchmark.
+"""Primary navigation: Live 3D / Measure & Inspect / Stable Video / Snapshot / Reconstruction / Benchmark.
 
-Live 3D, Stable Video, Snapshot, and Benchmark are functional. Reconstruction remains visible but disabled
+Live 3D, Measure & Inspect, Stable Video, Snapshot, and Benchmark are functional. Reconstruction remains visible but disabled
 so the architecture reads as extensible without pretending unfinished modes work.
 """
 
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QWidget
 
 class AppMode(Enum):
     LIVE_3D = "live_3d"
+    INSPECTION = "inspection"
     STABLE_VIDEO = "stable_video"
     SNAPSHOT = "snapshot"
     RECONSTRUCTION = "reconstruction"
@@ -22,6 +23,7 @@ class AppMode(Enum):
 
 _MODE_LABELS: dict[AppMode, str] = {
     AppMode.LIVE_3D: "◈  LIVE 3D",
+    AppMode.INSPECTION: "⌖  MEASURE & INSPECT",
     AppMode.STABLE_VIDEO: "▷  STABLE VIDEO",
     AppMode.SNAPSHOT: "◫  SNAPSHOT",
     AppMode.RECONSTRUCTION: "⛶  RECONSTRUCTION",
@@ -29,7 +31,7 @@ _MODE_LABELS: dict[AppMode, str] = {
 }
 
 # Modes not yet implemented remain visible but disabled, per spec §3.
-_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
+_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
 
 
 class ModeTabs(QFrame):

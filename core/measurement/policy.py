@@ -1,7 +1,7 @@
 """Generic, model-independent Step 6 measurement policies."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from core.measurement.contracts import LowerBoundPolicy, MeasurementKind
+from core.measurement.contracts import BoundingBoxKind, LowerBoundPolicy, MeasurementKind
 
 @dataclass(frozen=True, slots=True)
 class MeasurementSelectionPolicy:
@@ -17,12 +17,15 @@ class MeasurementSelectionPolicy:
     reject_height_on_vertical_border: bool = True
     reject_volume_on_any_border: bool = True
     allow_weak_orientation: bool = True
+    forced_box_kind: BoundingBoxKind | None = None
 
     def __post_init__(self) -> None:
         kinds = tuple(self.requested_kinds)
         if not kinds or len(kinds) != len(set(kinds)):
             raise ValueError("requested_kinds must be non-empty and unique.")
         object.__setattr__(self, "requested_kinds", kinds)
+        if self.forced_box_kind is not None and not isinstance(self.forced_box_kind, BoundingBoxKind):
+            raise TypeError("forced_box_kind must be a BoundingBoxKind or None.")
 
 @dataclass(frozen=True, slots=True)
 class PerturbationPolicy:
