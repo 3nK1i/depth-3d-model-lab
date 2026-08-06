@@ -12,6 +12,7 @@ from .factories import (
     make_depth_camera_frame,
     make_extraction_request,
 )
+from .diagnostics import SupportRetentionDiagnostics, support_retention_diagnostics
 from .pipeline import ObjectPointExtractionRequest, extract_object_point_clouds
 from .policy import (
     BackgroundPlanePolicy,
@@ -23,6 +24,7 @@ from .policy import (
     ObjectPointExtractionPolicy,
     SamplingPolicy,
     StatisticalOutlierPolicy,
+    SupportRetentionPolicy,
 )
 
 __all__ = [
@@ -40,11 +42,14 @@ __all__ = [
     "ObjectPointExtractionStatus",
     "PointCoordinateSemantics",
     "SamplingPolicy",
+    "SupportRetentionDiagnostics",
     "StatisticalOutlierPolicy",
+    "SupportRetentionPolicy",
     "coordinate_semantics_for_depth_scale",
     "extract_object_point_clouds",
     "make_depth_camera_frame",
     "make_extraction_request",
+    "support_retention_diagnostics",
 ]
 
 from .fitting_contracts import (

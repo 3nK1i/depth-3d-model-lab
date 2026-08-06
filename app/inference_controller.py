@@ -555,6 +555,31 @@ class InferenceController(QObject):
         self._state_machine.transition_to(ApplicationState.DISCONNECTED)
         self._apply_button_states()
 
+    def _prepare_result_ready_restart(self) -> None:
+        """Clear a completed static result before loading a non-resident model.
+
+        Measure & Inspect deliberately releases the Live 3D worker to avoid GPU
+        co-residency.  A later image selection can therefore leave the shell in
+        RESULT_READY while no model is resident.  Starting again must retire the
+        old result explicitly before entering the normal SOURCE_READY ->
+        LOADING_MODEL path.  Keeping this cleanup here avoids weakening model
+        loading or silently carrying stale geometry into the next session.
+        """
+        if self._state_machine.state is not ApplicationState.RESULT_READY:
+            return
+
+        self._session.invalidate()
+        self._depth_view.clear_frame()
+        self._point_cloud_canvas.clear_points()
+        self._viewport_panel.invalidate_camera()
+        self._viewport_panel.set_surface_normals_available(False)
+        self._viewport_panel.set_status(ViewportStatus.IDLE)
+        self._performance_bar.reset_metrics()
+        self._clear_cached_geometry()
+        self._reset_pipeline_runtime()
+        self._state_machine.transition_to(ApplicationState.SOURCE_READY)
+        self._apply_button_states()
+
     def _on_start_clicked(self) -> None:
         if self._shutdown_started:
             return
@@ -588,6 +613,12 @@ class InferenceController(QObject):
         ):
             self._initiate_model_switch(model_id, config, auto_start=True)
             return
+
+        # A completed static result can outlive the worker because external
+        # inspection jobs release resident GPU models.  Retire that result
+        # before following the ordinary model-load lifecycle for the new source.
+        if self._state_machine.state is ApplicationState.RESULT_READY:
+            self._prepare_result_ready_restart()
 
         self._begin_model_load(
             model_id,

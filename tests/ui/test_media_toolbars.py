@@ -6,7 +6,7 @@ from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QPixmap
 
 from app.main_window import MainWindow
-from app.widgets.depth_view import DepthMapView
+from app.widgets.depth_view import DepthMapView, _COLORMAP_STOPS
 from app.widgets.icon_button import IconButton
 from app.widgets.original_view import OriginalSourceView
 
@@ -132,6 +132,10 @@ def test_depth_controls_emit_valid_values_and_update_colorbar(qtbot) -> None:
         view._colormap_combo.setCurrentText("Viridis")
     assert colormap.args == ["Viridis"]
     assert view._color_bar._bar.colormap_name == "Viridis"
+    gradient_style = view._color_bar._bar.styleSheet()
+    assert "qlineargradient" in gradient_style
+    assert _COLORMAP_STOPS["Viridis"][0] in gradient_style
+    assert _COLORMAP_STOPS["Viridis"][-1] in gradient_style
 
     with qtbot.waitSignal(view.depth_range_changed, timeout=500) as depth_range:
         view._min_depth.setCurrentText("1.0 m")

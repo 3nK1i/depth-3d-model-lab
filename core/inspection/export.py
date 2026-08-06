@@ -114,6 +114,15 @@ def _write_ply(path: Path, points: np.ndarray, colors: np.ndarray | None) -> Non
                 )
 
 
+
+
+def _measurement_label(kind: str) -> str:
+    """Return a precise human-facing label without changing the export schema."""
+    normalized = str(kind)
+    if normalized == "volume":
+        return "Bounding-Box Volume"
+    return normalized.replace("_", " ").title()
+
 def _measurement_display(measurement: Mapping[str, Any]) -> str:
     if measurement.get("status") != "available":
         reasons = ", ".join(str(v) for v in measurement.get("rejection_reasons", ()))
@@ -228,7 +237,7 @@ def _write_html(path: Path, summary: InspectionBundleSummary, objects: Sequence[
     for obj in objects:
         measurements = "".join(
             "<tr>"
-            f"<td>{html.escape(str(m.get('kind', '')).replace('_', ' ').title())}</td>"
+            f"<td>{html.escape(_measurement_label(str(m.get('kind', ''))))}</td>"
             f"<td>{html.escape(_measurement_display(m))}</td>"
             f"<td>{html.escape(str(m.get('reliability', '')).title())}</td>"
             f"<td>{html.escape(str(m.get('status', '')).title())}</td>"
@@ -281,7 +290,7 @@ def _write_pdf(path: Path, export_dir: Path, summary: InspectionBundleSummary, o
             fig.text(0.07, 0.91, f"Observation: {obj.observation_id} | Locked: {'Yes' if obj.observation_id in locked_ids else 'No'}", fontsize=8)
             mask_path = export_dir / "objects" / f"object_{obj.object_index + 1:03d}_{_slug(obj.class_name)}" / "approved_mask.png"
             ax = fig.add_axes([0.07, 0.60, 0.35, 0.26]); ax.imshow(Image.open(mask_path), cmap="gray"); ax.set_title("Approved/current mask", fontsize=9); ax.axis("off")
-            lines = [f"{str(m.get('kind', '')).replace('_', ' ').title()}: {_measurement_display(m)} [{str(m.get('reliability', '')).title()}]" for m in obj.measurements]
+            lines = [f"{_measurement_label(str(m.get('kind', '')))}: {_measurement_display(m)} [{str(m.get('reliability', '')).title()}]" for m in obj.measurements]
             fig.text(0.46, 0.86, "Measurements", fontsize=12, weight="bold")
             fig.text(0.46, 0.83, "\n".join(lines), fontsize=8.2, va="top", linespacing=1.45)
             fig.text(0.07, 0.53, f"Mask: {obj.mask_source}, revision {obj.mask_revision}, approval {obj.approval_status}", fontsize=9)

@@ -41,3 +41,14 @@ checkpoints/marigold/
 # Snapshot and Stable Video exports.
 outputs/snapshots/
 outputs/stable_video/
+
+# Phase 7.5 generated validation and inspection outputs.
+outputs/phase7_5/
+outputs/inspection_exports/
+
+# Local perception/depth checkpoints must never be committed.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.plan

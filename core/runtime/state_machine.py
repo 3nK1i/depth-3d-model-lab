@@ -79,6 +79,7 @@ _ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
     ),
     ApplicationState.RESULT_READY: frozenset(
         {
+            ApplicationState.SOURCE_READY,
             ApplicationState.RUNNING,
             ApplicationState.SWITCHING_MODEL,
             ApplicationState.RECOVERING_WORKER,

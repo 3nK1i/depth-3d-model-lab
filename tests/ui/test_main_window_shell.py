@@ -869,3 +869,89 @@ def test_model_metadata_can_extend_inference_timeout_without_model_branching(win
     controller._active_model_metadata = {"inference_timeout_ms": 999_999}
     controller._apply_active_inference_timeout()
     assert controller._inference_watchdog_timer.interval() == 600_000
+
+
+def test_result_ready_without_resident_model_reloads_for_next_image(
+    window, qtbot, monkeypatch
+):
+    controller = window._inference_controller
+    toolbar = window._runtime_toolbar
+    load_calls: list[tuple[str, dict]] = []
+    start_calls: list[bool] = []
+
+    window._controller._active_source = ImageSource("image-a.png")
+    qtbot.mouseClick(toolbar._connect_btn, _left_button())
+    qtbot.mouseClick(toolbar._start_btn, _left_button())
+    controller._on_ack_received(_moge_ack())
+    controller._state_machine.transition_to(ApplicationState.RESULT_READY)
+
+    # Measure & Inspect has released the worker/model after image A.
+    controller._model_loaded = False
+    controller._active_model_id = None
+    controller._active_model_config_signature = None
+    controller._process_manager._process = None
+    # The shared ``window`` fixture models the normal resident-worker path by
+    # forcing ``is_running`` to True.  This test specifically models the
+    # post-inspection state where that worker has been released, so override
+    # the fixture's property for this scenario.
+    monkeypatch.setattr(
+        type(controller._process_manager),
+        "is_running",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "start_worker",
+        lambda: start_calls.append(True),
+    )
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, config=None: load_calls.append((model_id, dict(config or {}))),
+    )
+
+    # Image B can start directly without disconnecting image A first.
+    window._controller._active_source = ImageSource("image-b.png")
+    controller._on_start_clicked()
+
+    assert controller.state_machine.state is ApplicationState.LOADING_MODEL
+    assert start_calls == [True]
+    assert len(load_calls) == 1
+    assert not controller._point_cloud_canvas._has_points
+
+
+def test_three_static_images_can_restart_after_each_released_result(
+    window, monkeypatch
+):
+    controller = window._inference_controller
+    load_calls: list[str] = []
+
+    controller._state_machine.transition_to(ApplicationState.CONNECTING)
+    controller._state_machine.transition_to(ApplicationState.SOURCE_READY)
+    controller._process_manager._process = None
+    monkeypatch.setattr(
+        type(controller._process_manager),
+        "is_running",
+        property(lambda self: False),
+    )
+    monkeypatch.setattr(controller._process_manager, "start_worker", lambda: None)
+    monkeypatch.setattr(
+        controller._process_manager,
+        "load_model",
+        lambda model_id, config=None: load_calls.append(model_id),
+    )
+
+    for index, name in enumerate(("image-a.png", "image-b.png", "image-c.png")):
+        window._controller._active_source = ImageSource(name)
+        if index:
+            controller._state_machine.transition_to(ApplicationState.RESULT_READY)
+        controller._model_loaded = False
+        controller._active_model_id = None
+        controller._active_model_config_signature = None
+        controller._on_start_clicked()
+        assert controller.state_machine.state is ApplicationState.LOADING_MODEL
+        # Simulate a completed load/run/result before the next image.
+        controller._state_machine.transition_to(ApplicationState.MODEL_READY)
+        controller._state_machine.transition_to(ApplicationState.RUNNING)
+
+    assert len(load_calls) == 3

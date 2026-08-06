@@ -23,6 +23,7 @@ from core.object_geometry.contracts import (
     PointCoordinateSemantics,
     derive_batch_status,
 )
+from core.object_geometry.diagnostics import SupportRetentionDiagnostics
 from core.object_geometry.filters import (
     background_plane_keep_mask,
     depth_discontinuity_keep_mask,
@@ -74,6 +75,14 @@ def _coordinate_semantics(depth_scale: DepthScale) -> PointCoordinateSemantics:
 
 def _scale_recovery_status(depth_scale: DepthScale) -> ScaleRecoveryStatus:
     return ScaleRecoveryStatus.NOT_REQUIRED if depth_scale is DepthScale.METRIC else ScaleRecoveryStatus.NOT_ATTEMPTED
+
+
+def _support_parameters(
+    diagnostics: SupportRetentionDiagnostics | None,
+) -> dict[str, int | float | bool]:
+    if diagnostics is None:
+        return {}
+    return {f"support_{key}": value for key, value in diagnostics.as_dict().items()}
 
 
 def _step(observation_id: str, stage: str, method: str, before: int, after: int, **parameters) -> ProcessingStep:
@@ -247,7 +256,12 @@ def _extract_one(
     raw_count = len(points)
     raw_cloud = _cloud(observation, bundle, coordinate_frame, points, pixels, colors, weights, raw_count=raw_count, steps=tuple(steps))
 
-    outlier = robust_xyz_outlier_keep_mask(points, policy.outliers)
+    outlier = robust_xyz_outlier_keep_mask(
+        points,
+        policy.outliers,
+        source_pixel_indices_xy=pixels,
+        support_policy=policy.support_retention,
+    )
     if outlier.warning:
         warnings.append(outlier.warning)
     points_f = points[outlier.keep]
@@ -255,7 +269,16 @@ def _extract_one(
     colors_f = colors[outlier.keep]
     weights_f = weights[outlier.keep] if weights is not None else None
     outlier_count = len(points_f)
-    steps.append(_step(observation.observation_id, "outliers", outlier.method, raw_count, outlier_count, threshold=outlier.threshold))
+    steps.append(_step(
+        observation.observation_id,
+        "outliers",
+        outlier.method,
+        raw_count,
+        outlier_count,
+        threshold=outlier.threshold,
+        support_guard_applied=outlier.support_guard_applied,
+        **_support_parameters(outlier.support_diagnostics),
+    ))
 
     plane_keep = np.ones(outlier_count, dtype=bool)
     plane_method = "disabled"
@@ -279,7 +302,13 @@ def _extract_one(
     steps.append(_step(observation.observation_id, "background-plane", plane_method, outlier_count, plane_count, enabled=policy.background_plane.enabled))
 
     centroid = mask_centroid_xy(eroded)
-    cluster = select_voxel_cluster(points_f, pixels_f, mask_centroid_xy=centroid, policy=policy.clustering)
+    cluster = select_voxel_cluster(
+        points_f,
+        pixels_f,
+        mask_centroid_xy=centroid,
+        policy=policy.clustering,
+        support_policy=policy.support_retention,
+    )
     points_f = points_f[cluster.keep]
     pixels_f = pixels_f[cluster.keep]
     colors_f = colors_f[cluster.keep]
@@ -287,7 +316,23 @@ def _extract_one(
     cluster_count = len(points_f)
     if cluster.ambiguous:
         warnings.append("ambiguous_3d_clusters")
-    steps.append(_step(observation.observation_id, "clustering", cluster.method, plane_count, cluster_count, voxel_size=cluster.voxel_size, cluster_count=cluster.cluster_count, ambiguous=cluster.ambiguous))
+    if cluster.support_guard_applied:
+        warnings.append("thin_structure_support_preserved_after_cluster_guard")
+    elif cluster.support_diagnostics is not None and cluster.support_diagnostics.thin_support_loss:
+        warnings.append("thin_structure_support_loss_after_clustering")
+    steps.append(_step(
+        observation.observation_id,
+        "clustering",
+        cluster.method,
+        plane_count,
+        cluster_count,
+        voxel_size=cluster.voxel_size,
+        cluster_count=cluster.cluster_count,
+        ambiguous=cluster.ambiguous,
+        support_guard_applied=cluster.support_guard_applied,
+        merged_cluster_count=cluster.merged_cluster_count,
+        **_support_parameters(cluster.support_diagnostics),
+    ))
 
     if cluster_count < policy.minimum_retained_points:
         counts = ExtractionStageCounts(
@@ -309,7 +354,12 @@ def _extract_one(
         range_count, discontinuity_count, raw_count, outlier_count, plane_count, cluster_count, output_count,
     )
     filtered_cloud = _cloud(observation, bundle, coordinate_frame, points_f, pixels_f, colors_f, weights_f, raw_count=raw_count, steps=tuple(steps))
-    status = ObjectPointExtractionStatus.PARTIAL if (observation.border_contacts or cluster.ambiguous) else ObjectPointExtractionStatus.SUCCESS
+    status = ObjectPointExtractionStatus.PARTIAL if (
+        observation.border_contacts
+        or cluster.ambiguous
+        or outlier.support_guard_applied
+        or cluster.support_guard_applied
+    ) else ObjectPointExtractionStatus.SUCCESS
     return ObjectPointExtractionResult(
         observation.observation_id,
         bundle.frame_reference,

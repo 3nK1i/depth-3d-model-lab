@@ -80,12 +80,24 @@ class DepthDiscontinuityPolicy:
     enabled: bool = True
     mad_multiplier: float = 6.0
     minimum_absolute_threshold: float = 1e-6
+    minimum_relative_threshold: float = 0.01
     minimum_neighbor_samples: int = 16
+    minimum_consistent_neighbors: int = 1
+    minimum_consistent_fraction: float = 0.25
+    sparse_neighbor_threshold: int = 2
+    preserve_sparse_support: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mad_multiplier", _positive_float(self.mad_multiplier, "mad_multiplier"))
         object.__setattr__(self, "minimum_absolute_threshold", _positive_float(self.minimum_absolute_threshold, "minimum_absolute_threshold", allow_zero=True))
+        object.__setattr__(self, "minimum_relative_threshold", _positive_float(self.minimum_relative_threshold, "minimum_relative_threshold", allow_zero=True))
         object.__setattr__(self, "minimum_neighbor_samples", _positive_int(self.minimum_neighbor_samples, "minimum_neighbor_samples"))
+        object.__setattr__(self, "minimum_consistent_neighbors", _positive_int(self.minimum_consistent_neighbors, "minimum_consistent_neighbors"))
+        fraction = float(self.minimum_consistent_fraction)
+        if not math.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+            raise ContractValidationError("minimum_consistent_fraction must be within (0, 1].")
+        object.__setattr__(self, "minimum_consistent_fraction", fraction)
+        object.__setattr__(self, "sparse_neighbor_threshold", _positive_int(self.sparse_neighbor_threshold, "sparse_neighbor_threshold", allow_zero=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +144,11 @@ class ClusteringPolicy:
     adaptive_extent_fraction: float = 0.03
     minimum_cluster_points: int = 8
     weak_dominance_ratio: float = 1.50
+    preserve_mask_connected_support: bool = True
+    minimum_preserved_cluster_points: int = 8
+    maximum_pixel_gap: int = 4
+    maximum_relative_depth_gap: float = 0.25
+    maximum_absolute_depth_gap: float = 0.20
 
     def __post_init__(self) -> None:
         if self.voxel_size is not None:
@@ -139,6 +156,40 @@ class ClusteringPolicy:
         object.__setattr__(self, "adaptive_extent_fraction", _positive_float(self.adaptive_extent_fraction, "adaptive_extent_fraction"))
         object.__setattr__(self, "minimum_cluster_points", _positive_int(self.minimum_cluster_points, "minimum_cluster_points"))
         object.__setattr__(self, "weak_dominance_ratio", _positive_float(self.weak_dominance_ratio, "weak_dominance_ratio"))
+        object.__setattr__(self, "minimum_preserved_cluster_points", _positive_int(self.minimum_preserved_cluster_points, "minimum_preserved_cluster_points"))
+        object.__setattr__(self, "maximum_pixel_gap", _positive_int(self.maximum_pixel_gap, "maximum_pixel_gap", allow_zero=True))
+        object.__setattr__(self, "maximum_relative_depth_gap", _positive_float(self.maximum_relative_depth_gap, "maximum_relative_depth_gap", allow_zero=True))
+        object.__setattr__(self, "maximum_absolute_depth_gap", _positive_float(self.maximum_absolute_depth_gap, "maximum_absolute_depth_gap", allow_zero=True))
+
+
+
+
+@dataclass(frozen=True, slots=True)
+class SupportRetentionPolicy:
+    """Guard against filters collapsing valid thin or articulated mask support."""
+
+    enabled: bool = True
+    grid_size: int = 8
+    minimum_point_retention: float = 0.45
+    minimum_axis_span_retention: float = 0.75
+    minimum_grid_coverage_retention: float = 0.60
+    fallback_quantile: float = 0.005
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "grid_size", _positive_int(self.grid_size, "grid_size"))
+        for name in (
+            "minimum_point_retention",
+            "minimum_axis_span_retention",
+            "minimum_grid_coverage_retention",
+        ):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or not 0.0 < value <= 1.0:
+                raise ContractValidationError(f"{name} must be within (0, 1].")
+            object.__setattr__(self, name, value)
+        quantile = float(self.fallback_quantile)
+        if not math.isfinite(quantile) or not 0.0 <= quantile < 0.5:
+            raise ContractValidationError("fallback_quantile must be within [0, 0.5).")
+        object.__setattr__(self, "fallback_quantile", quantile)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +209,7 @@ class ObjectPointExtractionPolicy:
     outliers: StatisticalOutlierPolicy = field(default_factory=StatisticalOutlierPolicy)
     background_plane: BackgroundPlanePolicy = field(default_factory=BackgroundPlanePolicy)
     clustering: ClusteringPolicy = field(default_factory=ClusteringPolicy)
+    support_retention: SupportRetentionPolicy = field(default_factory=SupportRetentionPolicy)
     sampling: SamplingPolicy = field(default_factory=SamplingPolicy)
     minimum_retained_points: int = 32
 

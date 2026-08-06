@@ -17,6 +17,47 @@ Version `0.7.0` is the stable Phase 7 operational-modes release:
 - Explicit total-device VRAM in the header and model/process allocator VRAM in the footer
 - Unit, UI, integration, stress and release gates with machine-readable release reports
 
+The repository also contains the Phase 7.5 measurement release candidate:
+
+- YOLO instance segmentation and prompted SAM2 refinement adapters
+- Depth/perception alignment and object-specific 3D point extraction
+- Robust AABB, camera-aligned and oriented 3D boxes
+- Width, height, depth, distance, centre, orientation and bounding-box volume
+- Explicit estimated uncertainty, reliability and rejection reasons
+- Temporal tracking and measurement stabilization
+- Dedicated Measure & Inspect page with mask correction and result locking
+- Selected/all-object exports with HTML/PDF reports and SHA-256 manifests
+- Known-size benchmark tooling for final accuracy validation
+
+The application remains version `0.7.0 - Phase 7 Stable` until the real known-size benchmark and target-hardware Phase 7.5 release gate pass.
+
+## Phase 7.5 known-size validation
+
+Create an editable benchmark manifest:
+
+```bash
+python scripts/create_known_size_benchmark_template.py \
+  --output outputs/phase7_5/known_size_benchmark.json
+```
+
+After adding real Step 9 exports and independently measured dimensions, run:
+
+```bash
+python scripts/run_known_size_validation.py \
+  --manifest outputs/phase7_5/known_size_benchmark.json \
+  --output-dir outputs/phase7_5/known_size_validation
+```
+
+Run the final release-candidate gate only after that report passes:
+
+```bash
+./scripts/run_phase7_5_release.sh full \
+  --known-size-report outputs/phase7_5/known_size_validation \
+  --require-clean-git
+```
+
+See `KNOWN_SIZE_BENCHMARK_GUIDE.md` and `TEST_STRATEGY_PHASE7_5_RELEASE.md`.
+
 ## Requirements
 
 - Ubuntu 24.04 LTS

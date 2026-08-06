@@ -109,3 +109,18 @@ def test_running_can_enter_worker_recovery_and_return_to_model_ready() -> None:
         ApplicationState.MODEL_READY,
     ):
         assert machine.transition_to(target)
+
+
+def test_result_ready_can_retire_result_before_reloading_model() -> None:
+    machine = StateMachine()
+    for target in (
+        ApplicationState.CONNECTING,
+        ApplicationState.SOURCE_READY,
+        ApplicationState.LOADING_MODEL,
+        ApplicationState.MODEL_READY,
+        ApplicationState.RUNNING,
+        ApplicationState.RESULT_READY,
+        ApplicationState.SOURCE_READY,
+        ApplicationState.LOADING_MODEL,
+    ):
+        assert machine.transition_to(target)

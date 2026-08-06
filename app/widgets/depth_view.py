@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -40,7 +40,15 @@ def _parse_metres(text: str) -> float:
 
 
 class _ColorBar(QFrame):
-    """Vertical gradient that follows the selected depth colormap."""
+    """Vertical gradient that follows the selected depth colormap.
+
+    The bar deliberately uses Qt's stylesheet renderer instead of a custom
+    ``QPainter`` override.  During long headless Qt test runs widgets can be
+    queued for repaint while their backing store is being torn down; entering a
+    Python ``paintEvent`` in that window can cause a native Qt crash before
+    Python can raise an exception.  A stylesheet gradient is rendered entirely
+    by Qt's normal widget style path and has no manually managed painter.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -48,6 +56,8 @@ class _ColorBar(QFrame):
         self.setFixedWidth(14)
         self.setMinimumHeight(120)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._apply_gradient_style()
 
     def set_colormap(self, name: str) -> None:
         normalized = str(name).strip().title()
@@ -60,24 +70,29 @@ class _ColorBar(QFrame):
             )
         if key != self._colormap_name:
             self._colormap_name = key
-            self.update()
+            self._apply_gradient_style()
+
+    def _apply_gradient_style(self) -> None:
+        colors = _COLORMAP_STOPS[self._colormap_name]
+        denominator = max(1, len(colors) - 1)
+        stops = ", ".join(
+            f"stop:{index / denominator:.6f} {color}"
+            for index, color in enumerate(colors)
+        )
+        self.setStyleSheet(
+            "QFrame {"
+            "border: 0;"
+            "border-radius: 3px;"
+            "background: qlineargradient("
+            "x1:0, y1:1, x2:0, y2:0, "
+            f"{stops}"
+            ");"
+            "}"
+        )
 
     @property
     def colormap_name(self) -> str:
         return self._colormap_name
-
-    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        gradient = QLinearGradient(0, self.height(), 0, 0)
-        colors = _COLORMAP_STOPS[self._colormap_name]
-        denominator = max(1, len(colors) - 1)
-        for index, color in enumerate(colors):
-            gradient.setColorAt(index / denominator, QColor(color))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(gradient)
-        painter.drawRoundedRect(self.rect(), 3, 3)
-        painter.end()
 
 
 class _ColorBarColumn(QWidget):
