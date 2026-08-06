@@ -53,19 +53,19 @@ def test_inference_result_ipc_contract_remains_pickle_compatible() -> None:
     assert restored.confidence_kind == ""
 
 
-def test_phase7_modes_and_release_identity_are_unchanged() -> None:
+def test_phase7_modes_and_phase75_release_identity_are_preserved() -> None:
     project_root = Path(__file__).resolve().parents[2]
     mode_source = (project_root / "app/widgets/mode_tabs.py").read_text(encoding="utf-8")
     assert "_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}" in mode_source
     assert "AppMode.RECONSTRUCTION" not in mode_source.split("_ENABLED_MODES =", 1)[1].split("\n", 1)[0]
-    assert __version__ == "0.7.0"
-    assert RELEASE_NAME == "Phase 7 Stable"
+    assert __version__ == "0.7.5"
+    assert RELEASE_NAME == "Phase 7.5 Stable"
 
 
 def test_step2_keeps_optional_runtime_imports_adapter_local() -> None:
     project_root = Path(__file__).resolve().parents[2]
     pyproject = (project_root / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.7.0"' in pyproject
+    assert 'version = "0.7.5"' in pyproject
     source = "\n".join(path.read_text(encoding="utf-8") for path in sorted((project_root / "core/perception").glob("*.py")))
     assert "from ultralytics" not in source
     assert "import ultralytics" not in source

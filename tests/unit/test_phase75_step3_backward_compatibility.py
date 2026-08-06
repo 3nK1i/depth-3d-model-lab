@@ -13,7 +13,7 @@ from core.runtime.messages import InferenceResult
 from core.version import __version__
 
 
-def test_depth_registry_order_and_version_are_unchanged():
+def test_depth_registry_order_and_phase75_version_are_preserved():
     assert MODEL_REGISTRY.ids() == (
         "moge-2",
         "depth-pro",
@@ -24,7 +24,7 @@ def test_depth_registry_order_and_version_are_unchanged():
         "marigold",
         "development-mock",
     )
-    assert __version__ == "0.7.0"
+    assert __version__ == "0.7.5"
 
 
 def test_geometry_and_ipc_positional_compatibility_are_unchanged():

@@ -11,9 +11,9 @@ from core.version import RELEASE_NAME, RELEASE_PHASE, __version__
 
 
 def test_current_release_identity_for_benchmark_reports() -> None:
-    assert __version__ == "0.7.0"
-    assert RELEASE_NAME == "Phase 7 Stable"
-    assert RELEASE_PHASE == 7
+    assert __version__ == "0.7.5"
+    assert RELEASE_NAME == "Phase 7.5 Stable"
+    assert RELEASE_PHASE == 7.5
 
 
 def test_benchmark_report_requires_every_production_model(tmp_path: Path) -> None:

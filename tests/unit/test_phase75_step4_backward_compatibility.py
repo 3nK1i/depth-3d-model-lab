@@ -8,8 +8,8 @@ from core.perception.registry import PERCEPTION_MODEL_REGISTRY
 from core.version import __version__
 
 
-def test_existing_registries_version_and_runtime_sources_are_unchanged():
-    assert __version__ == "0.7.0"
+def test_existing_registries_phase75_version_and_runtime_sources_are_preserved():
+    assert __version__ == "0.7.5"
     assert tuple(MODEL_REGISTRY.ids()) == (
         "moge-2", "depth-pro", "unidepth-v2", "metric3d-v2",
         "depth-anything-v2", "video-depth-anything", "marigold", "development-mock",

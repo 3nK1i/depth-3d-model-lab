@@ -4,7 +4,7 @@ A PyQt6 desktop application for live monocular geometry estimation and interacti
 
 ## Current status
 
-Version `0.7.0` is the stable Phase 7 operational-modes release:
+Version `0.7.5` is the stable Phase 7.5 measurement and inspection release:
 
 - Live 3D for Image, Video, USB camera and RTSP sources
 - Interactive Benchmark mode backed by isolated registry-driven model processes
@@ -14,11 +14,6 @@ Version `0.7.0` is the stable Phase 7 operational-modes release:
 - Registry-driven adapters, capabilities, dependencies, checkpoints, licensing and GPU profiles
 - Automatic RTX 2060 Efficient and RTX 5090 Ultra selection without code changes
 - MoGe-2, Depth Pro, UniDepthV2, Metric3D v2, Depth Anything V2, Video Depth Anything and Marigold
-- Explicit total-device VRAM in the header and model/process allocator VRAM in the footer
-- Unit, UI, integration, stress and release gates with machine-readable release reports
-
-The repository also contains the Phase 7.5 measurement release candidate:
-
 - YOLO instance segmentation and prompted SAM2 refinement adapters
 - Depth/perception alignment and object-specific 3D point extraction
 - Robust AABB, camera-aligned and oriented 3D boxes
@@ -27,20 +22,23 @@ The repository also contains the Phase 7.5 measurement release candidate:
 - Temporal tracking and measurement stabilization
 - Dedicated Measure & Inspect page with mask correction and result locking
 - Selected/all-object exports with HTML/PDF reports and SHA-256 manifests
-- Known-size benchmark tooling for final accuracy validation
+- Explicit notices that measurements are engineering estimates, not certified metrology
+- Unit, UI, integration, stress and release gates with machine-readable release reports
 
-The application remains version `0.7.0 - Phase 7 Stable` until the real known-size benchmark and target-hardware Phase 7.5 release gate pass.
+The real calibrated known-size measurement campaign is intentionally deferred until after Phase 8. Existing measurements remain explicitly estimated and uncalibrated unless a valid calibration source is provided.
 
-## Phase 7.5 known-size validation
+## Deferred calibrated known-size validation
 
-Create an editable benchmark manifest:
+The known-size benchmark tooling is retained for the calibrated validation campaign planned after Phase 8. It is not required to use the released Phase 7.5 engineering-estimate workflow.
+
+Create an editable benchmark manifest when that campaign begins:
 
 ```bash
 python scripts/create_known_size_benchmark_template.py \
   --output outputs/phase7_5/known_size_benchmark.json
 ```
 
-After adding real Step 9 exports and independently measured dimensions, run:
+After adding real exports and independently measured reference dimensions, run:
 
 ```bash
 python scripts/run_known_size_validation.py \
@@ -48,15 +46,7 @@ python scripts/run_known_size_validation.py \
   --output-dir outputs/phase7_5/known_size_validation
 ```
 
-Run the final release-candidate gate only after that report passes:
-
-```bash
-./scripts/run_phase7_5_release.sh full \
-  --known-size-report outputs/phase7_5/known_size_validation \
-  --require-clean-git
-```
-
-See `KNOWN_SIZE_BENCHMARK_GUIDE.md` and `TEST_STRATEGY_PHASE7_5_RELEASE.md`.
+See `KNOWN_SIZE_BENCHMARK_GUIDE.md` and `TEST_STRATEGY_PHASE7_5_RELEASE.md` for the retained validation methodology and historical release-gate design.
 
 ## Requirements
 

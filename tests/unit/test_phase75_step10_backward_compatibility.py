@@ -5,9 +5,9 @@ from pathlib import Path
 from core.version import RELEASE_NAME, __version__
 
 
-def test_release_identity_stays_on_phase7_until_measured_gate_passes() -> None:
-    assert __version__ == "0.7.0"
-    assert RELEASE_NAME == "Phase 7 Stable"
+def test_release_identity_is_phase75_stable() -> None:
+    assert __version__ == "0.7.5"
+    assert RELEASE_NAME == "Phase 7.5 Stable"
 
 
 def test_step10_does_not_enable_reconstruction() -> None:

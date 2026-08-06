@@ -11,8 +11,8 @@ from core.version import RELEASE_NAME, __version__
 
 
 def test_step6_preserves_release_and_depth_registry_order() -> None:
-    assert __version__ == "0.7.0"
-    assert RELEASE_NAME == "Phase 7 Stable"
+    assert __version__ == "0.7.5"
+    assert RELEASE_NAME == "Phase 7.5 Stable"
     assert MODEL_REGISTRY.ids() == (
         "moge-2",
         "depth-pro",
