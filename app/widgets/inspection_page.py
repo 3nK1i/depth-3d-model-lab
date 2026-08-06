@@ -52,6 +52,7 @@ class InspectionPage(QWidget):
     analysis_requested = pyqtSignal(dict)
     cancel_requested = pyqtSignal()
     recompute_requested = pyqtSignal(dict)
+    export_requested = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -68,6 +69,7 @@ class InspectionPage(QWidget):
         self._depth_model_label = "No depth model selected"
         self._source_available = False
         self._state = InspectionControllerState.IDLE
+        self._export_running = False
         self._build_ui()
         self._populate_perception_models()
         self.set_controller_state(InspectionControllerState.IDLE)
@@ -243,6 +245,7 @@ class InspectionPage(QWidget):
         layout.addWidget(self._build_display_card())
         layout.addWidget(self._build_correction_card())
         layout.addWidget(self._build_measurement_card())
+        layout.addWidget(self._build_export_card())
         layout.addWidget(self._build_details_card())
         layout.addStretch(1)
         scroll.setWidget(content)
@@ -377,6 +380,28 @@ class InspectionPage(QWidget):
         self._measurement_table.horizontalHeader().setStretchLastSection(True)
         self._measurement_table.setMinimumHeight(250)
         layout.addWidget(self._measurement_table)
+        return frame
+
+    def _build_export_card(self) -> QFrame:
+        frame, layout = self._card("EXPORT & REPORT")
+        notice = QLabel("Exports the current approved inspection bundle without rerunning depth or perception.")
+        notice.setObjectName("inspectionMuted")
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        row = QHBoxLayout()
+        self._export_selected_btn = QPushButton("Export Selected")
+        self._export_selected_btn.setObjectName("inspectionSecondaryButton")
+        self._export_selected_btn.clicked.connect(lambda: self.export_requested.emit("selected"))
+        self._export_all_btn = QPushButton("Export All")
+        self._export_all_btn.setObjectName("inspectionPrimaryButton")
+        self._export_all_btn.clicked.connect(lambda: self.export_requested.emit("all"))
+        row.addWidget(self._export_selected_btn)
+        row.addWidget(self._export_all_btn)
+        layout.addLayout(row)
+        self._export_status = QLabel("No export created in this session.")
+        self._export_status.setObjectName("inspectionMuted")
+        self._export_status.setWordWrap(True)
+        layout.addWidget(self._export_status)
         return frame
 
     def _build_details_card(self) -> QFrame:
@@ -694,6 +719,41 @@ class InspectionPage(QWidget):
         self._details.append(f"ERROR: {message}")
         self.set_controller_state(InspectionControllerState.FAILED)
 
+    def export_context(self, scope: str) -> dict[str, object]:
+        if self._summary is None:
+            raise RuntimeError("Analyze a frame before exporting.")
+        observation_ids: tuple[str, ...]
+        if str(scope) == "selected":
+            if not self._selected_id:
+                raise RuntimeError("Select an object before exporting it.")
+            observation_ids = (self._selected_id,)
+        else:
+            observation_ids = tuple(obj.observation_id for obj in self._summary.objects)
+        return {
+            "summary": self._summary,
+            "arrays": self._arrays,
+            "observation_ids": observation_ids,
+            "locked_ids": tuple(sorted(self._locked_ids)),
+        }
+
+    def set_export_running(self, running: bool) -> None:
+        self._export_running = bool(running)
+        if running:
+            self._export_status.setText("Exporting approved inspection results...")
+        self._apply_state()
+
+    def set_export_progress(self, progress: int, stage: str, message: str) -> None:
+        self._export_status.setText(f"{str(stage).replace('_', ' ').title()} ({int(progress)}%): {message}")
+
+    def show_export_success(self, path: str, object_count: int, file_count: int) -> None:
+        self._export_status.setText(
+            f"Export complete: {object_count} object(s), {file_count} files. {path}"
+        )
+
+    def show_export_failure(self, message: str) -> None:
+        self._export_status.setText(f"Export failed: {message}")
+        self._details.append(f"EXPORT ERROR: {message}")
+
     def _apply_state(self) -> None:
         running = self._state in {
             InspectionControllerState.RUNNING,
@@ -713,6 +773,8 @@ class InspectionPage(QWidget):
         self._recompute_btn.setEnabled(has_result and not running and not locked and (self._manual_dirty or self._reset_manual_requested or self.current_box_method is not InspectionBoxMethod.AUTO))
         self._reset_mask_btn.setEnabled(has_result and not running and not locked)
         self._lock_btn.setEnabled(has_result and not running)
+        self._export_selected_btn.setEnabled(has_result and not running and not self._export_running)
+        self._export_all_btn.setEnabled(bool(self._summary and self._summary.objects) and not running and not self._export_running)
         editing = has_result and not running and not locked
         self._include_tool.setEnabled(editing)
         self._exclude_tool.setEnabled(editing)

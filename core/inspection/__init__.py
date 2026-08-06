@@ -5,6 +5,13 @@ from core.inspection.bundle import (
     STATE_FILENAME,
     load_inspection_bundle,
 )
+from core.inspection.export import (
+    EXPORT_SCHEMA_VERSION,
+    UNCERTAINTY_NOTICE,
+    InspectionExportOptions,
+    InspectionExportResult,
+    export_inspection_bundle,
+)
 from core.inspection.contracts import (
     InspectionApprovalState,
     InspectionBoxMethod,
@@ -27,4 +34,9 @@ __all__ = [
     "InspectionRunStatus",
     "MaskEditMode",
     "load_inspection_bundle",
+    "EXPORT_SCHEMA_VERSION",
+    "UNCERTAINTY_NOTICE",
+    "InspectionExportOptions",
+    "InspectionExportResult",
+    "export_inspection_bundle",
 ]

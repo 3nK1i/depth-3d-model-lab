@@ -9,13 +9,18 @@ Phase 1 demo lifecycle that used to live here has been fully replaced.
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -29,6 +34,7 @@ from app.benchmark_controller import (
     BenchmarkRunState,
 )
 from app.inference_controller import InferenceController
+from app.inspection_export_controller import InspectionExportController, InspectionExportState
 from app.measurement_inspection_controller import (
     InspectionControllerState,
     MeasurementInspectionController,
@@ -116,6 +122,7 @@ class MainWindow(QMainWindow):
         self._snapshot_controller = SnapshotController(Path(__file__).resolve().parents[1], self)
         self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
         self._inspection_controller = MeasurementInspectionController(Path(__file__).resolve().parents[1], self)
+        self._inspection_export_controller = InspectionExportController(Path(__file__).resolve().parents[1], self)
         self._inspection_frame: np.ndarray | None = None
         self._snapshot_frame: np.ndarray | None = None
         self._stable_previous_smoothing: float | None = None
@@ -129,11 +136,16 @@ class MainWindow(QMainWindow):
         self._inspection_page.analysis_requested.connect(self._start_inspection_analysis)
         self._inspection_page.cancel_requested.connect(self._inspection_controller.cancel)
         self._inspection_page.recompute_requested.connect(self._recompute_inspection)
+        self._inspection_page.export_requested.connect(self._export_inspection)
         self._inspection_controller.state_changed.connect(self._on_inspection_state_changed)
         self._inspection_controller.progress_changed.connect(self._inspection_page.set_progress)
         self._inspection_controller.result_ready.connect(self._on_inspection_result)
         self._inspection_controller.log_received.connect(self._inspection_page.append_job_log)
         self._inspection_controller.failure_received.connect(self._inspection_page.show_failure)
+        self._inspection_export_controller.progress_changed.connect(self._inspection_page.set_export_progress)
+        self._inspection_export_controller.result_ready.connect(self._on_inspection_export_result)
+        self._inspection_export_controller.failure_received.connect(self._inspection_page.show_export_failure)
+        self._inspection_export_controller.state_changed.connect(self._on_inspection_export_state_changed)
         self._stable_video_page.start_requested.connect(self._start_stable_video)
         self._stable_video_page.pause_resume_requested.connect(self._pause_resume_stable_video)
         self._stable_video_page.stop_requested.connect(self._stop_stable_video)
@@ -429,6 +441,52 @@ class MainWindow(QMainWindow):
             self._inspection_page.show_failure(f"Inspection bundle could not be loaded: {exc}")
         finally:
             self._mode_tabs.set_navigation_locked(False)
+
+    def _export_inspection(self, scope: str) -> None:
+        if self._inspection_export_controller.is_running:
+            self._inspection_page.show_export_failure("An inspection export is already running.")
+            return
+        try:
+            context = self._inspection_page.export_context(scope)
+        except RuntimeError as exc:
+            self._inspection_page.show_export_failure(str(exc))
+            return
+        default_name = datetime.now().strftime("inspection_export_%Y%m%d_%H%M%S")
+        parent = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Inspection Export Parent Folder",
+            str(Path.home() / "Documents"),
+        )
+        if not parent:
+            return
+        target = Path(parent) / default_name
+        try:
+            self._inspection_export_controller.start(
+                bundle_dir=context["summary"].bundle_dir,
+                output_dir=target,
+                observation_ids=tuple(context["observation_ids"]),
+                locked_ids=tuple(context["locked_ids"]),
+            )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self._inspection_page.show_export_failure(str(exc))
+
+    def _on_inspection_export_state_changed(self, state: InspectionExportState) -> None:
+        running = state is InspectionExportState.RUNNING
+        self._inspection_page.set_export_running(running)
+        if running:
+            self._mode_tabs.set_navigation_locked(True)
+        elif not self._inspection_controller.is_running:
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _on_inspection_export_result(self, path: str, object_count: int, file_count: int) -> None:
+        self._inspection_page.show_export_success(path, object_count, file_count)
+        self._mode_tabs.set_navigation_locked(False)
+        QMessageBox.information(
+            self,
+            "Inspection Export Complete",
+            f"Created {file_count} files for {object_count} object(s).\n\n{path}",
+        )
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _refresh_stable_video_context(self) -> None:
         descriptor = get_model_descriptor(self._settings_panel.selected_model_id)
@@ -744,6 +802,7 @@ class MainWindow(QMainWindow):
         self._snapshot_controller.shutdown()
         self._stable_video_controller.shutdown()
         self._inspection_controller.shutdown()
+        self._inspection_export_controller.shutdown()
         self._inspection_page.close()
         self._inference_controller.shutdown()
         self._controller.shutdown()
