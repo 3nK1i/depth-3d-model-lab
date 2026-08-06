@@ -11,6 +11,12 @@ from core.reconstruction.backends import (
     ReconstructionBackendKind,
 )
 from core.reconstruction.camera import CameraDistortionModel, ReconstructionCamera
+from core.reconstruction.cache import (
+    BoundedFrameCache,
+    FrameCacheStats,
+    IngestionCachePolicy,
+    resolve_ingestion_cache_policy,
+)
 from core.reconstruction.checkpoint import (
     CheckpointArtifact,
     CheckpointMetadata,
@@ -47,6 +53,18 @@ from core.reconstruction.events import (
     ReconstructionEventType,
     ReconstructionStage,
 )
+from core.reconstruction.ingestion import (
+    INGESTION_SCHEMA_VERSION,
+    CachedKeyframeImage,
+    FrameIngestionRecord,
+    ReconstructionIngestionPipeline,
+    ReconstructionIngestionResult,
+)
+from core.reconstruction.keyframes import (
+    KeyframeSelectionPolicy,
+    KeyframeSelector,
+    visual_change_score,
+)
 from core.reconstruction.poses import (
     CANONICAL_CAMERA_AXES,
     CANONICAL_LENGTH_UNIT,
@@ -72,6 +90,26 @@ from core.reconstruction.profiles import (
     resolve_reconstruction_profile,
 )
 from core.reconstruction.provenance import BackendProvenance, ReconstructionProvenance
+from core.reconstruction.quality import (
+    FrameQualityMetrics,
+    FrameQualityPolicy,
+    analyze_frame_quality,
+)
+from core.reconstruction.sampling import (
+    FrameSampler,
+    FrameSamplingMode,
+    FrameSamplingPolicy,
+)
+from core.reconstruction.sources import (
+    DecodedFrameCandidate,
+    ImageSequenceReader,
+    RecordedVideoReader,
+    ReconstructionFrameSource,
+    SourceReadIssue,
+    make_rtsp_source_metadata,
+    make_usb_source_metadata,
+    natural_path_key,
+)
 from core.reconstruction.serialization import (
     ReconstructionMetadataBundle,
     metadata_bundle_from_json,
@@ -87,6 +125,32 @@ from core.reconstruction.trajectory import ReconstructionTrajectory
 
 __all__ = [
     "BackendCapabilities",
+    "BoundedFrameCache",
+    "CachedKeyframeImage",
+    "DecodedFrameCandidate",
+    "FrameCacheStats",
+    "FrameIngestionRecord",
+    "FrameQualityMetrics",
+    "FrameQualityPolicy",
+    "FrameSampler",
+    "FrameSamplingMode",
+    "FrameSamplingPolicy",
+    "ImageSequenceReader",
+    "INGESTION_SCHEMA_VERSION",
+    "IngestionCachePolicy",
+    "KeyframeSelectionPolicy",
+    "KeyframeSelector",
+    "RecordedVideoReader",
+    "ReconstructionFrameSource",
+    "ReconstructionIngestionPipeline",
+    "ReconstructionIngestionResult",
+    "SourceReadIssue",
+    "analyze_frame_quality",
+    "make_rtsp_source_metadata",
+    "make_usb_source_metadata",
+    "natural_path_key",
+    "resolve_ingestion_cache_policy",
+    "visual_change_score",
     "BackendOperationContext",
     "BackendProvenance",
     "CANONICAL_CAMERA_AXES",
