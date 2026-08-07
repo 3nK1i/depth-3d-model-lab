@@ -23,6 +23,7 @@ from core.reconstruction import (
     LiveCaptureRuntimeState,
     LiveCaptureSlamRuntime,
     LiveSlamObservation,
+    LiveSlamRecoveryPolicy,
     LiveSlamRequest,
     ReconstructionCamera,
     ReconstructionQualityProfile,
@@ -43,6 +44,9 @@ class LiveStellaLaunchSettings:
     frame_timeout_s: float = 5.0
     shutdown_timeout_s: float = 5.0
     require_qualified_build: bool = True
+    max_worker_restarts: int = 2
+    restart_backoff_s: float = 0.10
+    max_consecutive_stale_frames: int = 3
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "install_prefix", Path(self.install_prefix).expanduser().resolve())
@@ -55,6 +59,18 @@ class LiveStellaLaunchSettings:
             if value <= 0.0:
                 raise ReconstructionValidationError(f"{name} must be positive.")
             object.__setattr__(self, name, value)
+        policy = LiveSlamRecoveryPolicy(
+            max_worker_restarts=self.max_worker_restarts,
+            restart_backoff_s=self.restart_backoff_s,
+            max_consecutive_stale_frames=self.max_consecutive_stale_frames,
+        )
+        object.__setattr__(self, "max_worker_restarts", policy.max_worker_restarts)
+        object.__setattr__(self, "restart_backoff_s", policy.restart_backoff_s)
+        object.__setattr__(
+            self,
+            "max_consecutive_stale_frames",
+            policy.max_consecutive_stale_frames,
+        )
 
 
 class LiveSlamCaptureController(QObject):
@@ -121,7 +137,7 @@ class LiveSlamCaptureController(QObject):
             enable_mapping=True,
             enable_loop_closure=False,
             enable_global_optimization=False,
-            metadata={"capture_owner": "ApplicationController", "phase": "8.4C"},
+            metadata={"capture_owner": "ApplicationController", "phase": "8.4D"},
         )
 
         def backend_factory(ring_spec):
@@ -139,6 +155,11 @@ class LiveSlamCaptureController(QObject):
         runtime = LiveCaptureSlamRuntime(
             request=request,
             backend_factory=backend_factory,
+            recovery_policy=LiveSlamRecoveryPolicy(
+                max_worker_restarts=settings.max_worker_restarts,
+                restart_backoff_s=settings.restart_backoff_s,
+                max_consecutive_stale_frames=settings.max_consecutive_stale_frames,
+            ),
             observation_callback=self._emit_observation,
             state_callback=self._emit_state,
             error_callback=self.error_occurred.emit,

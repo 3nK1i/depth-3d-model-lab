@@ -89,6 +89,10 @@ from core.reconstruction.live_contracts import (
     LiveTrackingState,
 )
 from core.reconstruction.live_frames import LiveSourceFrameAdapter
+from core.reconstruction.live_hardening import (
+    LiveSlamHardeningTelemetry,
+    LiveSlamRecoveryPolicy,
+)
 from core.reconstruction.live_mailbox import (
     LatestLiveFrameMailbox,
     LiveFrameMailboxStats,
@@ -339,6 +343,8 @@ __all__ = [
     "LiveCaptureSlamRuntime",
     "LiveFramePixelFormat",
     "LiveFrameStaleError",
+    "LiveSlamHardeningTelemetry",
+    "LiveSlamRecoveryPolicy",
     "LiveFrameTransportError",
     "LiveMapSnapshot",
     "LiveSharedMemoryFrameRing",

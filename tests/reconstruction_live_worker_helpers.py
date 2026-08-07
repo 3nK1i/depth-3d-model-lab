@@ -41,6 +41,18 @@ worker_seq = 0
 buf = b''
 request = None
 mode = os.environ.get('EIA_FAKE_STELLA_MODE', 'normal')
+marker = os.environ.get('EIA_FAKE_STELLA_MARKER', '')
+
+def fault_once(kind):
+    if mode != kind + '_once':
+        return False
+    if not marker:
+        return True
+    if os.path.exists(marker):
+        return False
+    with open(marker, 'w', encoding='utf-8') as handle:
+        handle.write(kind + '\n')
+    return True
 
 def send(kind, payload):
     global worker_seq
@@ -91,10 +103,13 @@ while True:
             'unit_to_metre': None,
         })
     elif kind == 'frame_available':
-        if mode == 'crash_frame':
+        if mode == 'crash_frame' or fault_once('crash_frame'):
             os._exit(17)
-        if mode in {'hang_frame', 'cancel_frame'}:
+        if mode == 'hang_frame' or fault_once('hang_frame') or mode == 'cancel_frame':
             time.sleep(20)
+            continue
+        if mode == 'malformed_frame' or fault_once('malformed_frame'):
+            conn.sendall(b'{not-valid-json}\n')
             continue
         frame = payload['frame']
         if mode == 'stale_frame':

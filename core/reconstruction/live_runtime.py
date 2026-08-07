@@ -1,9 +1,9 @@
-"""Non-blocking live-capture runtime for Phase 8.4C.
+"""Non-blocking hardened live-capture runtime for Phase 8.4D.
 
 The capture/UI thread only offers the newest :class:`SourceFrame`. A dedicated
-Python thread owns SourceFrame->shared-memory publication and the synchronous
-live-SLAM backend call, so slow SLAM tracking can never build an unbounded
-queue or block the existing inference/capture path.
+Python thread owns SourceFrame->shared-memory publication and synchronous live
+SLAM calls. Worker execution/protocol failures use a small bounded restart
+budget; the capture side remains latest-frame-only and never builds a backlog.
 """
 
 from __future__ import annotations
@@ -12,16 +12,30 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from threading import Condition, Lock, Thread
-from time import monotonic, monotonic_ns
+from time import monotonic
 from typing import Protocol
 
 from core.capture.frame import SourceFrame
 from core.reconstruction.backends import BackendOperationContext, LiveSlamBackend
 from core.reconstruction.control import ReconstructionOperationControl
-from core.reconstruction.errors import ReconstructionCancelledError, ReconstructionValidationError
+from core.reconstruction.errors import (
+    LiveFrameStaleError,
+    LiveSlamProtocolError,
+    LiveSlamWorkerExecutionError,
+    ReconstructionCancelledError,
+    ReconstructionValidationError,
+)
 from core.reconstruction.events import ReconstructionEvent, ReconstructionStage
-from core.reconstruction.live_contracts import LiveSlamObservation, LiveSlamRequest
+from core.reconstruction.live_contracts import (
+    LiveSlamObservation,
+    LiveSlamRequest,
+    LiveTrackingState,
+)
 from core.reconstruction.live_frames import LiveSourceFrameAdapter
+from core.reconstruction.live_hardening import (
+    LiveSlamHardeningTelemetry,
+    LiveSlamRecoveryPolicy,
+)
 from core.reconstruction.live_transport import LiveSharedMemoryFrameRing, LiveSharedMemoryRingSpec
 
 
@@ -30,6 +44,7 @@ class LiveCaptureRuntimeState(str, Enum):
     STARTING = "starting"
     RUNNING = "running"
     PAUSED = "paused"
+    RECOVERING = "recovering"
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
@@ -46,6 +61,16 @@ class LiveCaptureRuntimeStats:
     latest_tracking_state: str
     last_error: str
     state: LiveCaptureRuntimeState
+    stale_frames: int = 0
+    worker_restarts: int = 0
+    worker_restart_failures: int = 0
+    tracking_loss_events: int = 0
+    tracking_recoveries: int = 0
+    stop_escalations: int = 0
+    last_processing_latency_ns: int | None = None
+    max_processing_latency_ns: int = 0
+    mean_processing_latency_ns: float | None = None
+    cleanup_complete: bool = False
 
 
 class LiveBackendFactory(Protocol):
@@ -53,7 +78,13 @@ class LiveBackendFactory(Protocol):
 
 
 class LiveCaptureSlamRuntime:
-    """Own one live-SLAM backend session behind a latest-frame-only mailbox."""
+    """Own one live-SLAM session behind a latest-frame-only mailbox.
+
+    Recovery is intentionally bounded. A worker crash, timeout, or malformed
+    protocol response can restart only the external backend process. Capture
+    ownership, shared-memory ownership, source identity, and session identity
+    remain in this runtime.
+    """
 
     def __init__(
         self,
@@ -61,6 +92,7 @@ class LiveCaptureSlamRuntime:
         request: LiveSlamRequest,
         backend_factory: LiveBackendFactory,
         slot_count: int = 3,
+        recovery_policy: LiveSlamRecoveryPolicy | None = None,
         observation_callback: Callable[[LiveSlamObservation], None] | None = None,
         state_callback: Callable[[LiveCaptureRuntimeState], None] | None = None,
         error_callback: Callable[[str], None] | None = None,
@@ -72,10 +104,13 @@ class LiveCaptureSlamRuntime:
             raise TypeError("backend_factory must be callable.")
         if isinstance(slot_count, bool) or int(slot_count) < 2:
             raise ReconstructionValidationError("Live capture runtime requires at least two ring slots.")
+        if recovery_policy is not None and not isinstance(recovery_policy, LiveSlamRecoveryPolicy):
+            raise TypeError("recovery_policy must be LiveSlamRecoveryPolicy or None.")
 
         self._request = request
         self._backend_factory = backend_factory
         self._slot_count = int(slot_count)
+        self._recovery_policy = recovery_policy or LiveSlamRecoveryPolicy()
         self._observation_callback = observation_callback
         self._state_callback = state_callback
         self._error_callback = error_callback
@@ -101,10 +136,25 @@ class LiveCaptureSlamRuntime:
         self._last_sequence_index: int | None = None
         self._latest_tracking_state = ""
         self._last_error = ""
+        self._stale_frames = 0
+        self._consecutive_stale_frames = 0
+        self._worker_restarts = 0
+        self._worker_restart_failures = 0
+        self._tracking_loss_events = 0
+        self._tracking_recoveries = 0
+        self._stop_escalations = 0
+        self._last_processing_latency_ns: int | None = None
+        self._max_processing_latency_ns = 0
+        self._total_processing_latency_ns = 0
+        self._cleanup_complete = False
 
     @property
     def request(self) -> LiveSlamRequest:
         return self._request
+
+    @property
+    def recovery_policy(self) -> LiveSlamRecoveryPolicy:
+        return self._recovery_policy
 
     @property
     def state(self) -> LiveCaptureRuntimeState:
@@ -117,12 +167,18 @@ class LiveCaptureSlamRuntime:
             LiveCaptureRuntimeState.STARTING,
             LiveCaptureRuntimeState.RUNNING,
             LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
             LiveCaptureRuntimeState.STOPPING,
         }
 
     @property
     def stats(self) -> LiveCaptureRuntimeStats:
         with self._stats_lock:
+            mean_latency = (
+                None
+                if self._observations <= 0
+                else self._total_processing_latency_ns / self._observations
+            )
             return LiveCaptureRuntimeStats(
                 offered_frames=self._offered_frames,
                 processed_frames=self._processed_frames,
@@ -133,7 +189,38 @@ class LiveCaptureSlamRuntime:
                 latest_tracking_state=self._latest_tracking_state,
                 last_error=self._last_error,
                 state=self._state,
+                stale_frames=self._stale_frames,
+                worker_restarts=self._worker_restarts,
+                worker_restart_failures=self._worker_restart_failures,
+                tracking_loss_events=self._tracking_loss_events,
+                tracking_recoveries=self._tracking_recoveries,
+                stop_escalations=self._stop_escalations,
+                last_processing_latency_ns=self._last_processing_latency_ns,
+                max_processing_latency_ns=self._max_processing_latency_ns,
+                mean_processing_latency_ns=mean_latency,
+                cleanup_complete=self._cleanup_complete,
             )
+
+    @property
+    def hardening_telemetry(self) -> LiveSlamHardeningTelemetry:
+        stats = self.stats
+        return LiveSlamHardeningTelemetry(
+            offered_frames=stats.offered_frames,
+            processed_frames=stats.processed_frames,
+            replaced_frames=stats.replaced_frames,
+            rejected_frames=stats.rejected_frames,
+            observations=stats.observations,
+            stale_frames=stats.stale_frames,
+            worker_restarts=stats.worker_restarts,
+            worker_restart_failures=stats.worker_restart_failures,
+            tracking_loss_events=stats.tracking_loss_events,
+            tracking_recoveries=stats.tracking_recoveries,
+            stop_escalations=stats.stop_escalations,
+            last_processing_latency_ns=stats.last_processing_latency_ns,
+            max_processing_latency_ns=stats.max_processing_latency_ns,
+            mean_processing_latency_ns=stats.mean_processing_latency_ns,
+            cleanup_complete=stats.cleanup_complete,
+        )
 
     def start(self) -> None:
         with self._condition:
@@ -143,6 +230,9 @@ class LiveCaptureSlamRuntime:
             self._paused = False
             self._pending = None
             self._control = ReconstructionOperationControl()
+            with self._stats_lock:
+                self._cleanup_complete = False
+                self._last_error = ""
             self._set_state_locked(LiveCaptureRuntimeState.STARTING)
             self._thread = Thread(
                 target=self._run,
@@ -159,6 +249,7 @@ class LiveCaptureSlamRuntime:
             if self._state not in {
                 LiveCaptureRuntimeState.STARTING,
                 LiveCaptureRuntimeState.RUNNING,
+                LiveCaptureRuntimeState.RECOVERING,
             }:
                 with self._stats_lock:
                     self._rejected_frames += 1
@@ -174,7 +265,10 @@ class LiveCaptureSlamRuntime:
 
     def pause(self) -> bool:
         with self._condition:
-            if self._state is not LiveCaptureRuntimeState.RUNNING:
+            if self._state not in {
+                LiveCaptureRuntimeState.RUNNING,
+                LiveCaptureRuntimeState.RECOVERING,
+            }:
                 return False
             self._paused = True
             self._pending = None
@@ -217,7 +311,8 @@ class LiveCaptureSlamRuntime:
         thread.join(timeout=graceful_wait)
         remaining = max(0.0, timeout - graceful_wait)
         if thread.is_alive() and remaining > 0.0:
-            # Escalate only when graceful worker/backend shutdown did not finish.
+            with self._stats_lock:
+                self._stop_escalations += 1
             self._control.request_cancel()
             with self._condition:
                 self._condition.notify_all()
@@ -262,18 +357,8 @@ class LiveCaptureSlamRuntime:
                 camera=self._request.camera,
                 ring=ring,
             )
-            backend = self._backend_factory(ring.spec)
+            backend = self._create_started_backend(ring.spec, context)
             self._backend = backend
-            if backend.capabilities.backend_id != self._request.backend_id:
-                raise ReconstructionValidationError(
-                    "Live backend factory returned a backend that does not match request.backend_id."
-                )
-            if self._request.source.kind not in backend.capabilities.source_kinds:
-                raise ReconstructionValidationError(
-                    "Live backend does not support the active capture source kind."
-                )
-            backend.prepare(context)
-            backend.start_live_session(self._request, context)
             with self._condition:
                 if self._stop_requested:
                     raise ReconstructionCancelledError("Live capture stop requested during startup.")
@@ -291,18 +376,27 @@ class LiveCaptureSlamRuntime:
                 assert frame is not None
                 assert self._adapter is not None
                 envelope = self._adapter.publish(frame)
-                observation = backend.track_live_frame(envelope, context)
-                with self._stats_lock:
-                    self._processed_frames += 1
-                    self._observations += 1
-                    self._last_sequence_index = observation.sequence_index
-                    self._latest_tracking_state = observation.tracking_state.value
+                try:
+                    observation = backend.track_live_frame(envelope, context)
+                except LiveFrameStaleError as exc:
+                    if self._handle_stale_frame(exc):
+                        continue
+                    raise
+                except (LiveSlamWorkerExecutionError, LiveSlamProtocolError) as exc:
+                    backend = self._recover_backend(backend, ring.spec, context, exc)
+                    self._backend = backend
+                    continue
+
+                self._record_observation(observation)
                 if self._observation_callback is not None:
                     self._observation_callback(observation)
 
             try:
                 backend.stop_live_session(context)
             except ReconstructionCancelledError:
+                pass
+            except (LiveSlamWorkerExecutionError, LiveSlamProtocolError):
+                # Stop is best-effort here; shutdown below owns final process cleanup.
                 pass
         except ReconstructionCancelledError:
             pass
@@ -327,12 +421,118 @@ class LiveCaptureSlamRuntime:
             self._backend = None
             self._ring = None
             self._adapter = None
+            with self._stats_lock:
+                self._cleanup_complete = True
             with self._condition:
                 self._pending = None
                 self._thread = None
                 if self._state is not LiveCaptureRuntimeState.FAILED:
                     self._set_state_locked(LiveCaptureRuntimeState.STOPPED)
                 self._condition.notify_all()
+
+    def _create_started_backend(
+        self,
+        ring_spec: LiveSharedMemoryRingSpec,
+        context: BackendOperationContext,
+    ) -> LiveSlamBackend:
+        backend = self._backend_factory(ring_spec)
+        if backend.capabilities.backend_id != self._request.backend_id:
+            raise ReconstructionValidationError(
+                "Live backend factory returned a backend that does not match request.backend_id."
+            )
+        if self._request.source.kind not in backend.capabilities.source_kinds:
+            raise ReconstructionValidationError(
+                "Live backend does not support the active capture source kind."
+            )
+        backend.prepare(context)
+        backend.start_live_session(self._request, context)
+        return backend
+
+    def _recover_backend(
+        self,
+        backend: LiveSlamBackend,
+        ring_spec: LiveSharedMemoryRingSpec,
+        context: BackendOperationContext,
+        cause: Exception,
+    ) -> LiveSlamBackend:
+        policy = self._recovery_policy
+        last_exc: Exception = cause
+        try:
+            backend.shutdown()
+        except Exception:
+            pass
+
+        while True:
+            with self._stats_lock:
+                if self._worker_restarts >= policy.max_worker_restarts:
+                    break
+                self._worker_restarts += 1
+                self._latest_tracking_state = LiveTrackingState.RECOVERING.value
+            self._set_state(LiveCaptureRuntimeState.RECOVERING)
+            self._interruptible_backoff(policy.restart_backoff_s)
+            try:
+                recovered = self._create_started_backend(ring_spec, context)
+            except ReconstructionCancelledError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                with self._stats_lock:
+                    self._worker_restart_failures += 1
+                continue
+            with self._condition:
+                self._set_state_locked(
+                    LiveCaptureRuntimeState.PAUSED
+                    if self._paused
+                    else LiveCaptureRuntimeState.RUNNING
+                )
+                self._condition.notify_all()
+            return recovered
+
+        raise LiveSlamWorkerExecutionError(
+            "Live SLAM worker recovery budget exhausted after "
+            f"{policy.max_worker_restarts} restart attempt(s): {last_exc}"
+        ) from last_exc
+
+    def _interruptible_backoff(self, seconds: float) -> None:
+        deadline = monotonic() + max(0.0, seconds)
+        with self._condition:
+            while not self._stop_requested and monotonic() < deadline:
+                self._condition.wait(timeout=min(0.05, max(0.0, deadline - monotonic())))
+            if self._stop_requested:
+                raise ReconstructionCancelledError("Live SLAM stop requested during worker recovery.")
+        self._control.checkpoint()
+
+    def _handle_stale_frame(self, _exc: LiveFrameStaleError) -> bool:
+        with self._stats_lock:
+            self._stale_frames += 1
+            self._consecutive_stale_frames += 1
+            allowed = (
+                self._consecutive_stale_frames
+                <= self._recovery_policy.max_consecutive_stale_frames
+            )
+        return allowed
+
+    def _record_observation(self, observation: LiveSlamObservation) -> None:
+        latency = observation.quality.processing_latency_ns
+        current_state = observation.tracking_state
+        with self._stats_lock:
+            previous_state = self._latest_tracking_state
+            self._processed_frames += 1
+            self._observations += 1
+            self._last_sequence_index = observation.sequence_index
+            self._latest_tracking_state = current_state.value
+            self._consecutive_stale_frames = 0
+            self._last_processing_latency_ns = latency
+            self._max_processing_latency_ns = max(self._max_processing_latency_ns, latency)
+            self._total_processing_latency_ns += latency
+            if current_state is LiveTrackingState.LOST and previous_state != LiveTrackingState.LOST.value:
+                self._tracking_loss_events += 1
+            if current_state is LiveTrackingState.TRACKING and previous_state in {
+                LiveTrackingState.LOST.value,
+                LiveTrackingState.DEGRADED.value,
+                LiveTrackingState.RECOVERING.value,
+            }:
+                self._tracking_recoveries += 1
 
     def _set_state(self, state: LiveCaptureRuntimeState) -> None:
         with self._condition:

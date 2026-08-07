@@ -8,6 +8,7 @@ small control/results use the versioned AF_UNIX JSON protocol.
 from __future__ import annotations
 
 import os
+import signal
 from pathlib import Path
 import shutil
 import subprocess
@@ -143,6 +144,19 @@ class ExternalStellaLiveSlamBackend:
     @property
     def worker_log_path(self) -> str:
         return "" if self._log_path is None else str(self._log_path)
+    @property
+    def worker_pid(self) -> int | None:
+        process = self._process
+        return None if process is None else process.pid
+
+    @property
+    def unix_socket_path(self) -> str:
+        spec = self._process_spec
+        return "" if spec is None else spec.unix_socket_path
+
+    @property
+    def resources_active(self) -> bool:
+        return bool(self._process is not None or self._client is not None or self._tempdir is not None)
 
     def prepare(self, context: BackendOperationContext) -> None:
         _require_live_context(context)
@@ -532,11 +546,17 @@ class ExternalStellaLiveSlamBackend:
         if process is None:
             return
         if process.poll() is None:
-            process.terminate()
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                process.terminate()
             try:
                 process.wait(timeout=min(2.0, self._shutdown_timeout_s))
             except subprocess.TimeoutExpired:
-                process.kill()
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    process.kill()
                 process.wait(timeout=2.0)
 
     def _cleanup_resources(self) -> None:
