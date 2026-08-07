@@ -59,3 +59,7 @@ class LiveFrameTransportError(ReconstructionError):
 
 class LiveFrameStaleError(LiveFrameTransportError):
     """Raised when a bounded ring reference has already been overwritten."""
+
+
+class LiveSlamWorkerExecutionError(ReconstructionError):
+    """Raised when the isolated live SLAM native worker fails or times out."""
