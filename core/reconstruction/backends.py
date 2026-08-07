@@ -14,6 +14,11 @@ from core.reconstruction.events import ReconstructionEvent, ReconstructionStage
 from core.reconstruction.profiles import ReconstructionQualityProfile
 
 if TYPE_CHECKING:
+    from core.reconstruction.live_contracts import (
+        LiveSlamFrame,
+        LiveSlamObservation,
+        LiveSlamRequest,
+    )
     from core.reconstruction.sfm_contracts import OfflineSfmRequest, OfflineSfmResult
 
 
@@ -137,7 +142,19 @@ class OfflineSfmBackend(ReconstructionBackend, Protocol):
 
 @runtime_checkable
 class LiveSlamBackend(ReconstructionBackend, Protocol):
-    def track_live_frame(self, frame: object, context: BackendOperationContext) -> object: ...
+    def start_live_session(
+        self,
+        request: "LiveSlamRequest",
+        context: BackendOperationContext,
+    ) -> None: ...
+
+    def track_live_frame(
+        self,
+        frame: "LiveSlamFrame",
+        context: BackendOperationContext,
+    ) -> "LiveSlamObservation": ...
+
+    def stop_live_session(self, context: BackendOperationContext) -> None: ...
 
 
 @runtime_checkable

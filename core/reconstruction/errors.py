@@ -43,3 +43,19 @@ class SfmWorkerProtocolError(ReconstructionError):
 
 class SfmWorkerExecutionError(ReconstructionError):
     """Raised when the isolated SfM worker fails or times out."""
+
+
+class LiveSlamBackendUnavailableError(ReconstructionError):
+    """Raised when an optional live SLAM backend/process cannot be used."""
+
+
+class LiveSlamProtocolError(ReconstructionError):
+    """Raised when live SLAM IPC violates the versioned JSON contract."""
+
+
+class LiveFrameTransportError(ReconstructionError):
+    """Raised when live frame shared-memory transport cannot operate safely."""
+
+
+class LiveFrameStaleError(LiveFrameTransportError):
+    """Raised when a bounded ring reference has already been overwritten."""
