@@ -7,6 +7,7 @@ stay in the external worker process; only JSON-safe data crosses the boundary.
 from __future__ import annotations
 
 from collections import deque
+import hashlib
 import json
 from pathlib import Path
 import queue
@@ -53,11 +54,13 @@ from core.reconstruction.sfm_coordinates import (
     colmap_camera_from_reconstruction_to_internal_pose,
     validate_rigid_matrix,
 )
+from core.reconstruction.sfm_quality import assess_sfm_quality
 from core.reconstruction.sfm_environment import (
     PYCOLMAP_RECOMMENDED_VERSION,
     PycolmapEnvironmentProbe,
     probe_pycolmap_environment,
 )
+from core.reconstruction.sfm_workspace import validate_sfm_workspace_integrity
 from core.reconstruction.sfm_worker_protocol import (
     SFM_WORKER_SCHEMA_VERSION,
     SfmWorkerEvent,
@@ -97,14 +100,25 @@ def _safe_workspace_child(root: Path, relative: str) -> Path:
 
 def _worker_request_payload(request: OfflineSfmRequest) -> dict[str, object]:
     root = Path(request.workspace.workspace_root).expanduser().resolve()
+    image_records: list[dict[str, object]] = []
     image_names: list[str] = []
     for item in request.workspace.images:
         staged = Path(item.staged_image_path)
         if staged.parent.as_posix() != request.workspace.images_directory:
             raise ReconstructionValidationError(
-                "Phase 8.3C requires materialized SfM images directly inside images_directory."
+                "Phase 8.3D requires materialized SfM images directly inside images_directory."
             )
         image_names.append(staged.name)
+        image_records.append(
+            {
+                "name": staged.name,
+                "order": item.order,
+                "sha256": item.staged_sha256,
+                "keyframe_id": item.keyframe_id,
+                "frame_id": item.frame_id,
+                "timestamp_ns": item.timestamp_ns,
+            }
+        )
     if len(image_names) < 3:
         raise ReconstructionValidationError(
             "Real PyCOLMAP sparse reconstruction requires at least three materialized keyframes."
@@ -112,28 +126,38 @@ def _worker_request_payload(request: OfflineSfmRequest) -> dict[str, object]:
 
     configured_size = request.configuration.maximum_image_size
     maximum_image_size = configured_size or _PROFILE_MAX_IMAGE_SIZE[request.profile]
-    return {
+    configured_overlap = request.configuration.sequential_overlap
+    sequential_overlap = configured_overlap or _PROFILE_SEQUENTIAL_OVERLAP[request.profile]
+    sequential_overlap = min(max(1, sequential_overlap), max(1, len(image_names) - 1))
+    payload: dict[str, object] = {
         "schema_version": SFM_WORKER_SCHEMA_VERSION,
         "session_id": request.session_id,
         "workspace_root": str(root),
         "images_directory": request.workspace.images_directory,
         "database_path": request.workspace.database_path,
         "sparse_directory": request.workspace.sparse_directory,
+        "checkpoints_directory": request.workspace.checkpoints_directory,
+        "source_fingerprint": request.workspace.source.fingerprint,
+        "profile": request.profile.value,
         "image_names": image_names,
+        "image_records": image_records,
         "configuration": {
             "feature_strategy": request.configuration.feature_strategy.value,
             "matching_strategy": request.configuration.matching_strategy.value,
             "use_gpu": request.configuration.use_gpu,
             "maximum_image_size": maximum_image_size,
-            "sequential_overlap": min(
-                max(1, _PROFILE_SEQUENTIAL_OVERLAP[request.profile]),
-                max(1, len(image_names) - 1),
-            ),
+            "sequential_overlap": sequential_overlap,
             "camera_mode": "single",
             "camera_model": "SIMPLE_RADIAL",
             "bundle_adjustment_gpu": False,
+            "resume_policy": request.configuration.resume_policy.value,
         },
     }
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    payload["request_fingerprint"] = hashlib.sha256(canonical).hexdigest()
+    return payload
 
 
 def _read_json_object(path: Path, *, description: str) -> dict[str, object]:
@@ -178,6 +202,14 @@ def _convert_worker_payload(
     if pycolmap_version != PYCOLMAP_RECOMMENDED_VERSION:
         raise SfmWorkerProtocolError(
             f"Unexpected PyCOLMAP result version: {pycolmap_version or 'missing'}."
+        )
+
+    expected_worker_request = _worker_request_payload(request)
+    expected_fingerprint = str(expected_worker_request["request_fingerprint"])
+    actual_fingerprint = str(payload.get("request_fingerprint", "")).strip()
+    if actual_fingerprint != expected_fingerprint:
+        raise SfmWorkerProtocolError(
+            "SfM worker result fingerprint does not match the current request/workspace."
         )
 
     workspace_by_name = {
@@ -306,15 +338,28 @@ def _convert_worker_payload(
         warnings.append(
             f"Dropped {dropped_short_tracks} sparse points whose converted tracks had fewer than two keyframes."
         )
-    models = _sequence(payload.get("models", []), "models")
-    if len(models) > 1:
+    models_raw = _sequence(payload.get("models", []), "models")
+    candidate_models = [dict(_mapping(item, "model summary")) for item in models_raw]
+    if len(candidate_models) > 1:
         warnings.append(
-            f"PyCOLMAP produced {len(models)} sparse models; the best model was selected deterministically."
+            f"PyCOLMAP produced {len(candidate_models)} sparse models; the best model was selected deterministically."
         )
     if not cameras:
         raise SfmWorkerExecutionError("PyCOLMAP produced no registered cameras.")
     if not landmarks:
         raise SfmWorkerExecutionError("PyCOLMAP produced no valid sparse landmarks.")
+
+    quality = assess_sfm_quality(statistics)
+    if quality.status.value != "accepted":
+        warnings.append(
+            f"Sparse reconstruction quality classified as {quality.status.value}: "
+            + "; ".join(quality.reasons)
+        )
+
+    resolved_configuration = _mapping(
+        payload.get("resolved_configuration", {}), "resolved_configuration"
+    )
+    resume_from_stage = str(payload.get("resume_from_stage", "none"))
 
     return OfflineSfmResult(
         session_id=request.session_id,
@@ -331,10 +376,20 @@ def _convert_worker_payload(
             "real_sfm": True,
             "pycolmap_version": pycolmap_version,
             "selected_model_id": int(payload.get("selected_model_id", -1)),
+            "candidate_models": candidate_models,
             "matching_strategy": request.configuration.matching_strategy.value,
             "feature_strategy": request.configuration.feature_strategy.value,
             "use_gpu": request.configuration.use_gpu,
             "scale_status": "arbitrary",
+            "source_fingerprint": request.workspace.source.fingerprint,
+            "worker_request_fingerprint": actual_fingerprint,
+            "resume_policy": request.configuration.resume_policy.value,
+            "resume_from_stage": resume_from_stage,
+            "quality_assessment": quality.as_dict(),
+            "resolved_configuration": dict(resolved_configuration),
+            "external_python_executable": str(backend.get("python_executable", "")),
+            "external_cuda_devices": int(backend.get("cuda_devices", 0)),
+            "worker_elapsed_s": float(payload.get("worker_elapsed_s", 0.0)),
         },
     )
 
@@ -380,8 +435,8 @@ class ExternalPycolmapSfmBackend:
             ),
             supports_cancellation=True,
             supports_pause=False,
-            supports_checkpoint=False,
-            supports_resume=False,
+            supports_checkpoint=True,
+            supports_resume=True,
             supports_metric_scale=False,
             supports_cpu=True,
             requires_cuda=False,
@@ -499,6 +554,7 @@ class ExternalPycolmapSfmBackend:
         if context.control.cancellation_requested:
             raise ReconstructionCancelledError("Reconstruction cancellation requested.")
 
+        validate_sfm_workspace_integrity(request.workspace)
         root = Path(request.workspace.workspace_root).expanduser().resolve()
         checkpoints_dir = _safe_workspace_child(root, request.workspace.checkpoints_directory)
         logs_dir = _safe_workspace_child(root, request.workspace.logs_directory)

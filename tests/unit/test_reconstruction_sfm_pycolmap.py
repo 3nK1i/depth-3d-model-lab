@@ -25,6 +25,7 @@ from core.reconstruction import (
     SfmMatchingStrategy,
     SfmScaleStatus,
     SfmWorkerExecutionError,
+    SfmWorkspaceError,
     materialize_sfm_workspace,
 )
 import core.reconstruction.sfm_pycolmap as sfm_pycolmap
@@ -58,6 +59,7 @@ def _request(tmp_path: Path, *, count: int = 3, use_gpu: bool = True) -> Offline
 
 
 def _worker_payload(request: OfflineSfmRequest) -> dict:
+    worker_request = sfm_pycolmap._worker_request_payload(request)
     names = [Path(item.staged_image_path).name for item in request.workspace.images]
     registered = []
     for index, name in enumerate(names, start=1):
@@ -89,10 +91,15 @@ def _worker_payload(request: OfflineSfmRequest) -> dict:
         "schema_version": 1,
         "status": "ok",
         "session_id": request.session_id,
+        "request_fingerprint": worker_request["request_fingerprint"],
+        "resume_from_stage": "none",
+        "resolved_configuration": worker_request["configuration"],
+        "worker_elapsed_s": 0.25,
         "backend": {
             "backend_id": "pycolmap-offline-sfm",
             "backend_version": "1",
             "pycolmap_version": "4.1.1",
+            "python_executable": sys.executable,
             "cuda_devices": 1,
             "use_gpu": True,
         },
@@ -141,7 +148,11 @@ def test_worker_payload_conversion_preserves_arbitrary_gauge_and_inverts_colmap_
     assert len(result.camera_models) == 1
     assert result.camera_models[0].backend_model_name == "SIMPLE_RADIAL"
     assert result.camera_models[0].parameters == (280.0, 160.0, 120.0, 0.01)
-    assert result.metadata[0][0] if isinstance(result.metadata, tuple) else True
+    payload = result.as_dict()
+    assert payload["metadata"]["worker_request_fingerprint"]
+    assert payload["metadata"]["candidate_models"][0]["model_id"] == 0
+    assert payload["metadata"]["quality_assessment"]["status"] == "rejected"
+    assert payload["metadata"]["resume_policy"] == "reuse_completed_stages"
     # COLMAP camera-from-reconstruction translation +1 on X becomes camera center -1.
     assert np.allclose(result.cameras[0].camera_center_reconstruction, [-1.0, 0.0, 0.0])
     assert result.landmarks[0].position_reconstruction.tolist() == [1.0, 2.0, 3.0]
@@ -185,6 +196,10 @@ Path(a.result).write_text(json.dumps(payload))
     )
     assert request_payload["configuration"]["maximum_image_size"] == 1600
     assert request_payload["configuration"]["camera_mode"] == "single"
+    assert request_payload["configuration"]["resume_policy"] == "reuse_completed_stages"
+    assert request_payload["configuration"]["sequential_overlap"] == 2
+    assert len(request_payload["request_fingerprint"]) == 64
+    assert len(request_payload["image_records"]) == 3
 
 
 def test_external_backend_rejects_wrong_pycolmap_version(tmp_path) -> None:
@@ -328,4 +343,42 @@ time.sleep(10)
         probe_function=lambda executable: _ready_probe(executable),
     )
     with pytest.raises(SfmWorkerExecutionError, match="exceeded timeout"):
+        backend.run_sparse_reconstruction(request, context)
+
+
+def test_worker_request_fingerprint_changes_with_pairing_configuration(tmp_path) -> None:
+    request = _request(tmp_path / "a")
+    first = sfm_pycolmap._worker_request_payload(request)
+    changed = OfflineSfmRequest(
+        session_id=request.session_id,
+        profile=request.profile,
+        workspace=request.workspace,
+        configuration=OfflineSfmConfiguration(
+            matching_strategy=SfmMatchingStrategy.SEQUENTIAL,
+            sequential_overlap=1,
+            use_gpu=request.configuration.use_gpu,
+        ),
+    )
+    second = sfm_pycolmap._worker_request_payload(changed)
+    assert first["request_fingerprint"] != second["request_fingerprint"]
+
+
+def test_external_backend_rejects_mutated_workspace_before_launch(tmp_path) -> None:
+    request = _request(tmp_path)
+    staged = Path(request.workspace.workspace_root) / request.workspace.images[0].staged_image_path
+    staged.write_bytes(staged.read_bytes() + b"tampered")
+    context = BackendOperationContext(
+        session_id=SFM_SESSION_ID,
+        stage=ReconstructionStage.SPARSE_RECONSTRUCTION,
+        profile=ReconstructionQualityProfile.EFFICIENT,
+        control=ReconstructionOperationControl(),
+        emit_event=lambda event: None,
+    )
+    backend = ExternalPycolmapSfmBackend(
+        sys.executable,
+        worker_script=tmp_path / "never.py",
+        probe_function=lambda executable: _ready_probe(executable),
+    )
+    (tmp_path / "never.py").write_text("raise SystemExit(99)\n", encoding="utf-8")
+    with pytest.raises(SfmWorkspaceError, match="checksum changed"):
         backend.run_sparse_reconstruction(request, context)

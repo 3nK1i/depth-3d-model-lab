@@ -140,6 +140,39 @@ def _materialize_recorded_video(
     return [output_by_order[index] for index in range(len(records))]
 
 
+
+def validate_sfm_workspace_integrity(manifest: SfmWorkspaceManifest) -> None:
+    """Verify materialized SfM images still match their recorded SHA-256 digests."""
+
+    if not isinstance(manifest, SfmWorkspaceManifest):
+        raise TypeError("manifest must be an SfmWorkspaceManifest.")
+    root = Path(manifest.workspace_root).expanduser().resolve()
+    if not root.is_dir():
+        raise SfmWorkspaceError(f"SfM workspace does not exist: {root}")
+    seen: set[Path] = set()
+    for item in manifest.images:
+        staged = (root / item.staged_image_path).resolve()
+        try:
+            staged.relative_to(root)
+        except ValueError as exc:
+            raise SfmWorkspaceError(
+                f"Materialized SfM image escapes the workspace: {item.staged_image_path}"
+            ) from exc
+        if staged in seen:
+            raise SfmWorkspaceError(
+                f"Duplicate materialized SfM image path: {item.staged_image_path}"
+            )
+        seen.add(staged)
+        if not staged.is_file():
+            raise SfmWorkspaceError(
+                f"Materialized SfM image is missing: {item.staged_image_path}"
+            )
+        digest = _sha256_file(staged)
+        if digest != item.staged_sha256:
+            raise SfmWorkspaceError(
+                f"Materialized SfM image checksum changed: {item.staged_image_path}"
+            )
+
 def materialize_sfm_workspace(
     result: ReconstructionIngestionResult,
     workspace_root: str | Path,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a real non-UI Phase 8.3C PyCOLMAP sparse reconstruction smoke."""
+"""Run a real non-UI Phase 8.3D PyCOLMAP sparse reconstruction smoke."""
 
 from __future__ import annotations
 
@@ -24,11 +24,13 @@ from core.reconstruction import (
     OfflineSfmConfiguration,
     OfflineSfmRequest,
     RecordedVideoReader,
+    ReconstructionCancelledError,
     ReconstructionIngestionPipeline,
     ReconstructionOperationControl,
     ReconstructionQualityProfile,
     ReconstructionStage,
     SfmMatchingStrategy,
+    SfmResumePolicy,
     SfmScaleStatus,
     materialize_sfm_workspace,
     new_reconstruction_session_id,
@@ -41,7 +43,7 @@ def _write_sparse_ply(result, path: Path) -> None:
     lines = [
         "ply",
         "format ascii 1.0",
-        "comment EIA TECH Phase 8.3C real PyCOLMAP sparse reconstruction",
+        "comment EIA TECH Phase 8.3D real PyCOLMAP sparse reconstruction",
         "comment arbitrary reconstruction gauge; coordinates are NOT metres",
         f"element vertex {len(result.landmarks)}",
         "property float x",
@@ -78,6 +80,16 @@ def _build_source(args: argparse.Namespace):
     )
 
 
+def _print_event(event) -> None:
+    if event.progress_fraction is not None:
+        print(
+            f"[{event.progress_fraction * 100:5.1f}%] {event.message}",
+            flush=True,
+        )
+    elif event.message:
+        print(event.message, flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source_group = parser.add_mutually_exclusive_group(required=True)
@@ -91,7 +103,7 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/phase8_3c_real_sfm"),
+        default=Path("/tmp/phase8_3d_real_sfm"),
     )
     parser.add_argument(
         "--profile",
@@ -106,19 +118,37 @@ def main() -> int:
     )
     parser.add_argument("--max-keyframes", type=int, default=80)
     parser.add_argument("--maximum-image-size", type=int, default=None)
+    parser.add_argument("--sequential-overlap", type=int, default=None)
     parser.add_argument("--video-target-fps", type=float, default=2.0)
     parser.add_argument("--image-sequence-fps", type=float, default=10.0)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument("--cpu", action="store_true", help="Disable CUDA SIFT/matching.")
     parser.add_argument("--timeout-minutes", type=float, default=60.0)
+    parser.add_argument(
+        "--resume-policy",
+        choices=[item.value for item in SfmResumePolicy],
+        default=SfmResumePolicy.REUSE_COMPLETED_STAGES.value,
+    )
+    parser.add_argument(
+        "--exercise-resume",
+        action="store_true",
+        help=(
+            "After matching completes, cancel the first worker attempt and rerun the same "
+            "request to validate feature/match checkpoint reuse."
+        ),
+    )
     args = parser.parse_args()
 
     if args.max_keyframes < 3:
         parser.error("--max-keyframes must be at least 3 for real SfM.")
     if args.maximum_image_size is not None and args.maximum_image_size <= 0:
         parser.error("--maximum-image-size must be positive.")
+    if args.sequential_overlap is not None and args.sequential_overlap <= 0:
+        parser.error("--sequential-overlap must be positive.")
     if args.timeout_minutes <= 0.0:
         parser.error("--timeout-minutes must be positive.")
+    if args.exercise_resume and args.resume_policy == SfmResumePolicy.DISABLED.value:
+        parser.error("--exercise-resume requires checkpoint reuse to be enabled.")
 
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -163,48 +193,91 @@ def main() -> int:
             matching_strategy=SfmMatchingStrategy(args.matching),
             use_gpu=not args.cpu,
             maximum_image_size=args.maximum_image_size,
+            sequential_overlap=args.sequential_overlap,
+            resume_policy=SfmResumePolicy(args.resume_policy),
         ),
     )
 
-    events = []
-
-    def on_event(event) -> None:
-        events.append(event)
-        if event.progress_fraction is not None:
-            print(
-                f"[{event.progress_fraction * 100:5.1f}%] "
-                f"{event.message}",
-                flush=True,
-            )
-        elif event.message:
-            print(event.message, flush=True)
-
-    context = BackendOperationContext(
-        session_id=session_id,
-        stage=ReconstructionStage.SPARSE_RECONSTRUCTION,
-        profile=profile,
-        control=ReconstructionOperationControl(),
-        emit_event=on_event,
-    )
     backend = ExternalPycolmapSfmBackend(
         args.sfm_python,
         timeout_s=args.timeout_minutes * 60.0,
     )
+    events = []
+    resume_exercised = False
+    first_attempt_cancelled = False
+
     try:
-        result = backend.run_sparse_reconstruction(request, context)
+        if args.exercise_resume:
+            first_control = ReconstructionOperationControl()
+            first_events = []
+
+            def on_first_event(event) -> None:
+                first_events.append(event)
+                _print_event(event)
+                if (
+                    event.progress_fraction is not None
+                    and event.progress_fraction >= 0.60
+                    and not first_control.cancellation_requested
+                ):
+                    first_control.request_cancel()
+
+            try:
+                backend.run_sparse_reconstruction(
+                    request,
+                    BackendOperationContext(
+                        session_id=session_id,
+                        stage=ReconstructionStage.SPARSE_RECONSTRUCTION,
+                        profile=profile,
+                        control=first_control,
+                        emit_event=on_first_event,
+                    ),
+                )
+            except ReconstructionCancelledError:
+                first_attempt_cancelled = True
+                print(
+                    "First SfM attempt cancelled after matching; starting resume validation.",
+                    flush=True,
+                )
+            if not first_attempt_cancelled:
+                raise RuntimeError(
+                    "Resume exercise did not cancel the first worker attempt as intended."
+                )
+            resume_exercised = True
+
+        final_control = ReconstructionOperationControl()
+
+        def on_final_event(event) -> None:
+            events.append(event)
+            _print_event(event)
+
+        result = backend.run_sparse_reconstruction(
+            request,
+            BackendOperationContext(
+                session_id=session_id,
+                stage=ReconstructionStage.SPARSE_RECONSTRUCTION,
+                profile=profile,
+                control=final_control,
+                emit_event=on_final_event,
+            ),
+        )
         probe = backend.environment_probe
     finally:
         backend.shutdown()
 
     result_payload = result.as_dict()
+    metadata = result_payload["metadata"]
+    quality = metadata.get("quality_assessment", {})
     registration_ratio = result.statistics.registered_keyframes / len(workspace.images)
     report = {
-        "phase": "8.3C",
+        "phase": "8.3D",
         "real_sfm_executed": True,
+        "resume_exercised": resume_exercised,
+        "first_attempt_cancelled": first_attempt_cancelled,
         "source": ingestion.source.as_dict(),
         "ingestion_summary": ingestion.as_dict()["summary"],
         "external_pycolmap_probe": None if probe is None else probe.as_dict(),
         "registration_ratio": registration_ratio,
+        "quality_assessment": quality,
         "event_count": len(events),
         "events": [event.as_dict() for event in events],
         "sfm_result": result_payload,
@@ -214,20 +287,55 @@ def main() -> int:
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    summary_path = output_dir / "real_sfm_summary.json"
+    summary = {
+        "phase": "8.3D",
+        "real_sfm_executed": True,
+        "source_kind": ingestion.source.kind.value,
+        "input_keyframes": len(workspace.images),
+        "registered_keyframes": result.statistics.registered_keyframes,
+        "registration_ratio": registration_ratio,
+        "camera_models": len(result.camera_models),
+        "landmarks": result.statistics.landmarks,
+        "observations": result.statistics.observations,
+        "mean_reprojection_error_px": result.statistics.mean_reprojection_error_px,
+        "quality_assessment": quality,
+        "gauge": result.gauge.as_dict(),
+        "warnings": list(result.warnings),
+        "matching_strategy": metadata.get("matching_strategy"),
+        "resume_policy": metadata.get("resume_policy"),
+        "resume_from_stage": metadata.get("resume_from_stage"),
+        "resume_exercised": resume_exercised,
+        "worker_request_fingerprint": metadata.get("worker_request_fingerprint"),
+        "selected_model_id": metadata.get("selected_model_id"),
+        "candidate_models": metadata.get("candidate_models", []),
+        "resolved_configuration": metadata.get("resolved_configuration", {}),
+        "pycolmap_version": metadata.get("pycolmap_version"),
+        "external_cuda_devices": metadata.get("external_cuda_devices"),
+    }
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     ply_path = output_dir / "real_sparse_arbitrary_scale.ply"
     _write_sparse_ply(result, ply_path)
 
+    resume_ok = True
+    if args.exercise_resume:
+        resume_ok = metadata.get("resume_from_stage") == "matching"
     passed = (
-        result_payload["metadata"].get("real_sfm") is True
+        metadata.get("real_sfm") is True
         and result.gauge.scale_status is SfmScaleStatus.ARBITRARY
         and result.gauge.unit_to_metre is None
         and result.statistics.registered_keyframes >= 3
         and result.statistics.landmarks > 0
         and len(result.camera_models) > 0
+        and quality.get("status") != "rejected"
+        and resume_ok
     )
 
     print()
-    print(f"Phase 8.3C real PyCOLMAP smoke: {'PASS' if passed else 'FAIL'}")
+    print(f"Phase 8.3D real PyCOLMAP smoke: {'PASS' if passed else 'FAIL'}")
     print(
         f"input_keyframes={len(workspace.images)} "
         f"registered={result.statistics.registered_keyframes} "
@@ -240,12 +348,22 @@ def main() -> int:
         f"mean_reprojection_error_px={result.statistics.mean_reprojection_error_px}"
     )
     print(
+        f"quality_status={quality.get('status')} "
+        f"mean_track_length={quality.get('mean_track_length')}"
+    )
+    print(
         f"gauge={result.gauge.scale_status.value} "
         f"unit_to_metre={result.gauge.unit_to_metre}"
+    )
+    print(
+        f"matching={metadata.get('matching_strategy')} "
+        f"resume_from_stage={metadata.get('resume_from_stage')} "
+        f"resume_exercised={resume_exercised}"
     )
     print("real_sfm_executed=True")
     print(f"workspace={workspace.workspace_root}")
     print(f"report={report_path}")
+    print(f"summary={summary_path}")
     print(f"sparse_ply={ply_path}")
     print(
         "NOTE: sparse coordinates are arbitrary-scale monocular SfM coordinates, not metres."

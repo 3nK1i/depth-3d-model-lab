@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Standalone PyCOLMAP 4.1.1 worker for Phase 8.3C.
+"""Standalone PyCOLMAP 4.1.1 worker for Phase 8.3D.
 
-This script is intentionally dependency-isolated. It must run under the
-external reconstruction interpreter and must not import the EIA application
-package or its application-runtime dependencies.
+This script is intentionally dependency-isolated. It runs under the external
+reconstruction interpreter and imports neither the EIA application package nor
+PyQt/OpenCV/Torch. Only JSON-safe values cross the process boundary.
 """
 
 from __future__ import annotations
@@ -18,10 +18,18 @@ import time
 import traceback
 
 SFM_WORKER_SCHEMA_VERSION = 1
+SFM_WORKER_CHECKPOINT_SCHEMA_VERSION = 1
 EVENT_PREFIX = "EIA_SFM_EVENT "
+_RESUME_STAGES = {"none": 0, "features": 1, "matching": 2, "complete": 3}
 
 
-def emit(event_type: str, stage: str, message: str, progress: float | None = None, **metadata) -> None:
+def emit(
+    event_type: str,
+    stage: str,
+    message: str,
+    progress: float | None = None,
+    **metadata,
+) -> None:
     payload = {
         "schema_version": SFM_WORKER_SCHEMA_VERSION,
         "event_type": event_type,
@@ -38,6 +46,16 @@ def load_object(path: Path) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("Worker request must contain a JSON object.")
     return payload
+
+
+def atomic_write_object(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def safe_child(root: Path, relative: str) -> Path:
@@ -60,6 +78,8 @@ def finite_or_none(value) -> float | None:
 
 
 def select_best_model(models: dict) -> tuple[int, object, list[dict]]:
+    """Select a sparse model deterministically by support, then residual quality."""
+
     summaries = []
     for model_id, reconstruction in models.items():
         mean_error = finite_or_none(reconstruction.compute_mean_reprojection_error())
@@ -77,6 +97,7 @@ def select_best_model(models: dict) -> tuple[int, object, list[dict]]:
     summaries.sort(
         key=lambda item: (
             -item["registered_images"],
+            -item["observations"],
             -item["points3D"],
             (
                 float("inf")
@@ -88,6 +109,70 @@ def select_best_model(models: dict) -> tuple[int, object, list[dict]]:
     )
     selected_id = summaries[0]["model_id"]
     return selected_id, models[selected_id], summaries
+
+
+def load_resume_checkpoint(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def resolve_resume_stage(
+    checkpoint: dict | None,
+    *,
+    request_fingerprint: str,
+    pycolmap_version: str,
+    database_path: Path,
+    image_count: int,
+) -> str:
+    """Return the last safely reusable completed stage or ``none``."""
+
+    if checkpoint is None:
+        return "none"
+    try:
+        if int(checkpoint.get("schema_version", 0)) != SFM_WORKER_CHECKPOINT_SCHEMA_VERSION:
+            return "none"
+        if str(checkpoint.get("request_fingerprint", "")) != request_fingerprint:
+            return "none"
+        if str(checkpoint.get("pycolmap_version", "")) != pycolmap_version:
+            return "none"
+        if int(checkpoint.get("image_count", -1)) != image_count:
+            return "none"
+        stage = str(checkpoint.get("completed_stage", "none"))
+    except (TypeError, ValueError):
+        return "none"
+    if stage not in _RESUME_STAGES or stage == "none" or not database_path.is_file():
+        return "none"
+    # A complete prior run can safely reuse the feature/matching database while
+    # mapping is rerun into a fresh sparse directory.
+    return "matching" if stage == "complete" else stage
+
+
+def write_stage_checkpoint(
+    path: Path,
+    *,
+    request_fingerprint: str,
+    pycolmap_version: str,
+    image_count: int,
+    completed_stage: str,
+) -> None:
+    if completed_stage not in {"features", "matching", "complete"}:
+        raise ValueError(f"Unsupported SfM checkpoint stage: {completed_stage}")
+    atomic_write_object(
+        path,
+        {
+            "schema_version": SFM_WORKER_CHECKPOINT_SCHEMA_VERSION,
+            "request_fingerprint": request_fingerprint,
+            "pycolmap_version": pycolmap_version,
+            "image_count": image_count,
+            "completed_stage": completed_stage,
+            "updated_unix_s": time.time(),
+        },
+    )
 
 
 def validate_pycolmap_runtime_api(pycolmap) -> None:
@@ -112,7 +197,7 @@ def validate_pycolmap_runtime_api(pycolmap) -> None:
                 missing.append(f"{owner.__name__}.{name}")
     if missing:
         raise RuntimeError(
-            "PyCOLMAP runtime API is incompatible with Phase 8.3C: "
+            "PyCOLMAP runtime API is incompatible with Phase 8.3D: "
             + ", ".join(sorted(missing))
         )
 
@@ -130,30 +215,63 @@ def run(request: dict) -> dict:
     image_path = safe_child(root, request["images_directory"])
     database_path = safe_child(root, request["database_path"])
     sparse_path = safe_child(root, request["sparse_directory"])
+    checkpoints_path = safe_child(root, request["checkpoints_directory"])
+    checkpoint_path = checkpoints_path / "pycolmap_stage_checkpoint.json"
     image_names = [str(name) for name in request["image_names"]]
-    if len(image_names) < 2 or len(image_names) != len(set(image_names)):
-        raise ValueError("Worker requires at least two unique image names.")
+    if len(image_names) < 3 or len(image_names) != len(set(image_names)):
+        raise ValueError("Worker requires at least three unique image names.")
     for name in image_names:
         image_file = image_path / name
         if image_file.parent.resolve() != image_path.resolve() or not image_file.is_file():
             raise FileNotFoundError(f"Materialized SfM image is missing: {image_file}")
 
+    request_fingerprint = str(request.get("request_fingerprint", "")).strip().lower()
+    if len(request_fingerprint) != 64 or any(
+        character not in "0123456789abcdef" for character in request_fingerprint
+    ):
+        raise ValueError("request_fingerprint must be a SHA-256 digest.")
+
     configuration = request["configuration"]
     if configuration.get("feature_strategy") != "colmap_sift":
-        raise ValueError("Phase 8.3C worker only supports COLMAP SIFT.")
+        raise ValueError("Phase 8.3D worker only supports COLMAP SIFT.")
     if configuration.get("camera_mode") != "single":
-        raise ValueError("Phase 8.3C worker currently requires one shared camera model.")
+        raise ValueError("Phase 8.3D worker currently requires one shared camera model.")
     camera_model = str(configuration.get("camera_model", "SIMPLE_RADIAL"))
     if not camera_model:
         raise ValueError("camera_model must not be empty.")
     matching_strategy = str(configuration["matching_strategy"])
     if matching_strategy not in {"sequential", "exhaustive"}:
         raise ValueError(f"Unsupported matching strategy: {matching_strategy}")
+    resume_policy = str(configuration.get("resume_policy", "disabled"))
+    if resume_policy not in {"disabled", "reuse_completed_stages"}:
+        raise ValueError(f"Unsupported resume policy: {resume_policy}")
     use_gpu = bool(configuration.get("use_gpu", True))
     if use_gpu and int(pycolmap.get_num_cuda_devices()) < 1:
         raise RuntimeError("GPU SfM requested but PyCOLMAP reports no CUDA devices.")
 
-    database_path.unlink(missing_ok=True)
+    checkpoints_path.mkdir(parents=True, exist_ok=True)
+    resume_from_stage = "none"
+    if resume_policy == "reuse_completed_stages":
+        resume_from_stage = resolve_resume_stage(
+            load_resume_checkpoint(checkpoint_path),
+            request_fingerprint=request_fingerprint,
+            pycolmap_version=str(pycolmap.__version__),
+            database_path=database_path,
+            image_count=len(image_names),
+        )
+
+    if resume_from_stage == "none":
+        database_path.unlink(missing_ok=True)
+        checkpoint_path.unlink(missing_ok=True)
+    else:
+        emit(
+            "status",
+            "resume",
+            f"Reusing completed SfM {resume_from_stage} checkpoint.",
+            0.08,
+            resume_from_stage=resume_from_stage,
+        )
+
     if sparse_path.exists():
         shutil.rmtree(sparse_path)
     sparse_path.mkdir(parents=True, exist_ok=True)
@@ -166,40 +284,64 @@ def run(request: dict) -> dict:
     reader = pycolmap.ImageReaderOptions()
     reader.camera_model = camera_model
 
-    emit("progress", "feature_extraction", "Extracting COLMAP SIFT features.", 0.10)
-    pycolmap.extract_features(
-        database_path=database_path,
-        image_path=image_path,
-        image_names=image_names,
-        camera_mode=pycolmap.CameraMode.SINGLE,
-        reader_options=reader,
-        extraction_options=extraction,
-        device=device,
-    )
-    emit("progress", "feature_extraction", "COLMAP SIFT feature extraction complete.", 0.35)
+    if _RESUME_STAGES[resume_from_stage] < _RESUME_STAGES["features"]:
+        emit("progress", "feature_extraction", "Extracting COLMAP SIFT features.", 0.10)
+        pycolmap.extract_features(
+            database_path=database_path,
+            image_path=image_path,
+            image_names=image_names,
+            camera_mode=pycolmap.CameraMode.SINGLE,
+            reader_options=reader,
+            extraction_options=extraction,
+            device=device,
+        )
+        write_stage_checkpoint(
+            checkpoint_path,
+            request_fingerprint=request_fingerprint,
+            pycolmap_version=str(pycolmap.__version__),
+            image_count=len(image_names),
+            completed_stage="features",
+        )
+        emit("progress", "feature_extraction", "COLMAP SIFT feature extraction complete.", 0.35)
 
     matching = pycolmap.FeatureMatchingOptions()
     matching.use_gpu = use_gpu
     matching.gpu_index = "0" if use_gpu else "-1"
-    emit("progress", "matching", f"Running {matching_strategy} feature matching.", 0.40)
-    if matching_strategy == "sequential":
-        pairing = pycolmap.SequentialPairingOptions()
-        pairing.overlap = int(configuration.get("sequential_overlap", 10))
-        pairing.quadratic_overlap = True
-        pairing.loop_detection = False
-        pycolmap.match_sequential(
-            database_path=database_path,
-            matching_options=matching,
-            pairing_options=pairing,
-            device=device,
+    if _RESUME_STAGES[resume_from_stage] < _RESUME_STAGES["matching"]:
+        emit("progress", "matching", f"Running {matching_strategy} feature matching.", 0.40)
+        if matching_strategy == "sequential":
+            pairing = pycolmap.SequentialPairingOptions()
+            pairing.overlap = int(configuration.get("sequential_overlap", 10))
+            pairing.quadratic_overlap = True
+            pairing.loop_detection = False
+            pycolmap.match_sequential(
+                database_path=database_path,
+                matching_options=matching,
+                pairing_options=pairing,
+                device=device,
+            )
+        else:
+            pycolmap.match_exhaustive(
+                database_path=database_path,
+                matching_options=matching,
+                device=device,
+            )
+        write_stage_checkpoint(
+            checkpoint_path,
+            request_fingerprint=request_fingerprint,
+            pycolmap_version=str(pycolmap.__version__),
+            image_count=len(image_names),
+            completed_stage="matching",
         )
+        emit("progress", "matching", "Feature matching and geometric verification complete.", 0.60)
     else:
-        pycolmap.match_exhaustive(
-            database_path=database_path,
-            matching_options=matching,
-            device=device,
+        emit(
+            "progress",
+            "matching",
+            "Reused completed feature extraction and matching database.",
+            0.60,
+            resume_from_stage=resume_from_stage,
         )
-    emit("progress", "matching", "Feature matching and geometric verification complete.", 0.60)
 
     mapping = pycolmap.IncrementalPipelineOptions()
     mapping.multiple_models = True
@@ -312,17 +454,43 @@ def run(request: dict) -> dict:
         warnings.append(
             f"PyCOLMAP produced {len(model_summaries)} disconnected sparse models; selected model {selected_id}."
         )
+    if resume_from_stage != "none":
+        warnings.append(
+            f"SfM resumed from a validated {resume_from_stage} stage checkpoint."
+        )
+
+    write_stage_checkpoint(
+        checkpoint_path,
+        request_fingerprint=request_fingerprint,
+        pycolmap_version=str(pycolmap.__version__),
+        image_count=len(image_names),
+        completed_stage="complete",
+    )
     emit("progress", "complete", "PyCOLMAP sparse reconstruction complete.", 0.99)
     return {
         "schema_version": SFM_WORKER_SCHEMA_VERSION,
         "status": "ok",
         "session_id": session_id,
+        "request_fingerprint": request_fingerprint,
+        "resume_from_stage": resume_from_stage,
         "backend": {
             "backend_id": "pycolmap-offline-sfm",
             "backend_version": "1",
             "pycolmap_version": str(pycolmap.__version__),
+            "python_executable": sys.executable,
             "cuda_devices": int(pycolmap.get_num_cuda_devices()),
             "use_gpu": use_gpu,
+        },
+        "resolved_configuration": {
+            "profile": str(request.get("profile", "")),
+            "matching_strategy": matching_strategy,
+            "feature_strategy": str(configuration.get("feature_strategy")),
+            "maximum_image_size": int(configuration["maximum_image_size"]),
+            "sequential_overlap": int(configuration.get("sequential_overlap", 10)),
+            "camera_mode": str(configuration.get("camera_mode")),
+            "camera_model": camera_model,
+            "bundle_adjustment_gpu": bool(configuration.get("bundle_adjustment_gpu", False)),
+            "resume_policy": resume_policy,
         },
         "selected_model_id": selected_id,
         "models": model_summaries,
@@ -353,11 +521,7 @@ def main() -> int:
         emit("status", "startup", "PyCOLMAP worker starting.", 0.0)
         payload = run(load_object(request_path))
         payload["worker_elapsed_s"] = max(0.0, time.monotonic() - started)
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_object(result_path, payload)
         return 0
     except Exception as exc:
         error_payload = {
@@ -368,11 +532,7 @@ def main() -> int:
             "worker_elapsed_s": max(0.0, time.monotonic() - started),
         }
         try:
-            result_path.parent.mkdir(parents=True, exist_ok=True)
-            result_path.write_text(
-                json.dumps(error_payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
-                encoding="utf-8",
-            )
+            atomic_write_object(result_path, error_payload)
         except Exception:
             pass
         print(error_payload["traceback"], file=sys.stderr, flush=True)

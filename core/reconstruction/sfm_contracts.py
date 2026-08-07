@@ -29,6 +29,7 @@ from core.reconstruction.profiles import ReconstructionQualityProfile
 from core.reconstruction.validation import (
     readonly_vector3,
     require_nonnegative_int,
+    require_positive_int,
     require_uuid,
 )
 
@@ -55,6 +56,11 @@ class SfmMatchingStrategy(str, Enum):
 
 class SfmFeatureStrategy(str, Enum):
     COLMAP_SIFT = "colmap_sift"
+
+
+class SfmResumePolicy(str, Enum):
+    DISABLED = "disabled"
+    REUSE_COMPLETED_STAGES = "reuse_completed_stages"
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +313,8 @@ class OfflineSfmConfiguration:
     matching_strategy: SfmMatchingStrategy = SfmMatchingStrategy.SEQUENTIAL
     use_gpu: bool = True
     maximum_image_size: int | None = None
+    sequential_overlap: int | None = None
+    resume_policy: SfmResumePolicy = SfmResumePolicy.REUSE_COMPLETED_STAGES
 
     def __post_init__(self) -> None:
         if not isinstance(self.feature_strategy, SfmFeatureStrategy):
@@ -316,12 +324,17 @@ class OfflineSfmConfiguration:
         if not isinstance(self.use_gpu, bool):
             raise TypeError("use_gpu must be a bool.")
         if self.maximum_image_size is not None:
-            value = require_nonnegative_int(
+            value = require_positive_int(
                 self.maximum_image_size, field_name="maximum_image_size"
             )
-            if value <= 0:
-                raise ReconstructionValidationError("maximum_image_size must be positive.")
             object.__setattr__(self, "maximum_image_size", value)
+        if self.sequential_overlap is not None:
+            overlap = require_positive_int(
+                self.sequential_overlap, field_name="sequential_overlap"
+            )
+            object.__setattr__(self, "sequential_overlap", overlap)
+        if not isinstance(self.resume_policy, SfmResumePolicy):
+            raise TypeError("resume_policy must be an SfmResumePolicy.")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -329,6 +342,8 @@ class OfflineSfmConfiguration:
             "matching_strategy": self.matching_strategy.value,
             "use_gpu": self.use_gpu,
             "maximum_image_size": self.maximum_image_size,
+            "sequential_overlap": self.sequential_overlap,
+            "resume_policy": self.resume_policy.value,
         }
 
 

@@ -132,6 +132,7 @@ from core.reconstruction.sfm_contracts import (
     SfmLandmarkEstimate,
     SfmMatchingStrategy,
     SfmObservation,
+    SfmResumePolicy,
     SfmScaleStatus,
     SfmStageStatistics,
     SfmWorkspaceImage,
@@ -157,6 +158,12 @@ from core.reconstruction.sfm_environment import (
     probe_pycolmap_environment,
 )
 from core.reconstruction.sfm_mock import DeterministicMockSfmBackend
+from core.reconstruction.sfm_quality import (
+    SfmQualityAssessment,
+    SfmQualityPolicy,
+    SfmQualityStatus,
+    assess_sfm_quality,
+)
 from core.reconstruction.sfm_pycolmap import (
     ExternalPycolmapSfmBackend,
     PYCOLMAP_BACKEND_ID,
@@ -169,7 +176,10 @@ from core.reconstruction.sfm_worker_protocol import (
     SfmWorkerEventType,
     parse_worker_event_line,
 )
-from core.reconstruction.sfm_workspace import materialize_sfm_workspace
+from core.reconstruction.sfm_workspace import (
+    materialize_sfm_workspace,
+    validate_sfm_workspace_integrity,
+)
 from core.reconstruction.session import (
     ReconstructionSession,
     ReconstructionSessionSnapshot,
@@ -286,6 +296,7 @@ __all__ = [
     "SfmLandmarkEstimate",
     "SfmMatchingStrategy",
     "SfmObservation",
+    "SfmResumePolicy",
     "SfmScaleStatus",
     "SfmStageStatistics",
     "SfmWorkspaceImage",
@@ -306,6 +317,10 @@ __all__ = [
     "PycolmapEnvironmentProbe",
     "probe_pycolmap_environment",
     "DeterministicMockSfmBackend",
+    "SfmQualityAssessment",
+    "SfmQualityPolicy",
+    "SfmQualityStatus",
+    "assess_sfm_quality",
     "ExternalPycolmapSfmBackend",
     "PYCOLMAP_BACKEND_ID",
     "PYCOLMAP_BACKEND_VERSION",
@@ -315,6 +330,7 @@ __all__ = [
     "SfmWorkerEventType",
     "parse_worker_event_line",
     "materialize_sfm_workspace",
+    "validate_sfm_workspace_integrity",
     "SfmBackendUnavailableError",
     "SfmWorkspaceError",
     "SfmWorkerExecutionError",

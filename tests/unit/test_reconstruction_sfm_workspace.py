@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from core.reconstruction import SfmWorkspaceError, materialize_sfm_workspace
+from core.reconstruction import (
+    SfmWorkspaceError,
+    materialize_sfm_workspace,
+    validate_sfm_workspace_integrity,
+)
 from tests.reconstruction_sfm_helpers import make_sfm_ingestion_result
 
 
@@ -108,3 +112,23 @@ def test_recorded_video_workspace_redecodes_selected_frames(tmp_path) -> None:
     assert len(workspace.images) == 5
     assert all(item.staged_image_path.endswith(".png") for item in workspace.images)
     assert all((Path(workspace.workspace_root) / item.staged_image_path).is_file() for item in workspace.images)
+
+
+def test_workspace_integrity_detects_staged_image_mutation(tmp_path) -> None:
+    result = make_sfm_ingestion_result(tmp_path / "sequence-integrity", count=3)
+    workspace = materialize_sfm_workspace(result, tmp_path / "workspace-integrity")
+    validate_sfm_workspace_integrity(workspace)
+
+    staged = Path(workspace.workspace_root) / workspace.images[0].staged_image_path
+    staged.write_bytes(staged.read_bytes() + b"mutated")
+    with pytest.raises(SfmWorkspaceError, match="checksum changed"):
+        validate_sfm_workspace_integrity(workspace)
+
+
+def test_workspace_integrity_detects_missing_staged_image(tmp_path) -> None:
+    result = make_sfm_ingestion_result(tmp_path / "sequence-missing", count=3)
+    workspace = materialize_sfm_workspace(result, tmp_path / "workspace-missing")
+    staged = Path(workspace.workspace_root) / workspace.images[1].staged_image_path
+    staged.unlink()
+    with pytest.raises(SfmWorkspaceError, match="is missing"):
+        validate_sfm_workspace_integrity(workspace)

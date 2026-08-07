@@ -15,6 +15,7 @@ from core.reconstruction import (
     SfmLandmarkEstimate,
     SfmMatchingStrategy,
     SfmObservation,
+    SfmResumePolicy,
     SfmScaleStatus,
     SfmStageStatistics,
     SfmWorldAlignmentStatus,
@@ -137,3 +138,16 @@ def test_sfm_camera_model_estimate_preserves_backend_calibration_without_claimin
     assert payload["backend_model_name"] == "SIMPLE_RADIAL"
     assert payload["parameters"] == [500.0, 320.0, 240.0, 0.01]
     assert "calibrated" not in payload
+
+
+def test_offline_sfm_configuration_exposes_resume_and_sequential_overlap() -> None:
+    configuration = OfflineSfmConfiguration(
+        matching_strategy=SfmMatchingStrategy.SEQUENTIAL,
+        sequential_overlap=7,
+        resume_policy=SfmResumePolicy.REUSE_COMPLETED_STAGES,
+    )
+    payload = configuration.as_dict()
+    assert payload["sequential_overlap"] == 7
+    assert payload["resume_policy"] == "reuse_completed_stages"
+    with pytest.raises(ReconstructionValidationError):
+        OfflineSfmConfiguration(sequential_overlap=0)

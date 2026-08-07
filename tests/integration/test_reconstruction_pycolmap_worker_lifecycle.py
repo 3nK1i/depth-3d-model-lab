@@ -15,6 +15,7 @@ from core.reconstruction import (
     ReconstructionStage,
     materialize_sfm_workspace,
 )
+import core.reconstruction.sfm_pycolmap as sfm_pycolmap
 from tests.reconstruction_sfm_helpers import SFM_SESSION_ID, make_sfm_ingestion_result
 
 
@@ -27,11 +28,20 @@ def test_workspace_external_worker_conversion_lifecycle(tmp_path) -> None:
         workspace=workspace,
     )
     names = [Path(item.staged_image_path).name for item in workspace.images]
+    worker_request = sfm_pycolmap._worker_request_payload(request)
     payload = {
         "schema_version": 1,
         "status": "ok",
         "session_id": request.session_id,
-        "backend": {"pycolmap_version": "4.1.1"},
+        "request_fingerprint": worker_request["request_fingerprint"],
+        "resume_from_stage": "none",
+        "resolved_configuration": worker_request["configuration"],
+        "worker_elapsed_s": 0.1,
+        "backend": {
+            "pycolmap_version": "4.1.1",
+            "python_executable": sys.executable,
+            "cuda_devices": 1,
+        },
         "selected_model_id": 0,
         "camera_models": [
             {
@@ -113,4 +123,6 @@ Path(a.result).write_text(json.dumps(PAYLOAD))
     assert restored["gauge"]["unit_to_metre"] is None
     assert restored["statistics"]["registered_keyframes"] == 4
     assert restored["camera_models"][0]["backend_model_name"] == "SIMPLE_RADIAL"
+    assert restored["metadata"]["worker_request_fingerprint"] == worker_request["request_fingerprint"]
+    assert restored["metadata"]["quality_assessment"]["status"] in {"degraded", "rejected"}
     assert events[-1].progress_fraction == 1.0
