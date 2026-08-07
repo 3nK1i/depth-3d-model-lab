@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from core.contracts import ImageSize
 from core.reconstruction import (
     OfflineSfmConfiguration,
     OfflineSfmRequest,
@@ -10,6 +11,7 @@ from core.reconstruction import (
     ReconstructionQualityProfile,
     ReconstructionValidationError,
     SfmCameraEstimate,
+    SfmCameraModelEstimate,
     SfmLandmarkEstimate,
     SfmMatchingStrategy,
     SfmObservation,
@@ -121,3 +123,17 @@ def test_stage_statistics_require_consistent_counts() -> None:
             observations=0,
             elapsed_ns=0,
         )
+
+
+def test_sfm_camera_model_estimate_preserves_backend_calibration_without_claiming_certification() -> None:
+    camera = SfmCameraModelEstimate(
+        camera_id="pycolmap-camera-7",
+        backend_camera_id=7,
+        backend_model_name="SIMPLE_RADIAL",
+        image_size=ImageSize(width=640, height=480),
+        parameters=(500.0, 320.0, 240.0, 0.01),
+    )
+    payload = camera.as_dict()
+    assert payload["backend_model_name"] == "SIMPLE_RADIAL"
+    assert payload["parameters"] == [500.0, 320.0, 240.0, 0.01]
+    assert "calibrated" not in payload

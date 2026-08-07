@@ -26,6 +26,11 @@ PYCOLMAP_REQUIRED_APIS = (
     "FeatureMatchingOptions",
     "IncrementalPipelineOptions",
     "FeatureExtractor",
+    "ImageReaderOptions",
+    "SequentialPairingOptions",
+    "Device",
+    "CameraMode",
+    "get_num_cuda_devices",
 )
 
 _PROBE_CODE = r'''

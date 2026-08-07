@@ -35,3 +35,11 @@ class SfmBackendUnavailableError(ReconstructionError):
 
 class SfmWorkspaceError(ReconstructionError):
     """Raised when an SfM workspace cannot be materialized safely."""
+
+
+class SfmWorkerProtocolError(ReconstructionError):
+    """Raised when the isolated SfM worker violates the versioned IPC contract."""
+
+
+class SfmWorkerExecutionError(ReconstructionError):
+    """Raised when the isolated SfM worker fails or times out."""

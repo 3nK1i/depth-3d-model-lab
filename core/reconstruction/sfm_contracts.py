@@ -395,6 +395,56 @@ class SfmObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SfmCameraModelEstimate:
+    """Dependency-neutral camera calibration estimated by the SfM backend.
+
+    The raw backend model name and parameter vector are preserved exactly so a
+    later dense-fusion stage can convert them deliberately without pretending
+    that an SfM-estimated calibration is a certified camera calibration.
+    """
+
+    camera_id: str
+    backend_camera_id: int
+    backend_model_name: str
+    image_size: ImageSize
+    parameters: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "camera_id", require_nonempty(self.camera_id, field_name="camera_id")
+        )
+        object.__setattr__(
+            self,
+            "backend_camera_id",
+            require_nonnegative_int(self.backend_camera_id, field_name="backend_camera_id"),
+        )
+        object.__setattr__(
+            self,
+            "backend_model_name",
+            require_nonempty(self.backend_model_name, field_name="backend_model_name"),
+        )
+        if not isinstance(self.image_size, ImageSize):
+            raise TypeError("image_size must be an ImageSize.")
+        parameters = tuple(
+            require_finite(value, field_name="camera_parameter") for value in self.parameters
+        )
+        if not parameters:
+            raise ReconstructionValidationError(
+                "SfM camera-model estimates require at least one backend parameter."
+            )
+        object.__setattr__(self, "parameters", parameters)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "camera_id": self.camera_id,
+            "backend_camera_id": self.backend_camera_id,
+            "backend_model_name": self.backend_model_name,
+            "image_size": self.image_size.as_dict(),
+            "parameters": list(self.parameters),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SfmCameraEstimate:
     estimate_id: str
     camera_id: str
@@ -554,6 +604,7 @@ class OfflineSfmResult:
     landmarks: tuple[SfmLandmarkEstimate, ...]
     statistics: SfmStageStatistics
     workspace: SfmWorkspaceManifest
+    camera_models: tuple[SfmCameraModelEstimate, ...] = ()
     warnings: tuple[str, ...] = ()
     metadata: Mapping[str, JsonValue] | Sequence[tuple[str, JsonValue]] = field(
         default_factory=tuple
@@ -578,10 +629,21 @@ class OfflineSfmResult:
             )
         cameras = tuple(self.cameras)
         landmarks = tuple(self.landmarks)
+        camera_models = tuple(self.camera_models)
         if any(not isinstance(item, SfmCameraEstimate) for item in cameras):
             raise TypeError("cameras must contain SfmCameraEstimate values.")
         if any(not isinstance(item, SfmLandmarkEstimate) for item in landmarks):
             raise TypeError("landmarks must contain SfmLandmarkEstimate values.")
+        if any(not isinstance(item, SfmCameraModelEstimate) for item in camera_models):
+            raise TypeError("camera_models must contain SfmCameraModelEstimate values.")
+        camera_model_ids = [item.camera_id for item in camera_models]
+        backend_camera_ids = [item.backend_camera_id for item in camera_models]
+        if len(camera_model_ids) != len(set(camera_model_ids)):
+            raise ReconstructionValidationError("SfM camera-model IDs must be unique.")
+        if len(backend_camera_ids) != len(set(backend_camera_ids)):
+            raise ReconstructionValidationError(
+                "SfM backend camera-model IDs must be unique."
+            )
         if not isinstance(self.statistics, SfmStageStatistics):
             raise TypeError("statistics must be SfmStageStatistics.")
         workspace_keyframes = {item.keyframe_id for item in self.workspace.images}
@@ -592,6 +654,12 @@ class OfflineSfmResult:
             raise ReconstructionValidationError(
                 "SfM cameras must reference materialized workspace keyframes."
             )
+        if camera_models:
+            known_camera_ids = set(camera_model_ids)
+            if any(item.camera_id not in known_camera_ids for item in cameras):
+                raise ReconstructionValidationError(
+                    "SfM camera poses must reference a returned camera-model estimate."
+                )
         if any(
             observation.keyframe_id not in workspace_keyframes
             for landmark in landmarks
@@ -616,6 +684,7 @@ class OfflineSfmResult:
         warnings = tuple(require_nonempty(item, field_name="warning") for item in self.warnings)
         object.__setattr__(self, "cameras", cameras)
         object.__setattr__(self, "landmarks", landmarks)
+        object.__setattr__(self, "camera_models", camera_models)
         object.__setattr__(self, "warnings", warnings)
         object.__setattr__(self, "metadata", normalize_metadata(self.metadata))
         if isinstance(self.schema_version, bool) or int(self.schema_version) != SFM_SCHEMA_VERSION:
@@ -632,6 +701,7 @@ class OfflineSfmResult:
             "backend_version": self.backend_version,
             "gauge": self.gauge.as_dict(),
             "cameras": [item.as_dict() for item in self.cameras],
+            "camera_models": [item.as_dict() for item in self.camera_models],
             "landmarks": [item.as_dict() for item in self.landmarks],
             "statistics": self.statistics.as_dict(),
             "workspace": self.workspace.as_dict(),

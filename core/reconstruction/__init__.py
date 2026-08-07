@@ -46,6 +46,8 @@ from core.reconstruction.errors import (
     ReconstructionValidationError,
     SfmBackendUnavailableError,
     SfmWorkspaceError,
+    SfmWorkerExecutionError,
+    SfmWorkerProtocolError,
     UnsupportedBackendOperationError,
 )
 from core.reconstruction.events import (
@@ -125,6 +127,7 @@ from core.reconstruction.sfm_contracts import (
     OfflineSfmResult,
     ReconstructionGauge,
     SfmCameraEstimate,
+    SfmCameraModelEstimate,
     SfmFeatureStrategy,
     SfmLandmarkEstimate,
     SfmMatchingStrategy,
@@ -154,6 +157,18 @@ from core.reconstruction.sfm_environment import (
     probe_pycolmap_environment,
 )
 from core.reconstruction.sfm_mock import DeterministicMockSfmBackend
+from core.reconstruction.sfm_pycolmap import (
+    ExternalPycolmapSfmBackend,
+    PYCOLMAP_BACKEND_ID,
+    PYCOLMAP_BACKEND_VERSION,
+)
+from core.reconstruction.sfm_worker_protocol import (
+    SFM_WORKER_EVENT_PREFIX,
+    SFM_WORKER_SCHEMA_VERSION,
+    SfmWorkerEvent,
+    SfmWorkerEventType,
+    parse_worker_event_line,
+)
 from core.reconstruction.sfm_workspace import materialize_sfm_workspace
 from core.reconstruction.session import (
     ReconstructionSession,
@@ -266,6 +281,7 @@ __all__ = [
     "OfflineSfmResult",
     "ReconstructionGauge",
     "SfmCameraEstimate",
+    "SfmCameraModelEstimate",
     "SfmFeatureStrategy",
     "SfmLandmarkEstimate",
     "SfmMatchingStrategy",
@@ -290,7 +306,17 @@ __all__ = [
     "PycolmapEnvironmentProbe",
     "probe_pycolmap_environment",
     "DeterministicMockSfmBackend",
+    "ExternalPycolmapSfmBackend",
+    "PYCOLMAP_BACKEND_ID",
+    "PYCOLMAP_BACKEND_VERSION",
+    "SFM_WORKER_EVENT_PREFIX",
+    "SFM_WORKER_SCHEMA_VERSION",
+    "SfmWorkerEvent",
+    "SfmWorkerEventType",
+    "parse_worker_event_line",
     "materialize_sfm_workspace",
     "SfmBackendUnavailableError",
     "SfmWorkspaceError",
+    "SfmWorkerExecutionError",
+    "SfmWorkerProtocolError",
 ]
