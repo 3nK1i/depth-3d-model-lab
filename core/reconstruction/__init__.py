@@ -151,6 +151,26 @@ from core.reconstruction.live_stella_environment import (
     write_stella_monocular_config,
 )
 from core.reconstruction.live_stella import ExternalStellaLiveSlamBackend
+from core.reconstruction.global_consistency import (
+    GLOBAL_CONSISTENCY_SCHEMA_VERSION,
+    GlobalConsistencyResult,
+    LoopClosureCandidate,
+    LoopClosureDecision,
+    OptimizedKeyframePose,
+    PoseGraphConstraint,
+    PoseGraphConstraintKind,
+    PoseGraphNode,
+    PoseGraphSnapshot,
+    RelocalizationResult,
+    RelocalizationStatus,
+)
+from core.reconstruction.pose_graph import (
+    DeterministicMockPoseGraphOptimizer,
+    PoseGraphOptimizer,
+    constraint_residual,
+    predicted_relative_transform,
+)
+from core.reconstruction.relocalization import RelocalizationAcceptancePolicy
 from core.reconstruction.keyframes import (
     KeyframeSelectionPolicy,
     KeyframeSelector,
@@ -276,6 +296,22 @@ from core.reconstruction.sparse import SparseLandmark, SparseObservation
 from core.reconstruction.trajectory import ReconstructionTrajectory
 
 __all__ = [
+    "GLOBAL_CONSISTENCY_SCHEMA_VERSION",
+    "GlobalConsistencyResult",
+    "LoopClosureCandidate",
+    "LoopClosureDecision",
+    "OptimizedKeyframePose",
+    "PoseGraphConstraint",
+    "PoseGraphConstraintKind",
+    "PoseGraphNode",
+    "PoseGraphSnapshot",
+    "RelocalizationResult",
+    "RelocalizationStatus",
+    "DeterministicMockPoseGraphOptimizer",
+    "PoseGraphOptimizer",
+    "constraint_residual",
+    "predicted_relative_transform",
+    "RelocalizationAcceptancePolicy",
     "BackendCapabilities",
     "BoundedFrameCache",
     "CachedKeyframeImage",
