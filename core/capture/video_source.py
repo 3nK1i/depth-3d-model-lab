@@ -27,6 +27,7 @@ class VideoSource(BaseSource):
         self._loop = True
         self._speed = 1.0
         self._seek_to_frame: int | None = None
+        self._native_fps: float | None = None
 
     def _run(self) -> None:
         capture = cv2.VideoCapture(self._path)
@@ -35,7 +36,8 @@ class VideoSource(BaseSource):
             return
         self._capture = capture
 
-        fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
+        self._native_fps = fps
         frame_interval = 1.0 / fps
         self._set_status(SourceStatus.CONNECTED)
 
@@ -100,3 +102,11 @@ class VideoSource(BaseSource):
         if self._capture is None:
             return 0
         return int(self._capture.get(cv2.CAP_PROP_POS_FRAMES))
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @property
+    def native_fps(self) -> float | None:
+        return self._native_fps

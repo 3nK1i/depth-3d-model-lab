@@ -69,6 +69,12 @@ from core.reconstruction.ingestion import (
     ReconstructionIngestionPipeline,
     ReconstructionIngestionResult,
 )
+from core.reconstruction.live_calibration import (
+    LIVE_CALIBRATION_SCHEMA_VERSION,
+    live_camera_calibration_dict,
+    live_camera_from_calibration_dict,
+    load_live_camera_calibration,
+)
 from core.reconstruction.live_contracts import (
     LIVE_SLAM_RECONSTRUCTION_FRAME,
     LIVE_SLAM_SCHEMA_VERSION,
@@ -86,6 +92,17 @@ from core.reconstruction.live_frames import LiveSourceFrameAdapter
 from core.reconstruction.live_mailbox import (
     LatestLiveFrameMailbox,
     LiveFrameMailboxStats,
+)
+from core.reconstruction.live_runtime import (
+    LiveBackendFactory,
+    LiveCaptureRuntimeState,
+    LiveCaptureRuntimeStats,
+    LiveCaptureSlamRuntime,
+)
+from core.reconstruction.live_source_metadata import (
+    make_recorded_video_live_metadata,
+    make_rtsp_source_metadata_from_identity,
+    rtsp_identity_fingerprint,
 )
 from core.reconstruction.live_mock import (
     MOCK_LIVE_SLAM_BACKEND_ID,
@@ -305,6 +322,10 @@ __all__ = [
     "InvalidSessionTransitionError",
     "KeyframeSelectionReason",
     "LiveSlamBackend",
+    "LIVE_CALIBRATION_SCHEMA_VERSION",
+    "live_camera_calibration_dict",
+    "live_camera_from_calibration_dict",
+    "load_live_camera_calibration",
     "LIVE_SLAM_MAX_MESSAGE_BYTES",
     "LIVE_SLAM_PROTOCOL_VERSION",
     "LIVE_SLAM_RECONSTRUCTION_FRAME",
@@ -312,6 +333,10 @@ __all__ = [
     "LiveFrameBufferReference",
     "LatestLiveFrameMailbox",
     "LiveFrameMailboxStats",
+    "LiveBackendFactory",
+    "LiveCaptureRuntimeState",
+    "LiveCaptureRuntimeStats",
+    "LiveCaptureSlamRuntime",
     "LiveFramePixelFormat",
     "LiveFrameStaleError",
     "LiveFrameTransportError",
@@ -343,6 +368,9 @@ __all__ = [
     "make_live_observation_message",
     "make_live_start_message",
     "make_live_control_message",
+    "make_recorded_video_live_metadata",
+    "make_rtsp_source_metadata_from_identity",
+    "rtsp_identity_fingerprint",
     "parse_live_observation_message",
     "parse_live_worker_error",
     "ExternalStellaLiveSlamBackend",

@@ -90,6 +90,22 @@ class CameraSource(BaseSource):
     def set_rotation(self, degrees: int) -> None:
         self._rotate_degrees = degrees % 360
 
+    @property
+    def device_index(self) -> int:
+        return self._device_index
+
+    @property
+    def requested_width(self) -> int | None:
+        return self._width
+
+    @property
+    def requested_height(self) -> int | None:
+        return self._height
+
+    @property
+    def requested_fps(self) -> int | None:
+        return self._fps
+
 
 def enumerate_cameras(
     max_index: int = 8,

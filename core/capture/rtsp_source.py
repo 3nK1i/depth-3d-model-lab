@@ -116,3 +116,15 @@ class RtspSource(BaseSource):
     @property
     def reconnect_attempts(self) -> int:
         return self._reconnect_attempts
+
+    @property
+    def sanitized_url(self) -> str:
+        return sanitize_rtsp_url(self._url)
+
+    @property
+    def source_fingerprint(self) -> str:
+        # The raw locator remains private/in-memory; only its one-way identity
+        # leaves the capture object.
+        import hashlib
+
+        return hashlib.sha256(self._url.encode("utf-8")).hexdigest()

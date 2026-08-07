@@ -56,6 +56,7 @@ class ApplicationController(QObject):
     # (e.g. Phase 3's InferenceController) that wants live frames without
     # this controller needing to know inference exists at all.
     source_type_changed = pyqtSignal(object)  # SourceType after active-source cleanup
+    source_status_changed = pyqtSignal(object)  # SourceStatus for passive live-SLAM bridge
 
     def __init__(
         self,
@@ -295,6 +296,7 @@ class ApplicationController(QObject):
         if self._shutdown_started:
             return
         self._source_bar.set_connection_enum(_STATUS_TO_CONNECTION_STATE[status])
+        self.source_status_changed.emit(status)
         # Explicit disconnect clears the preview directly. A real source
         # error is the only asynchronous state that should mark it idle.
         if status is SourceStatus.ERROR:
