@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Protocol, runtime_checkable
 
 from core.contracts.validation import require_nonempty
 from core.reconstruction.contracts import InputSourceKind
@@ -12,6 +12,9 @@ from core.reconstruction.control import ReconstructionOperationControl
 from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.events import ReconstructionEvent, ReconstructionStage
 from core.reconstruction.profiles import ReconstructionQualityProfile
+
+if TYPE_CHECKING:
+    from core.reconstruction.sfm_contracts import OfflineSfmRequest, OfflineSfmResult
 
 
 class ReconstructionBackendKind(str, Enum):
@@ -125,7 +128,11 @@ class ReconstructionBackend(Protocol):
 
 @runtime_checkable
 class OfflineSfmBackend(ReconstructionBackend, Protocol):
-    def run_sparse_reconstruction(self, context: BackendOperationContext) -> object: ...
+    def run_sparse_reconstruction(
+        self,
+        request: "OfflineSfmRequest",
+        context: BackendOperationContext,
+    ) -> "OfflineSfmResult": ...
 
 
 @runtime_checkable

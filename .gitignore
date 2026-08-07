@@ -52,3 +52,8 @@ outputs/inspection_exports/
 *.onnx
 *.engine
 *.plan
+
+# Phase 8 reconstruction workspaces, databases, sparse models, and reports.
+outputs/reconstruction/
+reconstruction_workspaces/
+*.colmap.db

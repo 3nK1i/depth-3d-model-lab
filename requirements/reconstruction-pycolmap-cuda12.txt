@@ -1,0 +1,4 @@
+# Phase 8 offline SfM worker environment only.
+# Do NOT install this into the main `depth` environment: PyTorch 2.13 uses
+# cuda-toolkit 13.0.3 there, while this wheel requires CUDA toolkit <13.
+pycolmap-cuda12==4.1.1

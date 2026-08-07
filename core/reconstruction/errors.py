@@ -27,3 +27,11 @@ class IncompatibleCheckpointError(ReconstructionError):
 
 class ReconstructionCancelledError(ReconstructionError):
     """Raised cooperatively when a future backend observes cancellation."""
+
+
+class SfmBackendUnavailableError(ReconstructionError):
+    """Raised when the optional external offline SfM backend is unavailable."""
+
+
+class SfmWorkspaceError(ReconstructionError):
+    """Raised when an SfM workspace cannot be materialized safely."""
