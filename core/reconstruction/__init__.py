@@ -48,6 +48,19 @@ from core.reconstruction.dense_fusion import (
     reconstruction_unit_depth_alignment,
 )
 
+from core.reconstruction.geometry_quality import (
+    DENSE_GEOMETRY_QUALITY_SCHEMA_VERSION,
+    DenseGeometryEvidence,
+    DenseGeometryPointQuality,
+    DenseGeometryQualityPolicy,
+    DenseGeometryQualityReport,
+    DenseGeometryQualitySummary,
+    GeometryQualityCode,
+    GeometryQualityLevel,
+    assess_dense_geometry_quality,
+    default_dense_geometry_quality_policy,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
@@ -479,6 +492,16 @@ __all__ = [
     "scale_reference_profile_from_dict",
     "scale_reference_profile_from_json",
     "scale_reference_profile_to_json",
+    "DENSE_GEOMETRY_QUALITY_SCHEMA_VERSION",
+    "DenseGeometryEvidence",
+    "DenseGeometryPointQuality",
+    "DenseGeometryQualityPolicy",
+    "DenseGeometryQualityReport",
+    "DenseGeometryQualitySummary",
+    "GeometryQualityCode",
+    "GeometryQualityLevel",
+    "assess_dense_geometry_quality",
+    "default_dense_geometry_quality_policy",
     "CameraDistortionModel",
     "CameraPose",
     "CheckpointArtifact",
