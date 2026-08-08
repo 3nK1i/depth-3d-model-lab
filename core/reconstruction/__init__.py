@@ -61,6 +61,19 @@ from core.reconstruction.geometry_quality import (
     default_dense_geometry_quality_policy,
 )
 
+from core.reconstruction.surface_mesh import (
+    SURFACE_MESH_POSE_CONVENTION,
+    SURFACE_MESH_SCHEMA_VERSION,
+    SurfaceMesh,
+    SurfaceMeshResult,
+    SurfaceMeshStatistics,
+    SurfaceMeshingMethod,
+    SurfaceMeshingPolicy,
+    default_surface_meshing_policy,
+    generate_quality_aware_surface_mesh,
+    write_surface_mesh_obj,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
