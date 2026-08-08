@@ -103,10 +103,17 @@ from core.reconstruction.live_trajectory import (
     LIVE_TRAJECTORY_SCHEMA_VERSION,
     LiveOptimizedTrajectory,
     LiveTrajectoryCorrection,
+    LiveTrajectoryEpochTransition,
     LiveTrajectoryPose,
     LiveTrajectoryPoseLayer,
     LiveTrajectoryRevisionUpdate,
     LiveTrajectorySnapshot,
+)
+from core.reconstruction.live_trajectory_hardening import (
+    LiveTrajectoryCoordinator,
+    LiveTrajectoryHardeningPolicy,
+    LiveTrajectoryHardeningTelemetry,
+    LiveTrajectoryQualityAssessment,
 )
 from core.reconstruction.live_mailbox import (
     LatestLiveFrameMailbox,
@@ -331,7 +338,12 @@ __all__ = [
     "RelocalizationAcceptancePolicy",
     "LIVE_TRAJECTORY_SCHEMA_VERSION",
     "LiveOptimizedTrajectory",
+    "LiveTrajectoryCoordinator",
     "LiveTrajectoryCorrection",
+    "LiveTrajectoryEpochTransition",
+    "LiveTrajectoryHardeningPolicy",
+    "LiveTrajectoryHardeningTelemetry",
+    "LiveTrajectoryQualityAssessment",
     "LiveTrajectoryPose",
     "LiveTrajectoryPoseLayer",
     "LiveTrajectoryRevisionUpdate",

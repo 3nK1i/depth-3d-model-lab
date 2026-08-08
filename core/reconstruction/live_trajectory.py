@@ -31,7 +31,7 @@ from core.reconstruction.sfm_contracts import (
 from core.reconstruction.sfm_coordinates import validate_rigid_matrix
 from core.reconstruction.validation import require_nonnegative_int, require_positive_int, require_uuid
 
-LIVE_TRAJECTORY_SCHEMA_VERSION = 1
+LIVE_TRAJECTORY_SCHEMA_VERSION = 2
 
 
 class LiveTrajectoryPoseLayer(str, Enum):
@@ -76,6 +76,7 @@ class LiveTrajectoryPose:
     T_reconstruction_from_camera: np.ndarray
     source_keyframe_id: str = ""
     optimization_revision: int | None = None
+    optimizer_epoch: int | None = None
     native_optimized_source_pose_id: str = ""
     gauge: ReconstructionGauge = field(default_factory=ReconstructionGauge)
 
@@ -106,8 +107,9 @@ class LiveTrajectoryPose:
         keyframe_id = str(self.source_keyframe_id).strip()
         native_source = str(self.native_optimized_source_pose_id).strip()
         revision = self.optimization_revision
+        epoch = self.optimizer_epoch
         if self.layer is LiveTrajectoryPoseLayer.TRACKING:
-            if keyframe_id or native_source or revision is not None:
+            if keyframe_id or native_source or revision is not None or epoch is not None:
                 raise ReconstructionValidationError(
                     "Raw tracking poses cannot claim optimized-pose provenance."
                 )
@@ -121,6 +123,11 @@ class LiveTrajectoryPose:
                     "Optimized trajectory poses require optimization_revision."
                 )
             revision = require_positive_int(revision, field_name="optimization_revision")
+            if epoch is None:
+                raise ReconstructionValidationError(
+                    "Optimized trajectory poses require optimizer_epoch."
+                )
+            epoch = require_positive_int(epoch, field_name="optimizer_epoch")
             if not native_source:
                 raise ReconstructionValidationError(
                     "Optimized trajectory poses require native optimizer provenance."
@@ -128,6 +135,7 @@ class LiveTrajectoryPose:
         object.__setattr__(self, "source_keyframe_id", keyframe_id)
         object.__setattr__(self, "native_optimized_source_pose_id", native_source)
         object.__setattr__(self, "optimization_revision", revision)
+        object.__setattr__(self, "optimizer_epoch", epoch)
         object.__setattr__(self, "gauge", _require_arbitrary_gauge(self.gauge))
 
     @property
@@ -152,6 +160,7 @@ class LiveTrajectoryPose:
             "T_reconstruction_from_camera": self.T_reconstruction_from_camera.tolist(),
             "source_keyframe_id": self.source_keyframe_id,
             "optimization_revision": self.optimization_revision,
+            "optimizer_epoch": self.optimizer_epoch,
             "native_optimized_source_pose_id": self.native_optimized_source_pose_id,
             "is_exact_optimizer_pose": self.is_exact_optimizer_pose,
             "is_propagated": self.is_propagated,
@@ -166,6 +175,7 @@ class LiveTrajectoryCorrection:
     raw_pose_id: str
     native_optimized_source_pose_id: str
     optimization_revision: int
+    optimizer_epoch: int
     timestamp_ns: int
     T_optimized_reconstruction_from_tracking_reconstruction: np.ndarray
     translation_correction: float
@@ -186,6 +196,11 @@ class LiveTrajectoryCorrection:
             self,
             "optimization_revision",
             require_positive_int(self.optimization_revision, field_name="optimization_revision"),
+        )
+        object.__setattr__(
+            self,
+            "optimizer_epoch",
+            require_positive_int(self.optimizer_epoch, field_name="optimizer_epoch"),
         )
         object.__setattr__(
             self,
@@ -217,6 +232,7 @@ class LiveTrajectoryCorrection:
             "raw_pose_id": self.raw_pose_id,
             "native_optimized_source_pose_id": self.native_optimized_source_pose_id,
             "optimization_revision": self.optimization_revision,
+            "optimizer_epoch": self.optimizer_epoch,
             "timestamp_ns": self.timestamp_ns,
             "correction_convention": (
                 "T_optimized_reconstruction_from_tracking_reconstruction"
@@ -232,6 +248,7 @@ class LiveTrajectoryCorrection:
 @dataclass(frozen=True, slots=True)
 class LiveTrajectoryRevisionUpdate:
     session_id: str
+    optimizer_epoch: int
     map_revision: int
     previous_optimization_revision: int
     optimization_revision: int
@@ -241,6 +258,7 @@ class LiveTrajectoryRevisionUpdate:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "session_id", require_uuid(self.session_id, field_name="session_id"))
+        object.__setattr__(self, "optimizer_epoch", require_positive_int(self.optimizer_epoch, field_name="optimizer_epoch"))
         object.__setattr__(self, "map_revision", require_nonnegative_int(self.map_revision, field_name="map_revision"))
         previous = require_nonnegative_int(
             self.previous_optimization_revision,
@@ -273,6 +291,7 @@ class LiveTrajectoryRevisionUpdate:
         return {
             "schema_version": LIVE_TRAJECTORY_SCHEMA_VERSION,
             "session_id": self.session_id,
+            "optimizer_epoch": self.optimizer_epoch,
             "map_revision": self.map_revision,
             "previous_optimization_revision": self.previous_optimization_revision,
             "optimization_revision": self.optimization_revision,
@@ -286,6 +305,7 @@ class LiveTrajectoryRevisionUpdate:
 @dataclass(frozen=True, slots=True)
 class LiveTrajectorySnapshot:
     session_id: str
+    optimizer_epoch: int
     map_revision: int
     optimization_revision: int
     raw_pose_count: int
@@ -294,6 +314,7 @@ class LiveTrajectorySnapshot:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "session_id", require_uuid(self.session_id, field_name="session_id"))
+        object.__setattr__(self, "optimizer_epoch", require_positive_int(self.optimizer_epoch, field_name="optimizer_epoch"))
         object.__setattr__(self, "map_revision", require_nonnegative_int(self.map_revision, field_name="map_revision"))
         object.__setattr__(self, "optimization_revision", require_nonnegative_int(self.optimization_revision, field_name="optimization_revision"))
         object.__setattr__(self, "raw_pose_count", require_nonnegative_int(self.raw_pose_count, field_name="raw_pose_count"))
@@ -309,11 +330,58 @@ class LiveTrajectorySnapshot:
         return {
             "schema_version": LIVE_TRAJECTORY_SCHEMA_VERSION,
             "session_id": self.session_id,
+            "optimizer_epoch": self.optimizer_epoch,
             "map_revision": self.map_revision,
             "optimization_revision": self.optimization_revision,
             "raw_pose_count": self.raw_pose_count,
             "optimized_keyframe_count": self.optimized_keyframe_count,
             "poses": [item.as_dict() for item in self.poses],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LiveTrajectoryEpochTransition:
+    session_id: str
+    previous_optimizer_epoch: int
+    optimizer_epoch: int
+    reason: str
+    raw_pose_count: int
+    cleared_optimized_keyframes: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "session_id", require_uuid(self.session_id, field_name="session_id"))
+        previous = require_positive_int(
+            self.previous_optimizer_epoch,
+            field_name="previous_optimizer_epoch",
+        )
+        current = require_positive_int(self.optimizer_epoch, field_name="optimizer_epoch")
+        if current <= previous:
+            raise ReconstructionValidationError("optimizer_epoch must increase across an epoch transition.")
+        reason = str(self.reason).strip()
+        if not reason:
+            raise ReconstructionValidationError("Optimizer epoch transition reason must not be empty.")
+        object.__setattr__(self, "previous_optimizer_epoch", previous)
+        object.__setattr__(self, "optimizer_epoch", current)
+        object.__setattr__(self, "reason", reason)
+        object.__setattr__(self, "raw_pose_count", require_nonnegative_int(self.raw_pose_count, field_name="raw_pose_count"))
+        object.__setattr__(
+            self,
+            "cleared_optimized_keyframes",
+            require_nonnegative_int(
+                self.cleared_optimized_keyframes,
+                field_name="cleared_optimized_keyframes",
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": LIVE_TRAJECTORY_SCHEMA_VERSION,
+            "session_id": self.session_id,
+            "previous_optimizer_epoch": self.previous_optimizer_epoch,
+            "optimizer_epoch": self.optimizer_epoch,
+            "reason": self.reason,
+            "raw_pose_count": self.raw_pose_count,
+            "cleared_optimized_keyframes": self.cleared_optimized_keyframes,
         }
 
 
@@ -338,6 +406,7 @@ class LiveOptimizedTrajectory:
         self._raw_by_keyframe: dict[str, _RawPoseRecord] = {}
         self._optimized_by_keyframe: dict[str, object] = {}
         self._correction_by_keyframe: dict[str, LiveTrajectoryCorrection] = {}
+        self._optimizer_epoch = 1
         self._map_revision = 0
         self._optimization_revision = 0
         self._revision_signature: tuple[tuple[str, bytes], ...] = ()
@@ -345,6 +414,50 @@ class LiveOptimizedTrajectory:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def optimizer_epoch(self) -> int:
+        with self._lock:
+            return self._optimizer_epoch
+
+    def begin_optimizer_epoch(self, *, reason: str) -> LiveTrajectoryEpochTransition:
+        """Invalidate optimizer-derived state while preserving immutable raw tracking poses.
+
+        Native workers may restart with their map/keyframe IDs and optimization
+        revisions reset to zero.  Starting a new optimizer epoch prevents stale
+        corrections from the previous worker instance from leaking into the new
+        trajectory while allowing raw observations to remain available.
+        """
+
+        reason_text = str(reason).strip()
+        if not reason_text:
+            raise ReconstructionValidationError("Optimizer epoch transition reason must not be empty.")
+        with self._lock:
+            previous_epoch = self._optimizer_epoch
+            cleared = len(self._correction_by_keyframe)
+            self._optimizer_epoch += 1
+            self._raw_by_frame = {
+                frame_id: _RawPoseRecord(
+                    pose=record.pose,
+                    sequence_index=record.sequence_index,
+                    keyframe_id="",
+                )
+                for frame_id, record in self._raw_by_frame.items()
+            }
+            self._raw_by_keyframe.clear()
+            self._optimized_by_keyframe.clear()
+            self._correction_by_keyframe.clear()
+            self._map_revision = 0
+            self._optimization_revision = 0
+            self._revision_signature = ()
+            return LiveTrajectoryEpochTransition(
+                session_id=self._session_id,
+                previous_optimizer_epoch=previous_epoch,
+                optimizer_epoch=self._optimizer_epoch,
+                reason=reason_text,
+                raw_pose_count=len(self._raw_by_frame),
+                cleared_optimized_keyframes=cleared,
+            )
 
     @property
     def optimization_revision(self) -> int:
@@ -451,6 +564,7 @@ class LiveOptimizedTrajectory:
                     raw_pose_id=raw.pose.pose_id,
                     native_optimized_source_pose_id=optimized.source_pose_id,
                     optimization_revision=status.optimized_pose_revision,
+                    optimizer_epoch=self._optimizer_epoch,
                     timestamp_ns=raw.pose.timestamp_ns,
                     T_optimized_reconstruction_from_tracking_reconstruction=correction_matrix,
                     translation_correction=float(np.linalg.norm(correction_matrix[:3, 3])),
@@ -479,6 +593,7 @@ class LiveOptimizedTrajectory:
             unmatched.sort()
             return LiveTrajectoryRevisionUpdate(
                 session_id=self._session_id,
+                optimizer_epoch=self._optimizer_epoch,
                 map_revision=self._map_revision,
                 previous_optimization_revision=previous_revision,
                 optimization_revision=self._optimization_revision,
@@ -587,6 +702,7 @@ class LiveOptimizedTrajectory:
                     T_reconstruction_from_camera=optimized.T_reconstruction_from_camera,
                     source_keyframe_id=raw.keyframe_id,
                     optimization_revision=self._optimization_revision,
+                    optimizer_epoch=self._optimizer_epoch,
                     native_optimized_source_pose_id=optimized.source_pose_id,
                     gauge=raw.pose.gauge,
                 )
@@ -608,6 +724,7 @@ class LiveOptimizedTrajectory:
                         T_reconstruction_from_camera=matrix,
                         source_keyframe_id=correction.keyframe_id,
                         optimization_revision=correction.optimization_revision,
+                        optimizer_epoch=correction.optimizer_epoch,
                         native_optimized_source_pose_id=correction.native_optimized_source_pose_id,
                         gauge=raw.pose.gauge,
                     )
@@ -622,6 +739,7 @@ class LiveOptimizedTrajectory:
             )
             return LiveTrajectorySnapshot(
                 session_id=self._session_id,
+                optimizer_epoch=self._optimizer_epoch,
                 map_revision=self._map_revision,
                 optimization_revision=self._optimization_revision,
                 raw_pose_count=len(self._raw_by_frame),
