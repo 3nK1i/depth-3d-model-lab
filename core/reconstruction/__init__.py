@@ -176,6 +176,20 @@ from core.reconstruction.gaussian_backends import (
     write_gaussian_backend_qualification_json,
 )
 
+from core.reconstruction.gaussian_benchmarking import (
+    GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
+    GaussianBenchmarkBackendResult,
+    GaussianBenchmarkHardwareProfile,
+    GaussianBenchmarkRunState,
+    GaussianImageQualityMetrics,
+    GaussianLifecycleEvidence,
+    GaussianPerformanceMetrics,
+    RealSceneGaussianBenchmarkReport,
+    RealSceneGaussianBenchmarkSpec,
+    write_real_scene_gaussian_benchmark_report,
+    write_real_scene_gaussian_benchmark_spec,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
@@ -508,6 +522,17 @@ from core.reconstruction.sparse import SparseLandmark, SparseObservation
 from core.reconstruction.trajectory import ReconstructionTrajectory
 
 __all__ = [
+    "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
+    "GaussianBenchmarkBackendResult",
+    "GaussianBenchmarkHardwareProfile",
+    "GaussianBenchmarkRunState",
+    "GaussianImageQualityMetrics",
+    "GaussianLifecycleEvidence",
+    "GaussianPerformanceMetrics",
+    "RealSceneGaussianBenchmarkReport",
+    "RealSceneGaussianBenchmarkSpec",
+    "write_real_scene_gaussian_benchmark_report",
+    "write_real_scene_gaussian_benchmark_spec",
     "SEMANTIC_GEOMETRY_POSE_CONVENTION",
     "SEMANTIC_GEOMETRY_SCHEMA_VERSION",
     "MeshProjection",
