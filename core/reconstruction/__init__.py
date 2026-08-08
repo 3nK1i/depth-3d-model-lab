@@ -28,6 +28,26 @@ from core.reconstruction.camera_geometry import (
     load_camera_geometry_profile,
     save_camera_geometry_profile,
 )
+from core.reconstruction.dense_fusion import (
+    DENSE_FUSION_POSE_CONVENTION,
+    DENSE_FUSION_SCHEMA_VERSION,
+    DenseDepthAlignment,
+    DenseDepthAlignmentMode,
+    DenseDepthUnit,
+    DenseFusionFrame,
+    DenseFusionPolicy,
+    DenseFusionResult,
+    DenseFusionStatistics,
+    DensePointCloud,
+    DenseSceneProfile,
+    DenseVoxelFusion,
+    estimate_depth_alignment_from_correspondences,
+    explicit_depth_scale_alignment,
+    fuse_dense_frames,
+    metric_depth_alignment,
+    reconstruction_unit_depth_alignment,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
