@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import numpy as np
 
 from core.contracts import CalibrationStatus, ImageSize
+from core.models.metadata import IntrinsicsSource
 from core.contracts.validation import (
     JsonValue,
     metadata_as_dict,
@@ -23,6 +24,7 @@ from core.contracts.validation import (
     require_nonempty,
 )
 from core.reconstruction.camera import ReconstructionCamera
+from core.reconstruction.camera_geometry import CameraIntrinsicsPolicy
 from core.reconstruction.contracts import InputSourceKind, InputSourceMetadata, TimestampOrigin
 from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.poses import rotation_matrix_to_quaternion_wxyz
@@ -433,6 +435,7 @@ class LiveSlamRequest:
     metadata: Mapping[str, JsonValue] | Sequence[tuple[str, JsonValue]] = field(
         default_factory=tuple
     )
+    camera_intrinsics_policy: CameraIntrinsicsPolicy = CameraIntrinsicsPolicy.CALIBRATED_ONLY
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -449,6 +452,8 @@ class LiveSlamRequest:
         )
         if not isinstance(self.simulated_live, bool):
             raise TypeError("simulated_live must be a bool.")
+        if not isinstance(self.camera_intrinsics_policy, CameraIntrinsicsPolicy):
+            raise TypeError("camera_intrinsics_policy must be a CameraIntrinsicsPolicy.")
         if not isinstance(self.enable_mapping, bool):
             raise TypeError("enable_mapping must be a bool.")
         if not isinstance(self.enable_loop_closure, bool) or not isinstance(
@@ -482,10 +487,20 @@ class LiveSlamRequest:
             raise ReconstructionValidationError(
                 "Live source image size must match the calibrated camera image size."
             )
-        if self.camera.intrinsics.calibration_status is not CalibrationStatus.CALIBRATED:
-            raise ReconstructionValidationError(
-                "Production live SLAM requires explicitly calibrated camera intrinsics."
-            )
+        intrinsics = self.camera.intrinsics
+        if intrinsics.calibration_status is not CalibrationStatus.CALIBRATED:
+            if self.camera_intrinsics_policy is not CameraIntrinsicsPolicy.ALLOW_ESTIMATED:
+                raise ReconstructionValidationError(
+                    "Production live SLAM requires explicitly calibrated camera intrinsics "
+                    "unless provisional estimated intrinsics are explicitly enabled."
+                )
+            if not (
+                intrinsics.source is IntrinsicsSource.ESTIMATED
+                and intrinsics.calibration_status is CalibrationStatus.NOT_CALIBRATED
+            ):
+                raise ReconstructionValidationError(
+                    "Provisional live SLAM accepts only explicit ESTIMATED/NOT_CALIBRATED intrinsics."
+                )
         object.__setattr__(self, "metadata", normalize_metadata(self.metadata))
 
     def as_dict(self) -> dict[str, Any]:
@@ -497,6 +512,7 @@ class LiveSlamRequest:
             "profile": self.profile.value,
             "backend_id": self.backend_id,
             "simulated_live": self.simulated_live,
+            "camera_intrinsics_policy": self.camera_intrinsics_policy.value,
             "enable_mapping": self.enable_mapping,
             "enable_loop_closure": self.enable_loop_closure,
             "enable_global_optimization": self.enable_global_optimization,

@@ -168,7 +168,11 @@ def _resolved_live_fps(request: LiveSlamRequest) -> float:
 
 
 def stella_monocular_config_text(request: LiveSlamRequest) -> str:
-    """Translate calibrated EIA camera metadata to a headless stella YAML config.
+    """Translate declared EIA camera metadata to a headless stella YAML config.
+
+    Phase 8.6A may explicitly allow provisional estimated intrinsics for
+    experimental tracking. Their provenance remains visible in the generated
+    config and they are never relabelled as calibrated.
 
     Loop detection follows the explicit Phase 8.5 request.  The native worker
     independently verifies the resulting stella API state after startup.  No
@@ -226,7 +230,10 @@ def stella_monocular_config_text(request: LiveSlamRequest) -> str:
     }[request.profile]
 
     lines = [
-        "# EIA TECH Phase 8.5B generated stella_vslam monocular config",
+        "# EIA TECH Phase 8.6A generated stella_vslam monocular config",
+        f"# intrinsics_source={camera.intrinsics.source.value}",
+        f"# calibration_status={camera.intrinsics.calibration_status.value}",
+        f"# camera_intrinsics_policy={request.camera_intrinsics_policy.value}",
         "Camera:",
         f'  name: "EIA {camera.camera_id}"',
         "  setup: monocular",
