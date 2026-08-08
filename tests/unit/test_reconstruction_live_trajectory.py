@@ -259,4 +259,3 @@ def test_native_timestamp_repairs_delayed_async_keyframe_id_association() -> Non
     assert np.allclose(best0.T_reconstruction_from_camera, _matrix(-0.1))
     assert best1_no_propagation is not None
     assert best1_no_propagation.layer is LiveTrajectoryPoseLayer.TRACKING
-
