@@ -40,6 +40,7 @@ conn, _ = srv.accept()
 worker_seq = 0
 buf = b''
 request = None
+accepted_loop_requests = 0
 mode = os.environ.get('EIA_FAKE_STELLA_MODE', 'normal')
 marker = os.environ.get('EIA_FAKE_STELLA_MARKER', '')
 
@@ -86,7 +87,7 @@ send('hello', {
     'pixel_transport': 'posix_shared_memory',
     'control_transport': 'af_unix_json_lines',
 })
-send('ready', {'protocol_version': 1, 'metric_scale': False})
+send('ready', {'protocol_version': 1, 'metric_scale': False, 'loop_closure_supported_in_phase8_5': True, 'global_optimization_supported_in_phase8_5': True})
 
 while True:
     message = recv()
@@ -94,9 +95,14 @@ while True:
     payload = message['payload']
     if kind == 'start':
         request = payload['request']
+        loop_enabled = bool(request.get('enable_loop_closure', False))
+        global_enabled = bool(request.get('enable_global_optimization', False))
+        if loop_enabled != global_enabled:
+            send('error', {'code': 'worker_operation_failed', 'message': 'loop/global must match', 'retryable': False})
+            continue
         send('started', {
-            'loop_detector_enabled': False,
-            'phase8_global_optimization_feature_enabled': False,
+            'loop_detector_enabled': loop_enabled,
+            'phase8_global_optimization_feature_enabled': global_enabled,
             'internal_global_optimization_thread_may_exist': True,
             'mapping_enabled': request['enable_mapping'],
             'scale_status': 'arbitrary',
@@ -166,6 +172,42 @@ while True:
                 'landmark_count': 85,
             },
         }})
+    elif kind == 'request_loop_closure':
+        accepted_loop_requests += 1
+        send('loop_closure_requested', {
+            'from_keyframe_id': payload['from_keyframe_id'],
+            'to_keyframe_id': payload['to_keyframe_id'],
+            'accepted': True,
+            'accepted_request_count': accepted_loop_requests,
+        })
+    elif kind == 'global_consistency_status_request':
+        send('global_consistency_status', {
+            'loop_detector_enabled': bool(request.get('enable_loop_closure', False)),
+            'global_optimization_enabled': bool(request.get('enable_global_optimization', False)),
+            'loop_ba_running': False,
+            'map_revision': 1,
+            'optimized_pose_revision': 1 + accepted_loop_requests,
+            'keyframe_count': 1,
+            'landmark_count': 85,
+            'accepted_loop_closure_requests': accepted_loop_requests,
+            'relocalization_count': 0,
+            'last_relocalization_frame_id': '',
+            'optimized_keyframe_poses': [{
+                'keyframe_id': 'stella-keyframe-0',
+                'frame_id': 'stella-keyframe-0',
+                'timestamp_ns': 1000000000,
+                'source_pose_id': 'stella-native-keyframe-pose-0',
+                'optimization_revision': 1 + accepted_loop_requests,
+                'pose_layer': 'optimized',
+                'pose_convention': 'T_reconstruction_from_camera',
+                'T_reconstruction_from_camera': [
+                    [1.0, 0.0, 0.0, 0.1],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }],
+        })
     elif kind == 'stop':
         send('stopped', {'clean': True})
     elif kind == 'shutdown':

@@ -119,18 +119,29 @@ def test_live_request_requires_explicit_calibration() -> None:
         )
 
 
-def test_phase8_4_request_forbids_loop_and_global_optimization() -> None:
+def test_phase8_5_request_requires_loop_closure_before_global_optimization() -> None:
     from tests.reconstruction_live_helpers import make_live_request
 
     base = make_live_request()
-    with pytest.raises(ReconstructionValidationError, match="Phase 8.5"):
+    loop_only = LiveSlamRequest(
+        session_id=base.session_id,
+        source=base.source,
+        camera=base.camera,
+        profile=base.profile,
+        backend_id=base.backend_id,
+        enable_loop_closure=True,
+    )
+    assert loop_only.enable_loop_closure is True
+    assert loop_only.enable_global_optimization is False
+
+    with pytest.raises(ReconstructionValidationError, match="requires loop closure"):
         LiveSlamRequest(
             session_id=base.session_id,
             source=base.source,
             camera=base.camera,
             profile=base.profile,
             backend_id=base.backend_id,
-            enable_loop_closure=True,
+            enable_global_optimization=True,
         )
 
 

@@ -455,9 +455,9 @@ class LiveSlamRequest:
             self.enable_global_optimization, bool
         ):
             raise TypeError("Loop/global optimization enablement fields must be bool values.")
-        if self.enable_loop_closure or self.enable_global_optimization:
+        if self.enable_global_optimization and not self.enable_loop_closure:
             raise ReconstructionValidationError(
-                "Loop closure and global optimization are deferred to Phase 8.5."
+                "Global optimization requires loop closure to be enabled."
             )
 
         live_kinds = {InputSourceKind.USB_CAMERA, InputSourceKind.RTSP_STREAM}

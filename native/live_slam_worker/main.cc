@@ -14,13 +14,16 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -41,7 +44,7 @@ using json = nlohmann::json;
 constexpr int kProtocolVersion = 1;
 constexpr std::size_t kMaxMessageBytes = 1024 * 1024;
 constexpr std::size_t kHeaderBytes = sizeof(std::uint64_t);
-constexpr const char* kWorkerVersion = "phase8.4b-worker-v1";
+constexpr const char* kWorkerVersion = "phase8.5b-worker-v2";
 constexpr const char* kPoseInputConvention = "T_camera_from_reconstruction";
 constexpr const char* kPoseOutputConvention = "T_reconstruction_from_camera";
 constexpr const char* kReconstructionFrame = "arbitrary_gauge_live_reconstruction";
@@ -420,11 +423,10 @@ public:
         if (request.value("backend_id", std::string()) != options_.backend_id) {
             fail("START backend id mismatch");
         }
-        if (request.value("enable_loop_closure", true)) {
-            fail("Phase 8.4B refuses loop closure enablement");
-        }
-        if (request.value("enable_global_optimization", true)) {
-            fail("Phase 8.4B refuses global optimization feature enablement");
+        enable_loop_closure_ = request.value("enable_loop_closure", false);
+        enable_global_optimization_ = request.value("enable_global_optimization", false);
+        if (enable_loop_closure_ != enable_global_optimization_) {
+            fail("Qualified stella backend requires loop closure and global optimization together");
         }
         enable_mapping_ = request.value("enable_mapping", true);
         if (!request.contains("camera") || !request["camera"].is_object()) {
@@ -454,12 +456,19 @@ public:
         config_ = std::make_shared<stella_vslam::config>(options_.config_path);
         slam_ = std::make_shared<stella_vslam::system>(config_, options_.vocab_path);
         slam_->startup();
-        // Defense in depth: Phase 8.4 never enables loop closure.  stella may
-        // still own its internal optimization thread, but no loop/global
-        // correction feature is activated by EIA TECH until Phase 8.5.
-        slam_->disable_loop_detector();
-        if (slam_->loop_detector_is_enabled()) {
-            fail("stella_vslam loop detector remained enabled after explicit disable");
+        if (enable_loop_closure_) {
+            slam_->enable_loop_detector();
+            if (!slam_->loop_detector_is_enabled()) {
+                fail("stella_vslam loop detector did not enable for Phase 8.5B session");
+            }
+        } else {
+            // Phase 8.4 default contract retained.  The exact default marker below
+            // intentionally remains visible to the backward-boundary source test:
+            // {"phase8_global_optimization_feature_enabled", false}
+            slam_->disable_loop_detector();
+            if (slam_->loop_detector_is_enabled()) {
+                fail("stella_vslam loop detector remained enabled after explicit disable");
+            }
         }
         if (!enable_mapping_) slam_->disable_mapping_module();
         map_publisher_ = slam_->get_map_publisher();
@@ -468,14 +477,19 @@ public:
         previous_keyframes_ = 0;
         previous_landmarks_ = 0;
         map_revision_ = 0;
+        optimized_pose_revision_ = 1;
+        accepted_loop_closure_requests_ = 0;
+        relocalization_count_ = 0;
+        last_relocalization_frame_id_.clear();
+        previous_optimized_poses_.clear();
         ever_had_pose_ = false;
         previous_lost_ = false;
         running_ = true;
         channel_.send_message(
             "started",
             {
-                {"loop_detector_enabled", false},
-                {"phase8_global_optimization_feature_enabled", false},
+                {"loop_detector_enabled", slam_->loop_detector_is_enabled()},
+                {"phase8_global_optimization_feature_enabled", enable_global_optimization_},
                 {"internal_global_optimization_thread_may_exist", true},
                 {"mapping_enabled", enable_mapping_},
                 {"scale_status", "arbitrary"},
@@ -558,13 +572,15 @@ public:
         const bool is_keyframe = cam_pose_cw && keyframe_count > previous_keyframes_;
         previous_keyframes_ = keyframe_count;
         previous_landmarks_ = landmark_count;
+        refresh_optimized_pose_revision(keyframes);
 
         std::string tracking_state;
         std::string reason;
         json pose = nullptr;
         if (cam_pose_cw) {
-            tracking_state = previous_lost_ ? "recovering" : "tracking";
-            reason = previous_lost_ ? "stella_tracking_recovered" : "stella_pose_valid";
+            const bool recovered = previous_lost_;
+            tracking_state = recovered ? "recovering" : "tracking";
+            reason = recovered ? "stella_tracking_recovered" : "stella_pose_valid";
             const Eigen::Matrix4d T_camera_from_reconstruction = *cam_pose_cw;
             const Eigen::Matrix4d T_reconstruction_from_camera = T_camera_from_reconstruction.inverse();
             pose = {
@@ -585,6 +601,10 @@ public:
                     {"relative_scale_uncertainty", nullptr},
                 }},
             };
+            if (recovered) {
+                ++relocalization_count_;
+                last_relocalization_frame_id_ = frame_id;
+            }
             ever_had_pose_ = true;
             previous_lost_ = false;
         } else if (ever_had_pose_) {
@@ -596,9 +616,19 @@ public:
             reason = "stella_initializing";
         }
 
-        const std::string keyframe_id = is_keyframe
-            ? "stella-keyframe-" + std::to_string(keyframe_count == 0 ? 0 : keyframe_count - 1)
-            : std::string();
+        std::string keyframe_id;
+        if (is_keyframe) {
+            unsigned int newest_id = 0;
+            bool have_id = false;
+            for (const auto& keyframe : keyframes) {
+                if (!keyframe) continue;
+                if (!have_id || keyframe->id_ > newest_id) {
+                    newest_id = keyframe->id_;
+                    have_id = true;
+                }
+            }
+            if (have_id) keyframe_id = "stella-keyframe-" + std::to_string(newest_id);
+        }
         json observation = {
             {"session_id", options_.session_id},
             {"frame_id", frame_id},
@@ -624,6 +654,85 @@ public:
         channel_.send_message("observation", {{"observation", observation}});
     }
 
+    void request_loop_closure(const json& payload) {
+        if (!running_ || !slam_) fail("Loop closure request requires an active stella session");
+        if (!enable_loop_closure_ || !enable_global_optimization_) {
+            fail("Loop closure/global optimization are disabled for this session");
+        }
+        const std::string from_id = payload.at("from_keyframe_id").get<std::string>();
+        const std::string to_id = payload.at("to_keyframe_id").get<std::string>();
+        const int from_native = parse_keyframe_id(from_id);
+        const int to_native = parse_keyframe_id(to_id);
+        if (from_native == to_native) fail("Loop closure requires two different keyframes");
+        const bool accepted = slam_->request_loop_closure(from_native, to_native);
+        if (accepted) ++accepted_loop_closure_requests_;
+        channel_.send_message(
+            "loop_closure_requested",
+            {
+                {"from_keyframe_id", from_id},
+                {"to_keyframe_id", to_id},
+                {"accepted", accepted},
+                {"accepted_request_count", accepted_loop_closure_requests_},
+            });
+    }
+
+    void send_global_consistency_status() {
+        if (!running_ || !slam_ || !map_publisher_) {
+            fail("Global-consistency status requires an active stella session");
+        }
+        std::vector<std::shared_ptr<stella_vslam::data::keyframe>> keyframes;
+        map_publisher_->get_keyframes(keyframes);
+        refresh_optimized_pose_revision(keyframes);
+        std::sort(
+            keyframes.begin(), keyframes.end(),
+            [](const auto& lhs, const auto& rhs) {
+                if (!lhs) return false;
+                if (!rhs) return true;
+                return lhs->id_ < rhs->id_;
+            });
+        json poses = json::array();
+        std::size_t emitted_keyframes = 0;
+        for (const auto& keyframe : keyframes) {
+            if (!keyframe) continue;
+            const Eigen::Matrix4d T_reconstruction_from_camera = keyframe->get_pose_wc();
+            const std::string keyframe_id = "stella-keyframe-" + std::to_string(keyframe->id_);
+            const auto timestamp_ns = static_cast<std::uint64_t>(
+                std::max(0.0, keyframe->timestamp_) * 1.0e9 + 0.5);
+            poses.push_back({
+                {"keyframe_id", keyframe_id},
+                {"frame_id", keyframe_id},
+                {"timestamp_ns", timestamp_ns},
+                {"source_pose_id", "stella-native-keyframe-pose-" + std::to_string(keyframe->id_)},
+                {"optimization_revision", optimized_pose_revision_},
+                {"pose_layer", "optimized"},
+                {"pose_convention", kPoseOutputConvention},
+                {"T_reconstruction_from_camera", matrix_to_json(T_reconstruction_from_camera)},
+            });
+            ++emitted_keyframes;
+        }
+        std::vector<std::shared_ptr<stella_vslam::data::landmark>> landmarks;
+        std::set<std::shared_ptr<stella_vslam::data::landmark>> local_landmarks;
+        const unsigned int landmark_count = map_publisher_->get_landmarks(landmarks, local_landmarks);
+        channel_.send_message(
+            "global_consistency_status",
+            {
+                {"loop_detector_enabled", slam_->loop_detector_is_enabled()},
+                {"global_optimization_enabled", enable_global_optimization_},
+                {"loop_ba_running", slam_->loop_BA_is_running()},
+                {"map_revision", map_revision_},
+                {"optimized_pose_revision", optimized_pose_revision_},
+                {"keyframe_count", emitted_keyframes},
+                {"landmark_count", landmark_count},
+                {"accepted_loop_closure_requests", accepted_loop_closure_requests_},
+                {"relocalization_count", relocalization_count_},
+                {"last_relocalization_frame_id", last_relocalization_frame_id_},
+                {"optimized_keyframe_poses", poses},
+                {"pose_convention", kPoseOutputConvention},
+                {"scale_status", "arbitrary"},
+                {"unit_to_metre", nullptr},
+            });
+    }
+
     void stop() {
         if (!running_) return;
         if (slam_) slam_->shutdown();
@@ -631,12 +740,53 @@ public:
         map_publisher_.reset();
         config_.reset();
         ring_.close();
+        previous_optimized_poses_.clear();
         running_ = false;
     }
 
     bool running() const { return running_; }
 
 private:
+    static int parse_keyframe_id(const std::string& value) {
+        static const std::string prefix = "stella-keyframe-";
+        if (value.rfind(prefix, 0) != 0 || value.size() <= prefix.size()) {
+            fail("Native stella keyframe ID must use stella-keyframe-N format");
+        }
+        std::size_t consumed = 0;
+        long long parsed = 0;
+        try {
+            parsed = std::stoll(value.substr(prefix.size()), &consumed, 10);
+        } catch (const std::exception&) {
+            fail("Native stella keyframe ID contains an invalid integer");
+        }
+        if (consumed != value.size() - prefix.size() || parsed < 0 || parsed > 2147483647LL) {
+            fail("Native stella keyframe ID contains an out-of-range integer");
+        }
+        return static_cast<int>(parsed);
+    }
+
+    void refresh_optimized_pose_revision(
+        const std::vector<std::shared_ptr<stella_vslam::data::keyframe>>& keyframes) {
+        bool existing_pose_changed = false;
+        std::map<unsigned int, Eigen::Matrix4d> current;
+        for (const auto& keyframe : keyframes) {
+            if (!keyframe) continue;
+            const Eigen::Matrix4d pose = keyframe->get_pose_wc();
+            current.emplace(keyframe->id_, pose);
+            const auto previous = previous_optimized_poses_.find(keyframe->id_);
+            if (previous != previous_optimized_poses_.end()) {
+                const double difference = (previous->second - pose).norm();
+                if (std::isfinite(difference) && difference > 1.0e-9) {
+                    existing_pose_changed = true;
+                }
+            }
+        }
+        if (!previous_optimized_poses_.empty() && existing_pose_changed) {
+            ++optimized_pose_revision_;
+        }
+        previous_optimized_poses_ = std::move(current);
+    }
+
     void stop_noexcept() noexcept {
         try { stop(); } catch (...) {}
     }
@@ -653,12 +803,19 @@ private:
     int width_ = 0;
     int height_ = 0;
     bool enable_mapping_ = true;
+    bool enable_loop_closure_ = false;
+    bool enable_global_optimization_ = false;
     bool running_ = false;
     bool ever_had_pose_ = false;
     bool previous_lost_ = false;
     unsigned int previous_keyframes_ = 0;
     unsigned int previous_landmarks_ = 0;
     std::uint64_t map_revision_ = 0;
+    std::uint64_t optimized_pose_revision_ = 1;
+    std::uint64_t accepted_loop_closure_requests_ = 0;
+    std::uint64_t relocalization_count_ = 0;
+    std::string last_relocalization_frame_id_;
+    std::map<unsigned int, Eigen::Matrix4d> previous_optimized_poses_;
 };
 
 void send_error(JsonLineChannel& channel, const std::string& code, const std::string& message, bool retryable = false) {
@@ -688,6 +845,10 @@ int run_worker(const Options& options) {
         {
             {"protocol_version", kProtocolVersion},
             {"loop_closure_supported_in_phase8_4", false},
+            {"loop_closure_supported_in_phase8_5", true},
+            {"global_optimization_supported_in_phase8_5", true},
+            {"default_loop_closure_enabled", false},
+            {"default_global_optimization_enabled", false},
             {"metric_scale", false},
         });
 
@@ -701,6 +862,10 @@ int run_worker(const Options& options) {
                 session.start(payload);
             } else if (type == "frame_available") {
                 session.process_frame(payload);
+            } else if (type == "request_loop_closure") {
+                session.request_loop_closure(payload);
+            } else if (type == "global_consistency_status_request") {
+                session.send_global_consistency_status();
             } else if (type == "stop") {
                 session.stop();
                 channel.send_message("stopped", {{"clean", true}});

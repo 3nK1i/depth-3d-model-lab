@@ -3,24 +3,22 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-import pytest
-
-from core.reconstruction import LiveSlamRequest, ReconstructionValidationError
+from core.reconstruction import LiveSlamRequest
 from tests.reconstruction_live_helpers import make_calibrated_live_camera
 from core.reconstruction import ReconstructionQualityProfile, make_usb_source_metadata
 from tests.reconstruction_helpers import SESSION_ID
 
 
-def test_phase8_5a_does_not_prematurely_enable_live_worker_loop_closure() -> None:
-    with pytest.raises(ReconstructionValidationError, match="Phase 8.5"):
-        LiveSlamRequest(
-            session_id=SESSION_ID,
-            source=make_usb_source_metadata(0, width=320, height=240, frame_rate_hz=30.0),
-            camera=make_calibrated_live_camera(),
-            profile=ReconstructionQualityProfile.EFFICIENT,
-            backend_id="development-live-slam-mock",
-            enable_loop_closure=True,
-        )
+def test_phase8_5a_default_live_request_still_disables_global_features() -> None:
+    request = LiveSlamRequest(
+        session_id=SESSION_ID,
+        source=make_usb_source_metadata(0, width=320, height=240, frame_rate_hz=30.0),
+        camera=make_calibrated_live_camera(),
+        profile=ReconstructionQualityProfile.EFFICIENT,
+        backend_id="development-live-slam-mock",
+    )
+    assert request.enable_loop_closure is False
+    assert request.enable_global_optimization is False
 
 
 def test_reconstruction_ui_remains_disabled() -> None:

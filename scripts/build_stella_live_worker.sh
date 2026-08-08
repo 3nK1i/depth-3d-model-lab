@@ -81,7 +81,7 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-w
 fi
 
 cat > "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt" <<INFO
-EIA TECH Phase 8.4B isolated stella_vslam worker
+EIA TECH Phase 8.5B isolated stella_vslam global-consistency worker
 worker_status=PASS
 worker_protocol_version=1
 worker_executable=$WORKER
@@ -90,8 +90,10 @@ stella_vslam_version=$STELLA_VERSION
 stella_vslam_commit=$STELLA_COMMIT
 stella_FBoW_submodule_commit=$FBOW_COMMIT
 source_repo_commit=$REPO_BASE
-loop_closure_feature_enabled=false
-global_optimization_feature_enabled=false
+loop_closure_supported=true
+global_optimization_supported=true
+default_session_loop_closure=false
+default_session_global_optimization=false
 pixel_transport=posix_shared_memory
 control_transport=af_unix_json_lines
 INFO

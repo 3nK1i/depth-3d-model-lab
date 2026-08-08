@@ -26,6 +26,10 @@ class LiveSlamMessageType(str, Enum):
     STARTED = "started"
     FRAME_AVAILABLE = "frame_available"
     OBSERVATION = "observation"
+    REQUEST_LOOP_CLOSURE = "request_loop_closure"
+    LOOP_CLOSURE_REQUESTED = "loop_closure_requested"
+    GLOBAL_CONSISTENCY_STATUS_REQUEST = "global_consistency_status_request"
+    GLOBAL_CONSISTENCY_STATUS = "global_consistency_status"
     STOP = "stop"
     STOPPED = "stopped"
     HEARTBEAT = "heartbeat"
@@ -172,6 +176,38 @@ def make_live_observation_message(
         payload={"observation": observation.as_dict()},
     )
 
+
+
+def make_native_loop_closure_request_message(
+    session_id: str,
+    *,
+    from_keyframe_id: str,
+    to_keyframe_id: str,
+    sequence_number: int,
+) -> LiveSlamProtocolMessage:
+    source = str(from_keyframe_id).strip()
+    target = str(to_keyframe_id).strip()
+    if not source or not target or source == target:
+        raise LiveSlamProtocolError(
+            "Native loop-closure request requires two different keyframe IDs."
+        )
+    return LiveSlamProtocolMessage(
+        message_type=LiveSlamMessageType.REQUEST_LOOP_CLOSURE,
+        session_id=session_id,
+        sequence_number=sequence_number,
+        payload={"from_keyframe_id": source, "to_keyframe_id": target},
+    )
+
+
+def make_global_consistency_status_request_message(
+    session_id: str, *, sequence_number: int
+) -> LiveSlamProtocolMessage:
+    return LiveSlamProtocolMessage(
+        message_type=LiveSlamMessageType.GLOBAL_CONSISTENCY_STATUS_REQUEST,
+        session_id=session_id,
+        sequence_number=sequence_number,
+        payload={},
+    )
 
 def make_live_control_message(
     message_type: LiveSlamMessageType,

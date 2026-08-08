@@ -93,6 +93,12 @@ from core.reconstruction.live_hardening import (
     LiveSlamHardeningTelemetry,
     LiveSlamRecoveryPolicy,
 )
+from core.reconstruction.live_global_consistency import (
+    NativeGlobalConsistencyStatus,
+    NativeLoopClosureRequestResult,
+    native_global_consistency_status_from_payload,
+    native_loop_closure_result_from_payload,
+)
 from core.reconstruction.live_mailbox import (
     LatestLiveFrameMailbox,
     LiveFrameMailboxStats,
@@ -130,6 +136,8 @@ from core.reconstruction.live_protocol import (
     make_live_observation_message,
     make_live_start_message,
     make_live_control_message,
+    make_native_loop_closure_request_message,
+    make_global_consistency_status_request_message,
     parse_live_observation_message,
     parse_live_worker_error,
 )
@@ -381,6 +389,10 @@ __all__ = [
     "LiveFrameStaleError",
     "LiveSlamHardeningTelemetry",
     "LiveSlamRecoveryPolicy",
+    "NativeGlobalConsistencyStatus",
+    "NativeLoopClosureRequestResult",
+    "native_global_consistency_status_from_payload",
+    "native_loop_closure_result_from_payload",
     "LiveFrameTransportError",
     "LiveMapSnapshot",
     "LiveSharedMemoryFrameRing",

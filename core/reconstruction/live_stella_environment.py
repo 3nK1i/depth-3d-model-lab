@@ -21,7 +21,7 @@ from core.reconstruction.live_contracts import LiveSlamRequest
 from core.reconstruction.profiles import ReconstructionQualityProfile
 
 STELLA_LIVE_BACKEND_ID = "stella-vslam-live"
-STELLA_LIVE_BACKEND_VERSION = "0.3.13-worker-v1"
+STELLA_LIVE_BACKEND_VERSION = "0.3.13-worker-v2"
 STELLA_REQUIRED_VERSION = "0.3.13"
 STELLA_QUALIFIED_COMMIT = "7902892d445843563d2d3149505fd3e1a118a141"
 STELLA_QUALIFIED_FBOW_COMMIT = "7753c2c17dd7ce8bdf4a7a3fb1262b78d5b9b9b5"
@@ -170,9 +170,9 @@ def _resolved_live_fps(request: LiveSlamRequest) -> float:
 def stella_monocular_config_text(request: LiveSlamRequest) -> str:
     """Translate calibrated EIA camera metadata to a headless stella YAML config.
 
-    The generated config disables the loop detector.  The native worker repeats
-    that disablement through the stella API after startup as a defense-in-depth
-    Phase 8.4 boundary.  No metric scale is introduced here.
+    Loop detection follows the explicit Phase 8.5 request.  The native worker
+    independently verifies the resulting stella API state after startup.  No
+    metric scale is introduced here.
     """
 
     if not isinstance(request, LiveSlamRequest):
@@ -226,7 +226,7 @@ def stella_monocular_config_text(request: LiveSlamRequest) -> str:
     }[request.profile]
 
     lines = [
-        "# EIA TECH Phase 8.4B generated stella_vslam monocular config",
+        "# EIA TECH Phase 8.5B generated stella_vslam monocular config",
         "Camera:",
         f'  name: "EIA {camera.camera_id}"',
         "  setup: monocular",
@@ -251,7 +251,7 @@ def stella_monocular_config_text(request: LiveSlamRequest) -> str:
         "Tracking:",
         "  backend: g2o",
         "LoopDetector:",
-        "  enabled: false",
+        f"  enabled: {'true' if request.enable_loop_closure else 'false'}",
         "  backend: g2o",
         "System:",
         "  map_format: msgpack",

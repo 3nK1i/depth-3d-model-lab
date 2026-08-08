@@ -22,6 +22,12 @@ def test_native_worker_source_enforces_process_and_phase_boundaries() -> None:
     assert '"T_reconstruction_from_camera"' in text
     assert '"unit_to_metre", nullptr' in text
     assert '"phase8_global_optimization_feature_enabled", false' in text
+    assert "enable_loop_detector" in text
+    assert "request_loop_closure" in text
+    assert "loop_BA_is_running" in text
+    assert "get_pose_wc" in text
+    assert '"loop_closure_supported_in_phase8_5", true' in text
+    assert '"global_optimization_supported_in_phase8_5", true' in text
 
 
 def test_native_worker_never_owns_usb_rtsp_or_video_capture() -> None:

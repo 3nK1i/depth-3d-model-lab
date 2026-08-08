@@ -47,11 +47,19 @@ from core.reconstruction.live_process import (
 from core.reconstruction.live_protocol import (
     LiveSlamMessageType,
     LiveSlamProtocolMessage,
+    make_global_consistency_status_request_message,
     make_live_control_message,
     make_live_frame_available_message,
     make_live_start_message,
+    make_native_loop_closure_request_message,
     parse_live_observation_message,
     parse_live_worker_error,
+)
+from core.reconstruction.live_global_consistency import (
+    NativeGlobalConsistencyStatus,
+    NativeLoopClosureRequestResult,
+    native_global_consistency_status_from_payload,
+    native_loop_closure_result_from_payload,
 )
 from core.reconstruction.live_stella_environment import (
     STELLA_LIVE_BACKEND_ID,
@@ -104,6 +112,7 @@ class ExternalStellaLiveSlamBackend:
         self._log_path: Path | None = None
         self._outgoing_sequence = 0
         self._last_worker_sequence = -1
+        self._starting_request: LiveSlamRequest | None = None
 
     @property
     def capabilities(self) -> BackendCapabilities:
@@ -127,7 +136,7 @@ class ExternalStellaLiveSlamBackend:
             supports_checkpoint=False,
             supports_resume=False,
             supports_metric_scale=False,
-            supports_loop_closure=False,
+            supports_loop_closure=True,
             supports_cpu=True,
             requires_cuda=False,
             optional_dependencies=("stella_vslam==0.3.13 (isolated native worker)",),
@@ -189,9 +198,10 @@ class ExternalStellaLiveSlamBackend:
             raise ReconstructionValidationError(
                 "Live SLAM request session_id does not match operation context."
             )
-        if request.enable_loop_closure or request.enable_global_optimization:
+        if request.enable_loop_closure != request.enable_global_optimization:
             raise ReconstructionValidationError(
-                "Phase 8.4B cannot enable loop closure or global optimization."
+                "The qualified stella backend couples loop closure and global optimization; "
+                "enable both features or neither."
             )
         if self._active_request is not None or self._process is not None:
             raise ReconstructionValidationError(
@@ -218,6 +228,7 @@ class ExternalStellaLiveSlamBackend:
         )
         self._lifecycle = LiveSlamWorkerLifecycle()
         self._worker_session_id = request.session_id
+        self._starting_request = request
         self._lifecycle.transition_to(LiveSlamWorkerState.STARTING)
         self._outgoing_sequence = 0
         self._last_worker_sequence = -1
@@ -280,6 +291,7 @@ class ExternalStellaLiveSlamBackend:
                 self._raise_worker_error(started)
             self._validate_started(started)
             self._active_request = request
+            self._starting_request = None
             self._lifecycle.transition_to(LiveSlamWorkerState.RUNNING)
         except ReconstructionCancelledError:
             self._abort_for_cancellation()
@@ -372,6 +384,66 @@ class ExternalStellaLiveSlamBackend:
             self._cleanup_resources()
             raise
 
+    def request_native_loop_closure(
+        self,
+        from_keyframe_id: str,
+        to_keyframe_id: str,
+        context: BackendOperationContext,
+    ) -> NativeLoopClosureRequestResult:
+        _require_live_context(context)
+        request = self._active_request
+        client = self._client
+        if request is None or client is None or self._lifecycle.state is not LiveSlamWorkerState.RUNNING:
+            raise ReconstructionValidationError("stella_vslam live session has not been started.")
+        if not (request.enable_loop_closure and request.enable_global_optimization):
+            raise ReconstructionValidationError(
+                "Native loop-closure requests require loop closure and global optimization to be enabled."
+            )
+        context.control.checkpoint()
+        client.send_message(
+            make_native_loop_closure_request_message(
+                request.session_id,
+                from_keyframe_id=from_keyframe_id,
+                to_keyframe_id=to_keyframe_id,
+                sequence_number=self._next_outgoing_sequence(),
+            )
+        )
+        response = self._receive_with_control(
+            context,
+            timeout_s=self._frame_timeout_s,
+            allowed_types={LiveSlamMessageType.LOOP_CLOSURE_REQUESTED, LiveSlamMessageType.ERROR},
+        )
+        if response.message_type is LiveSlamMessageType.ERROR:
+            self._raise_worker_error(response)
+        return native_loop_closure_result_from_payload(
+            _message_payload(response), expected_session_id=request.session_id
+        )
+
+    def get_native_global_consistency_status(
+        self, context: BackendOperationContext
+    ) -> NativeGlobalConsistencyStatus:
+        _require_live_context(context)
+        request = self._active_request
+        client = self._client
+        if request is None or client is None or self._lifecycle.state is not LiveSlamWorkerState.RUNNING:
+            raise ReconstructionValidationError("stella_vslam live session has not been started.")
+        context.control.checkpoint()
+        client.send_message(
+            make_global_consistency_status_request_message(
+                request.session_id, sequence_number=self._next_outgoing_sequence()
+            )
+        )
+        response = self._receive_with_control(
+            context,
+            timeout_s=self._frame_timeout_s,
+            allowed_types={LiveSlamMessageType.GLOBAL_CONSISTENCY_STATUS, LiveSlamMessageType.ERROR},
+        )
+        if response.message_type is LiveSlamMessageType.ERROR:
+            self._raise_worker_error(response)
+        return native_global_consistency_status_from_payload(
+            _message_payload(response), expected_session_id=request.session_id
+        )
+
     def stop_live_session(self, context: BackendOperationContext) -> None:
         _require_live_context(context)
         if self._active_request is None:
@@ -457,13 +529,26 @@ class ExternalStellaLiveSlamBackend:
         payload = _message_payload(message)
         if payload.get("protocol_version") != 1:
             raise LiveSlamProtocolError("Native worker READY protocol version mismatch.")
+        request = self._starting_request
+        if request is not None and request.enable_loop_closure:
+            if payload.get("loop_closure_supported_in_phase8_5") is not True:
+                raise LiveSlamProtocolError(
+                    "Native worker does not advertise Phase 8.5 loop-closure support."
+                )
+            if payload.get("global_optimization_supported_in_phase8_5") is not True:
+                raise LiveSlamProtocolError(
+                    "Native worker does not advertise Phase 8.5 global-optimization support."
+                )
 
     def _validate_started(self, message: LiveSlamProtocolMessage) -> None:
         payload = _message_payload(message)
-        if payload.get("loop_detector_enabled") is not False:
-            raise LiveSlamProtocolError("Phase 8.4B requires the stella loop detector to be disabled.")
-        if payload.get("phase8_global_optimization_feature_enabled") is not False:
-            raise LiveSlamProtocolError("Phase 8.4B cannot enable global optimization feature ownership.")
+        request = self._starting_request
+        if request is None:
+            raise LiveSlamProtocolError("Native worker STARTED arrived without a startup request.")
+        if payload.get("loop_detector_enabled") is not request.enable_loop_closure:
+            raise LiveSlamProtocolError("Native worker loop detector state does not match requested state.")
+        if payload.get("phase8_global_optimization_feature_enabled") is not request.enable_global_optimization:
+            raise LiveSlamProtocolError("Native worker global-optimization state does not match requested state.")
         if payload.get("scale_status") != "arbitrary" or payload.get("unit_to_metre") is not None:
             raise LiveSlamProtocolError("Native monocular worker must report arbitrary scale.")
 
@@ -571,6 +656,7 @@ class ExternalStellaLiveSlamBackend:
         self._process = None
         self._process_spec = None
         self._worker_session_id = ""
+        self._starting_request = None
         if self._log_handle is not None:
             try:
                 self._log_handle.close()
