@@ -15,7 +15,7 @@ GSPLAT_REVISION_SHORT="937e299"
 GRAPHDECO_REVISION="54c035f7834b564019656c3e3fcc3646292f727d"
 GRAPHDECO_CSTDINT_PATCH_ID="diff-gaussian-rasterization-pr49-cstdint"
 GRAPHDECO_CSTDINT_PATCH="$SCRIPT_DIR/gaussian_patches/graphdeco_diff_gaussian_rasterization_cstdint.patch"
-GRAPHDECO_CSTDINT_PATCH_SHA256="6f5542fe889eb5fe92d80622d7d10ec450b4db7399b6abd1a33ba6aac77cc58d"
+GRAPHDECO_CSTDINT_PATCH_SHA256="2bb9a353d3dc6646c43507dcbd02718b819c94216368af9fd22b396220deed79"
 TORCH_VERSION="2.7.1"
 TORCHVISION_VERSION="0.22.1"
 CUDA_VERSION="12.8"
@@ -117,10 +117,10 @@ apply_graphdeco_compatibility_patch() {
     exit 1
   fi
 
-  if git -C "$rasterizer" apply --check "$GRAPHDECO_CSTDINT_PATCH"; then
-    git -C "$rasterizer" apply "$GRAPHDECO_CSTDINT_PATCH"
+  if git -C "$rasterizer" apply --unidiff-zero --check "$GRAPHDECO_CSTDINT_PATCH"; then
+    git -C "$rasterizer" apply --unidiff-zero "$GRAPHDECO_CSTDINT_PATCH"
     echo "Applied Graphdeco compatibility patch: $GRAPHDECO_CSTDINT_PATCH_ID"
-  elif git -C "$rasterizer" apply --reverse --check "$GRAPHDECO_CSTDINT_PATCH"; then
+  elif git -C "$rasterizer" apply --unidiff-zero --reverse --check "$GRAPHDECO_CSTDINT_PATCH"; then
     echo "Graphdeco compatibility patch already applied: $GRAPHDECO_CSTDINT_PATCH_ID"
   else
     echo "ERROR: Graphdeco compatibility patch does not apply cleanly to pinned rasterizer source" >&2

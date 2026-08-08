@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -404,8 +406,12 @@ def test_setup_script_applies_audited_graphdeco_cstdint_compatibility_patch() ->
     patch_text = patch_path.read_text(encoding="utf-8")
     assert 'GRAPHDECO_CSTDINT_PATCH_ID="diff-gaussian-rasterization-pr49-cstdint"' in setup_text
     assert 'sha256sum "$GRAPHDECO_CSTDINT_PATCH"' in setup_text
-    assert 'git -C "$rasterizer" apply --check "$GRAPHDECO_CSTDINT_PATCH"' in setup_text
+    assert 'git -C "$rasterizer" apply --unidiff-zero --check "$GRAPHDECO_CSTDINT_PATCH"' in setup_text
+    assert 'git -C "$rasterizer" apply --unidiff-zero --reverse --check "$GRAPHDECO_CSTDINT_PATCH"' in setup_text
     assert "+#include <cstdint>" in patch_text
+    match = re.search(r'GRAPHDECO_CSTDINT_PATCH_SHA256="([0-9a-f]{64})"', setup_text)
+    assert match is not None
+    assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == match.group(1)
 
 
 def test_graphdeco_worker_rejects_off_center_principal_point() -> None:

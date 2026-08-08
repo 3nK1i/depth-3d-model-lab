@@ -1,12 +1,5 @@
 diff --git a/cuda_rasterizer/rasterizer_impl.h b/cuda_rasterizer/rasterizer_impl.h
-index bc3f0ec..c258663 100644
 --- a/cuda_rasterizer/rasterizer_impl.h
 +++ b/cuda_rasterizer/rasterizer_impl.h
-@@ -10,6 +10,7 @@
-  */
- 
- #pragma once
+@@ -12,0 +13 @@
 +#include <cstdint>
- 
- #include <iostream>
- #include <vector>
