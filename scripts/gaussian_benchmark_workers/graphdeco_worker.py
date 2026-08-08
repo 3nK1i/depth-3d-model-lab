@@ -29,6 +29,7 @@ frame_map = _BENCH_COMMON.frame_map
 load_benchmark_request = _BENCH_COMMON.load_benchmark_request
 write_backend_result = _BENCH_COMMON.write_backend_result
 write_render_manifest = _BENCH_COMMON.write_render_manifest
+apply_lifecycle_fault_injection = _BENCH_COMMON.apply_lifecycle_fault_injection
 
 _PERF_SPEC = importlib.util.spec_from_file_location(
     "eia_d3_gaussian_benchmark_performance", HERE / "performance.py"
@@ -253,6 +254,8 @@ def main() -> int:
         request_path,
         expected_backend_kind=BACKEND_KIND,
     )
+
+    apply_lifecycle_fault_injection(request=request, result_path=result_path)
 
     root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
     if not root_text:

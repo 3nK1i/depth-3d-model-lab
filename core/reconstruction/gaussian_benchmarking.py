@@ -356,6 +356,136 @@ class GaussianLifecycleEvidence:
         }
 
 
+class GaussianBackendRobustnessScenario(str, Enum):
+    """Deterministic backend-process failure scenarios exercised by D3 Step 4."""
+
+    CANCELLATION = "cancellation"
+    TIMEOUT = "timeout"
+    CRASH = "crash"
+    PARTIAL_ARTIFACT = "partial_artifact"
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianBackendRobustnessEvidence:
+    """One backend-level fault + cleanup + real recovery result.
+
+    This is intentionally narrower than the engine/session recovery that belongs
+    to Phase 8.7G. It validates only the isolated Gaussian backend process boundary.
+    """
+
+    backend_kind: GaussianBackendKind
+    scenario: GaussianBackendRobustnessScenario
+    fault_lifecycle: GaussianLifecycleEvidence
+    process_group_clean: bool
+    partial_artifacts_detected: bool = False
+    partial_artifacts_cleaned: bool = False
+    recovery_lifecycle: GaussianLifecycleEvidence = field(
+        default_factory=lambda: GaussianLifecycleEvidence(
+            state=GaussianBenchmarkRunState.PLANNED
+        )
+    )
+    recovery_result_valid: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend_kind, GaussianBackendKind):
+            raise TypeError("backend_kind must be GaussianBackendKind.")
+        if not isinstance(self.scenario, GaussianBackendRobustnessScenario):
+            raise TypeError("scenario must be GaussianBackendRobustnessScenario.")
+        if not isinstance(self.fault_lifecycle, GaussianLifecycleEvidence):
+            raise TypeError("fault_lifecycle must be GaussianLifecycleEvidence.")
+        if not isinstance(self.recovery_lifecycle, GaussianLifecycleEvidence):
+            raise TypeError("recovery_lifecycle must be GaussianLifecycleEvidence.")
+        object.__setattr__(self, "process_group_clean", bool(self.process_group_clean))
+        object.__setattr__(self, "partial_artifacts_detected", bool(self.partial_artifacts_detected))
+        object.__setattr__(self, "partial_artifacts_cleaned", bool(self.partial_artifacts_cleaned))
+        object.__setattr__(self, "recovery_result_valid", bool(self.recovery_result_valid))
+        if self.scenario is GaussianBackendRobustnessScenario.PARTIAL_ARTIFACT:
+            if not self.partial_artifacts_detected:
+                raise ReconstructionValidationError(
+                    "partial_artifact scenario must detect partial artifacts."
+                )
+            if not self.partial_artifacts_cleaned:
+                raise ReconstructionValidationError(
+                    "partial_artifact scenario must clean partial artifacts before recovery."
+                )
+
+    @property
+    def passed(self) -> bool:
+        expected = {
+            GaussianBackendRobustnessScenario.CANCELLATION: GaussianBenchmarkRunState.CANCELLED,
+            GaussianBackendRobustnessScenario.TIMEOUT: GaussianBenchmarkRunState.TIMED_OUT,
+            GaussianBackendRobustnessScenario.CRASH: GaussianBenchmarkRunState.CRASHED,
+            GaussianBackendRobustnessScenario.PARTIAL_ARTIFACT: GaussianBenchmarkRunState.CRASHED,
+        }[self.scenario]
+        return bool(
+            self.fault_lifecycle.state is expected
+            and self.process_group_clean
+            and (
+                self.scenario is not GaussianBackendRobustnessScenario.PARTIAL_ARTIFACT
+                or (self.partial_artifacts_detected and self.partial_artifacts_cleaned)
+            )
+            and self.recovery_lifecycle.state is GaussianBenchmarkRunState.RECOVERED
+            and self.recovery_lifecycle.recovery_attempted
+            and self.recovery_lifecycle.recovery_succeeded
+            and self.recovery_result_valid
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "backend_kind": self.backend_kind.value,
+            "scenario": self.scenario.value,
+            "fault_lifecycle": self.fault_lifecycle.as_dict(),
+            "process_group_clean": self.process_group_clean,
+            "partial_artifacts_detected": self.partial_artifacts_detected,
+            "partial_artifacts_cleaned": self.partial_artifacts_cleaned,
+            "recovery_lifecycle": self.recovery_lifecycle.as_dict(),
+            "recovery_result_valid": self.recovery_result_valid,
+            "passed": self.passed,
+            "canonical_geometry_authoritative": False,
+            "certified_metrology": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianBackendRobustnessReport:
+    """D3 Step 4 backend-process robustness report."""
+
+    evidence: tuple[GaussianBackendRobustnessEvidence, ...]
+
+    def __post_init__(self) -> None:
+        evidence = tuple(self.evidence)
+        if not evidence:
+            raise ReconstructionValidationError("robustness report requires evidence.")
+        if any(not isinstance(item, GaussianBackendRobustnessEvidence) for item in evidence):
+            raise TypeError("evidence must contain GaussianBackendRobustnessEvidence values.")
+        keys = {(item.backend_kind, item.scenario) for item in evidence}
+        if len(keys) != len(evidence):
+            raise ReconstructionValidationError("robustness report contains duplicate scenarios.")
+        object.__setattr__(self, "evidence", evidence)
+
+    @property
+    def passed(self) -> bool:
+        required = set(GaussianBackendRobustnessScenario)
+        by_backend: dict[GaussianBackendKind, set[GaussianBackendRobustnessScenario]] = {}
+        for item in self.evidence:
+            by_backend.setdefault(item.backend_kind, set()).add(item.scenario)
+        return bool(
+            by_backend
+            and all(scenarios == required for scenarios in by_backend.values())
+            and all(item.passed for item in self.evidence)
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "phase": "8.7D3",
+            "step": 4,
+            "passed": self.passed,
+            "evidence": [item.as_dict() for item in self.evidence],
+            "canonical_geometry_authoritative": False,
+            "certified_metrology": False,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class RealSceneGaussianBenchmarkSpec:
     """Reproducible real-scene split and backend/hardware benchmark identity."""

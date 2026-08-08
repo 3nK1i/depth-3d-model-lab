@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -157,3 +161,58 @@ def write_backend_result(
             "certified_metrology": False,
         },
     )
+
+
+LIFECYCLE_FAULT_ENV = "EIA_GAUSSIAN_LIFECYCLE_FAULT_INJECTION"
+LIFECYCLE_FAULT_MODES = {"none", "hang_with_child", "crash", "partial_artifact_crash"}
+
+
+def apply_lifecycle_fault_injection(
+    *,
+    request: dict[str, Any],
+    result_path: Path,
+) -> None:
+    """Execute deterministic Step 4 fault modes when explicitly test-enabled.
+
+    Normal workers reject fault modes unless the dedicated environment switch is
+    present, preventing accidental activation in production/normal benchmarks.
+    """
+
+    mode = str(request.get("lifecycle_fault_mode", "none"))
+    if mode not in LIFECYCLE_FAULT_MODES:
+        raise ValueError(f"unsupported lifecycle_fault_mode: {mode}")
+    if mode == "none":
+        return
+    if os.environ.get(LIFECYCLE_FAULT_ENV) != "1":
+        raise RuntimeError("Gaussian lifecycle fault injection is not enabled")
+    marker_path = Path(str(request.get("lifecycle_fault_marker_path", ""))).resolve()
+    if not str(request.get("lifecycle_fault_marker_path", "")).strip():
+        raise RuntimeError("lifecycle_fault_marker_path is required for fault injection")
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if mode == "hang_with_child":
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(3600)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        write_json(marker_path, {"worker_pid": os.getpid(), "child_pid": child.pid, "mode": mode})
+        while True:
+            time.sleep(1.0)
+
+    if mode == "crash":
+        write_json(marker_path, {"worker_pid": os.getpid(), "mode": mode})
+        raise RuntimeError("intentional Phase 8.7D3 lifecycle crash")
+
+    if mode == "partial_artifact_crash":
+        write_json(marker_path, {"worker_pid": os.getpid(), "mode": mode})
+        write_json(
+            result_path,
+            {
+                "schema_version": 1,
+                "partial": True,
+                "backend_kind": request["backend_kind"],
+                "benchmark_fingerprint_sha256": request["benchmark_fingerprint_sha256"],
+            },
+        )
+        raise RuntimeError("intentional Phase 8.7D3 partial-artifact crash")

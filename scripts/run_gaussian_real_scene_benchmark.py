@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +43,7 @@ from core.reconstruction import (
     write_real_scene_gaussian_benchmark_spec,
 )
 from scripts.run_gaussian_backend_qualification import _isolated_backend_environment
+from scripts.gaussian_backend_lifecycle import run_supervised_process
 
 DEFAULT_OUTPUT = Path("/tmp/phase8_7d3_real_scene_benchmark")
 PROFILE_STEPS = {"efficient": 128, "balanced": 256, "high_quality": 512}
@@ -70,21 +70,19 @@ def _run_process(
     timeout_s: float,
     env: dict[str, str] | None = None,
 ) -> None:
-    completed = subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout_s,
-        check=False,
-        env=env,
-    )
-    if completed.stdout:
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    if completed.returncode != 0:
-        tail = "\n".join((completed.stdout or "").splitlines()[-80:])
+    outcome = run_supervised_process(command, timeout_s=timeout_s, env=env)
+    if outcome.stdout:
+        print(outcome.stdout, end="" if outcome.stdout.endswith("\n") else "\n")
+    if outcome.timed_out:
+        tail = "\n".join(outcome.stdout.splitlines()[-80:])
         raise RuntimeError(
-            f"command failed with exit {completed.returncode}: {' '.join(command)}\n{tail}"
+            f"command timed out after {timeout_s:.3f}s and process group was cleaned: "
+            f"{' '.join(command)}\n{tail}"
+        )
+    if outcome.exit_code != 0:
+        tail = "\n".join(outcome.stdout.splitlines()[-80:])
+        raise RuntimeError(
+            f"command failed with exit {outcome.exit_code}: {' '.join(command)}\n{tail}"
         )
 
 
