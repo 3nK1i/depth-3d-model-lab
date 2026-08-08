@@ -151,6 +151,31 @@ from core.reconstruction.gaussian_splatting import (
     write_gaussian_seed_npz,
 )
 
+from core.reconstruction.gaussian_backends import (
+    GAUSSIAN_BACKEND_QUALIFICATION_SCHEMA_VERSION,
+    GAUSSIAN_MINIMUM_COMPUTE_CAPABILITY,
+    GAUSSIAN_QUALIFIED_CUDA,
+    GAUSSIAN_QUALIFIED_PYTHON,
+    GAUSSIAN_QUALIFIED_TORCH,
+    GAUSSIAN_QUALIFIED_TORCHVISION,
+    GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,
+    GRAPHDECO_QUALIFIED_REVISION,
+    GSPLAT_QUALIFIED_COMMIT_SHORT,
+    GSPLAT_QUALIFIED_TAG,
+    GSPLAT_QUALIFIED_VERSION,
+    GaussianBackendQualification,
+    GaussianBackendQualificationStatus,
+    GaussianBackendRuntimePin,
+    GaussianRuntimeEvidence,
+    GaussianWorkerQualificationEvidence,
+    assess_gaussian_backend_qualification,
+    gaussian_backend_runtime_pin,
+    graphdeco_checkout_revision,
+    not_ready_gaussian_backend_qualification,
+    probe_gaussian_runtime_evidence,
+    write_gaussian_backend_qualification_json,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
