@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Isolated gsplat held-out rendering worker for Phase 8.7D3 Step 2."""
+"""Isolated gsplat held-out quality/performance worker for Phase 8.7D3."""
 
 from __future__ import annotations
 
 import argparse
+import os
 from importlib import metadata
 from pathlib import Path
 import sys
@@ -28,6 +29,17 @@ frame_map = _BENCH_COMMON.frame_map
 load_benchmark_request = _BENCH_COMMON.load_benchmark_request
 write_backend_result = _BENCH_COMMON.write_backend_result
 write_render_manifest = _BENCH_COMMON.write_render_manifest
+
+_PERF_SPEC = importlib.util.spec_from_file_location(
+    "eia_d3_gaussian_benchmark_performance", HERE / "performance.py"
+)
+if _PERF_SPEC is None or _PERF_SPEC.loader is None:
+    raise RuntimeError("cannot load D3 Gaussian performance helpers")
+_PERF = importlib.util.module_from_spec(_PERF_SPEC)
+sys.modules[_PERF_SPEC.name] = _PERF
+_PERF_SPEC.loader.exec_module(_PERF)
+ProcessTreeGpuSampler = _PERF.ProcessTreeGpuSampler
+probe_gpu_hardware = _PERF.probe_gpu_hardware
 
 if str(D2_WORKERS) not in sys.path:
     sys.path.insert(0, str(D2_WORKERS))
@@ -69,6 +81,10 @@ def main() -> int:
     steps = int(request.get("training_steps", 0))
     if steps < 1 or steps > 100_000:
         raise RuntimeError("training_steps must lie in [1, 100000]")
+    measure_performance = bool(request.get("measure_performance", False))
+    render_repeats = int(request.get("render_repeats", 1))
+    if render_repeats < 1 or render_repeats > 1_000:
+        raise RuntimeError("render_repeats must lie in [1, 1000]")
 
     frames_by_id = frame_map(dataset)
     training_frames = [frames_by_id[value] for value in request["training_frame_ids"]]
@@ -94,6 +110,15 @@ def main() -> int:
     optimizer = torch.optim.Adam([color_logits, opacity_logits], lr=0.03)
     training_targets = [_load_target(frame, device) for frame in training_frames]
 
+    training_sampler = None
+    hardware_probe = None
+    if measure_performance:
+        hardware_probe = probe_gpu_hardware(0)
+        training_sampler = ProcessTreeGpuSampler(
+            root_pid=os.getpid(),
+            gpu_uuid=hardware_probe.uuid,
+            interval_s=0.10,
+        ).start()
     started = time.monotonic()
     for step in range(steps):
         index = step % len(training_frames)
@@ -115,8 +140,55 @@ def main() -> int:
 
     torch.cuda.synchronize(device)
     training_duration_s = float(time.monotonic() - started)
+    peak_training_vram_mib = training_sampler.stop() if training_sampler is not None else None
     final_colors = torch.sigmoid(color_logits).detach()
     final_opacities = torch.sigmoid(opacity_logits).detach()
+
+    render_duration_s = None
+    peak_render_vram_mib = None
+    render_fps = None
+    render_frame_count = None
+    if measure_performance:
+        # Warm up every held-out camera before timing so first-use kernel/setup cost
+        # does not dominate backend-native rendering throughput.
+        with torch.no_grad():
+            for frame in validation_frames:
+                _render(
+                    means=means,
+                    quats=quats,
+                    scales=scales,
+                    opacities=final_opacities,
+                    colors=final_colors,
+                    frame=frame,
+                    device=device,
+                )
+        torch.cuda.synchronize(device)
+        assert hardware_probe is not None
+        render_sampler = ProcessTreeGpuSampler(
+            root_pid=os.getpid(),
+            gpu_uuid=hardware_probe.uuid,
+            interval_s=0.10,
+        ).start()
+        render_started = time.monotonic()
+        with torch.no_grad():
+            for _repeat in range(render_repeats):
+                for frame in validation_frames:
+                    _render(
+                        means=means,
+                        quats=quats,
+                        scales=scales,
+                        opacities=final_opacities,
+                        colors=final_colors,
+                        frame=frame,
+                        device=device,
+                    )
+        torch.cuda.synchronize(device)
+        render_duration_s = float(time.monotonic() - render_started)
+        peak_render_vram_mib = render_sampler.stop()
+        render_frame_count = render_repeats * len(validation_frames)
+        if render_duration_s <= 0.0:
+            raise RuntimeError("gsplat render benchmark duration must be positive")
+        render_fps = float(render_frame_count / render_duration_s)
 
     artifact_dir = Path(str(request["output_dir"])).resolve() / "gsplat"
     render_dir = artifact_dir / "held_out_renders"
@@ -182,11 +254,41 @@ def main() -> int:
         training_steps=steps,
         training_duration_s=training_duration_s,
         device=f"cuda:0 {torch.cuda.get_device_name(device)}",
+        performance=(
+            {
+                "measurement_scope": "backend_process_tree_nvidia_smi",
+                "peak_training_vram_mib": peak_training_vram_mib,
+                "peak_render_vram_mib": peak_render_vram_mib,
+                "peak_vram_mib": max(float(peak_training_vram_mib), float(peak_render_vram_mib)),
+                "training_duration_s": training_duration_s,
+                "render_duration_s": render_duration_s,
+                "render_frame_count": render_frame_count,
+                "render_repeats": render_repeats,
+                "render_fps": render_fps,
+                "render_measurement_mode": "backend_native_warm",
+            }
+            if measure_performance else {}
+        ),
+        hardware=(
+            {
+                **hardware_probe.as_dict(),
+                "torch_version": str(torch.__version__),
+                "cuda_runtime_version": str(torch.version.cuda or ""),
+                "compute_capability": list(torch.cuda.get_device_capability(device)),
+            }
+            if hardware_probe is not None else {}
+        ),
     )
-    print(
+    message = (
         f"EIA gsplat held-out benchmark: PASS training={len(training_frames)} "
         f"validation={len(validation_frames)} steps={steps}"
     )
+    if measure_performance:
+        message += (
+            f" train_vram={peak_training_vram_mib:.1f}MiB "
+            f"render_vram={peak_render_vram_mib:.1f}MiB render_fps={render_fps:.2f}"
+        )
+    print(message)
     return 0
 
 

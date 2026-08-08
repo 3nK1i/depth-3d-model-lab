@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run Phase 8.7D3 Step 2 held-out rendering and image-quality evaluation.
+"""Run Phase 8.7D3 held-out quality and optional Step 3 performance benchmarking.
 
-Step 2 measures PSNR/SSIM/LPIPS only. Peak VRAM and render FPS remain deliberately
-unmeasured until Step 3, so the final benchmark ``comparison_ready`` flag remains
-false even when held-out image quality is fully measured.
+Without ``--measure-performance`` this preserves the committed Step 2 behavior.
+Step 3 adds phase-specific VRAM, backend-native render throughput, and measured
+hardware provenance without changing canonical geometry authority.
 """
 
 from __future__ import annotations
@@ -27,12 +27,14 @@ from core.reconstruction import (
     GaussianBenchmarkBackendResult,
     GaussianBenchmarkHardwareProfile,
     GaussianBenchmarkRunState,
+    GaussianHardwareEvidence,
     GaussianHeldOutQualityEvaluation,
     GaussianLifecycleEvidence,
     GaussianOptimizationProfile,
     GaussianPerformanceMetrics,
     RealSceneGaussianBenchmarkReport,
     RealSceneGaussianBenchmarkSpec,
+    gaussian_benchmark_hardware_requirement,
     graphdeco_checkout_revision,
     probe_gaussian_environment,
     read_gaussian_held_out_quality_evaluation,
@@ -123,6 +125,8 @@ def _backend_request(
     seed_path: Path,
     output_dir: Path,
     training_steps: int,
+    measure_performance: bool,
+    render_repeats: int,
 ) -> dict:
     return {
         "schema_version": 1,
@@ -137,6 +141,8 @@ def _backend_request(
         "training_frame_ids": list(spec.training_frame_ids),
         "validation_frame_ids": list(spec.validation_frame_ids),
         "training_steps": int(training_steps),
+        "measure_performance": bool(measure_performance),
+        "render_repeats": int(render_repeats),
         "canonical_geometry_authoritative": False,
         "certified_metrology": False,
     }
@@ -148,6 +154,7 @@ def _backend_result_from_payload(
     backend_kind: GaussianBackendKind,
     payload: dict,
     quality: GaussianHeldOutQualityEvaluation,
+    require_performance: bool,
 ) -> GaussianBenchmarkBackendResult:
     if payload.get("backend_kind") != backend_kind.value:
         raise RuntimeError("backend result kind mismatch")
@@ -157,6 +164,79 @@ def _backend_result_from_payload(
         raise RuntimeError("backend result dataset fingerprint mismatch")
     if quality.backend_kind is not backend_kind:
         raise RuntimeError("quality evaluation backend mismatch")
+
+    performance_payload = payload.get("performance") or {}
+    hardware_payload = payload.get("hardware") or {}
+    if require_performance:
+        required_perf = {
+            "peak_training_vram_mib",
+            "peak_render_vram_mib",
+            "peak_vram_mib",
+            "training_duration_s",
+            "render_duration_s",
+            "render_frame_count",
+            "render_repeats",
+            "render_fps",
+            "measurement_scope",
+            "render_measurement_mode",
+        }
+        missing = sorted(required_perf - set(performance_payload))
+        if missing:
+            raise RuntimeError(f"backend performance payload is incomplete: {missing}")
+        if performance_payload.get("measurement_scope") != "backend_process_tree_nvidia_smi":
+            raise RuntimeError("unexpected GPU measurement scope")
+        if float(performance_payload["peak_training_vram_mib"]) <= 0.0:
+            raise RuntimeError("training VRAM measurement must be positive for a real CUDA benchmark")
+        if float(performance_payload["peak_render_vram_mib"]) <= 0.0:
+            raise RuntimeError("render VRAM measurement must be positive for a real CUDA benchmark")
+        if float(performance_payload["render_fps"]) <= 0.0:
+            raise RuntimeError("render FPS must be positive for a real CUDA benchmark")
+        required_hardware = {
+            "gpu_name", "gpu_uuid", "total_vram_mib", "driver_version",
+            "cuda_runtime_version", "compute_capability",
+        }
+        missing_hardware = sorted(required_hardware - set(hardware_payload))
+        if missing_hardware:
+            raise RuntimeError(f"backend hardware payload is incomplete: {missing_hardware}")
+        requirement = gaussian_benchmark_hardware_requirement(spec.hardware_profile)
+        profile_compatible = requirement.matches(
+            gpu_name=str(hardware_payload["gpu_name"]),
+            total_vram_mib=float(hardware_payload["total_vram_mib"]),
+        )
+        if not profile_compatible:
+            raise RuntimeError(
+                f"measured GPU does not match requested hardware profile {spec.hardware_profile.value}: "
+                f"{hardware_payload['gpu_name']} / {hardware_payload['total_vram_mib']} MiB"
+            )
+        performance = GaussianPerformanceMetrics(
+            peak_vram_mib=float(performance_payload["peak_vram_mib"]),
+            peak_training_vram_mib=float(performance_payload["peak_training_vram_mib"]),
+            peak_render_vram_mib=float(performance_payload["peak_render_vram_mib"]),
+            training_duration_s=float(performance_payload["training_duration_s"]),
+            render_duration_s=float(performance_payload["render_duration_s"]),
+            render_frame_count=int(performance_payload["render_frame_count"]),
+            render_repeats=int(performance_payload["render_repeats"]),
+            render_fps=float(performance_payload["render_fps"]),
+            measurement_scope=str(performance_payload["measurement_scope"]),
+            render_measurement_mode=str(performance_payload["render_measurement_mode"]),
+        )
+        hardware = GaussianHardwareEvidence(
+            gpu_name=str(hardware_payload["gpu_name"]),
+            gpu_uuid=str(hardware_payload["gpu_uuid"]),
+            total_vram_mib=float(hardware_payload["total_vram_mib"]),
+            driver_version=str(hardware_payload["driver_version"]),
+            cuda_runtime_version=str(hardware_payload["cuda_runtime_version"]),
+            compute_capability=tuple(int(value) for value in hardware_payload["compute_capability"]),
+            profile_compatible=profile_compatible,
+        )
+        if not performance.detailed_measured or not hardware.measured:
+            raise RuntimeError("detailed performance/hardware evidence is incomplete")
+    else:
+        performance = GaussianPerformanceMetrics(
+            training_duration_s=float(payload["training_duration_s"]),
+        )
+        hardware = GaussianHardwareEvidence()
+
     return GaussianBenchmarkBackendResult(
         backend_kind=backend_kind,
         benchmark_fingerprint_sha256=spec.benchmark_fingerprint_sha256,
@@ -166,10 +246,8 @@ def _backend_result_from_payload(
         training_view_count=len(spec.training_frame_ids),
         validation_view_count=len(spec.validation_frame_ids),
         quality=quality.aggregate,
-        # Step 2 records training time only. VRAM/FPS are added in Step 3.
-        performance=GaussianPerformanceMetrics(
-            training_duration_s=float(payload["training_duration_s"]),
-        ),
+        performance=performance,
+        hardware=hardware,
         lifecycle=GaussianLifecycleEvidence(
             state=GaussianBenchmarkRunState.COMPLETED,
             worker_exit_code=0,
@@ -187,6 +265,17 @@ def main() -> int:
     parser.add_argument("--backend", choices=("gsplat", "graphdeco", "both"), default="both")
     parser.add_argument("--profile", choices=tuple(PROFILE_STEPS), default="efficient")
     parser.add_argument("--training-steps", type=int, default=0)
+    parser.add_argument(
+        "--measure-performance",
+        action="store_true",
+        help="Collect D3 Step 3 phase-specific VRAM, timing, FPS, and hardware provenance.",
+    )
+    parser.add_argument(
+        "--render-repeats",
+        type=int,
+        default=3,
+        help="Number of backend-native held-out render repetitions for Step 3.",
+    )
     parser.add_argument(
         "--hardware-profile",
         choices=("rtx_2060_6gb", "rtx_5090_32gb", "custom"),
@@ -246,6 +335,8 @@ def main() -> int:
     steps = int(args.training_steps) if int(args.training_steps) > 0 else PROFILE_STEPS[args.profile]
     if steps < 1 or steps > 100_000:
         raise RuntimeError("training_steps must lie in [1, 100000]")
+    if args.render_repeats < 1 or args.render_repeats > 100:
+        raise RuntimeError("render_repeats must lie in [1, 100]")
 
     output = args.output_dir.expanduser().resolve()
     if output.exists():
@@ -274,6 +365,8 @@ def main() -> int:
                 seed_path=seed_path,
                 output_dir=backend_dir / "worker-output",
                 training_steps=steps,
+                measure_performance=bool(args.measure_performance),
+                render_repeats=int(args.render_repeats),
             ),
         )
         backend_result_path = backend_dir / "backend_result.json"
@@ -311,6 +404,7 @@ def main() -> int:
             backend_kind=backend_kind,
             payload=backend_payload,
             quality=quality,
+            require_performance=bool(args.measure_performance),
         )
         results.append(result)
         evidence_paths[name] = {
@@ -323,6 +417,68 @@ def main() -> int:
     report = RealSceneGaussianBenchmarkReport(spec=spec, results=tuple(results))
     report_path = write_real_scene_gaussian_benchmark_report(report, output / "benchmark_report.json")
     quality_ready = len(results) == len(backends) and all(result.quality.measured for result in results)
+
+    if args.measure_performance:
+        performance_ready = all(result.performance.detailed_measured for result in results)
+        hardware_ready = all(
+            result.hardware.measured and result.hardware.profile_compatible is True
+            for result in results
+        )
+        hardware_consistent = len({
+            (result.hardware.gpu_uuid, result.hardware.driver_version, result.hardware.cuda_runtime_version)
+            for result in results
+        }) == 1
+        step_pass = bool(
+            quality_ready and performance_ready and hardware_ready and hardware_consistent
+            and report.comparison_ready
+        )
+        requirement = gaussian_benchmark_hardware_requirement(spec.hardware_profile)
+        summary = {
+            "phase": "8.7D3",
+            "step": 3,
+            "pass": step_pass,
+            "quality_comparison_ready": quality_ready,
+            "performance_metrics_complete": performance_ready,
+            "hardware_evidence_complete": hardware_ready,
+            "hardware_consistent_across_backends": hardware_consistent,
+            "comparison_ready": report.comparison_ready,
+            "measured_hardware_profile": spec.hardware_profile.value,
+            "requested_hardware_requirement": requirement.as_dict(),
+            "rtx_5090_readiness_profile": gaussian_benchmark_hardware_requirement(
+                GaussianBenchmarkHardwareProfile.RTX_5090_32GB
+            ).as_dict(),
+            "benchmark_fingerprint_sha256": spec.benchmark_fingerprint_sha256,
+            "dataset_fingerprint_sha256": spec.dataset_fingerprint_sha256,
+            "training_frame_ids": list(spec.training_frame_ids),
+            "validation_frame_ids": list(spec.validation_frame_ids),
+            "training_steps": steps,
+            "render_repeats": int(args.render_repeats),
+            "evidence_paths": evidence_paths,
+            "report": report.as_dict(),
+            "canonical_geometry_authoritative": False,
+            "certified_metrology": False,
+        }
+        summary_path = _write_json(output / "step3_summary.json", summary)
+        if not step_pass:
+            print("Phase 8.7D3 Step 3 Gaussian performance benchmark: FAIL")
+            print(f"summary={summary_path}")
+            return 1
+        print("Phase 8.7D3 Step 3 Gaussian performance benchmark: PASS")
+        for result in results:
+            perf = result.performance
+            print(
+                f"{result.backend_kind.value}: train={perf.training_duration_s:.3f}s "
+                f"train_vram={perf.peak_training_vram_mib:.1f}MiB "
+                f"render_vram={perf.peak_render_vram_mib:.1f}MiB "
+                f"render_fps={perf.render_fps:.2f} "
+                f"gpu={result.hardware.gpu_name}"
+            )
+        print("quality_comparison_ready=True performance_metrics_complete=True comparison_ready=True")
+        print("canonical_geometry_authoritative=False certified_metrology=False")
+        print(f"report={report_path}")
+        print(f"summary={summary_path}")
+        return 0
+
     summary = {
         "phase": "8.7D3",
         "step": 2,
@@ -341,7 +497,6 @@ def main() -> int:
         "certified_metrology": False,
     }
     summary_path = _write_json(output / "step2_summary.json", summary)
-
     if not quality_ready:
         print("Phase 8.7D3 Step 2 held-out quality benchmark: FAIL")
         print(f"summary={summary_path}")
@@ -361,6 +516,7 @@ def main() -> int:
     print(f"report={report_path}")
     print(f"summary={summary_path}")
     return 0
+
 
 
 if __name__ == "__main__":

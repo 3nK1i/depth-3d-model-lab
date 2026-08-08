@@ -131,6 +131,8 @@ def write_backend_result(
     training_steps: int,
     training_duration_s: float,
     device: str,
+    performance: dict[str, Any] | None = None,
+    hardware: dict[str, Any] | None = None,
 ) -> Path:
     return write_json(
         path,
@@ -149,6 +151,8 @@ def write_backend_result(
             "training_steps": int(training_steps),
             "training_duration_s": float(training_duration_s),
             "device": str(device),
+            "performance": dict(performance or {}),
+            "hardware": dict(hardware or {}),
             "canonical_geometry_authoritative": False,
             "certified_metrology": False,
         },

@@ -51,22 +51,8 @@ def _write_image(path: Path, index: int) -> None:
     Image.fromarray(image, mode="RGB").save(path)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", choices=("gsplat", "graphdeco", "both"), default="both")
-    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("eia-gaussian-gsplat"))
-    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("eia-gaussian-graphdeco"))
-    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("eia-gaussian-metrics"))
-    parser.add_argument(
-        "--graphdeco-root",
-        type=Path,
-        default=Path.home() / "Desktop" / "eia-gaussian-backends" / "gaussian-splatting",
-    )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--training-steps", type=int, default=64)
-    args = parser.parse_args()
-
-    output = args.output_dir.expanduser().resolve()
+def prepare_heldout_smoke_inputs(output: Path) -> tuple[Path, Path]:
+    output = output.expanduser().resolve()
     if output.exists():
         shutil.rmtree(output)
     input_dir = output / "input"
@@ -87,12 +73,7 @@ def main() -> int:
             NeuralSceneFrame(
                 frame_id=f"heldout-smoke-{index}",
                 image_path=str(image_path.resolve()),
-                width=96,
-                height=72,
-                fx=82.0,
-                fy=82.0,
-                cx=48.0,
-                cy=36.0,
+                width=96, height=72, fx=82.0, fy=82.0, cx=48.0, cy=36.0,
                 T_reconstruction_from_camera=pose,
                 pose_layer="optimized_keyframe",
                 camera_profile_id=surface.camera_profile_id,
@@ -114,12 +95,29 @@ def main() -> int:
     )
     manifest = write_neural_scene_dataset_manifest(dataset, (input_dir / "dataset.json").resolve())
     seed_path = write_gaussian_seed_npz(seed, (input_dir / "gaussian_seed.npz").resolve())
+    return manifest, seed_path
 
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=("gsplat", "graphdeco", "both"), default="both")
+    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("eia-gaussian-gsplat"))
+    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("eia-gaussian-graphdeco"))
+    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("eia-gaussian-metrics"))
+    parser.add_argument(
+        "--graphdeco-root", type=Path,
+        default=Path.home() / "Desktop" / "eia-gaussian-backends" / "gaussian-splatting",
+    )
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--training-steps", type=int, default=64)
+    args = parser.parse_args()
+
+    output = args.output_dir.expanduser().resolve()
+    manifest, seed_path = prepare_heldout_smoke_inputs(output)
     runner = ROOT / "scripts" / "run_gaussian_real_scene_benchmark.py"
     benchmark_output = output / "benchmark"
     command = [
-        sys.executable,
-        str(runner),
+        sys.executable, str(runner),
         "--dataset-manifest", str(manifest),
         "--seed", str(seed_path),
         "--validation-frame-id", "heldout-smoke-4",

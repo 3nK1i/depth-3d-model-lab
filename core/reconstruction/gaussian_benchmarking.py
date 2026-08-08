@@ -41,6 +41,112 @@ class GaussianBenchmarkHardwareProfile(str, Enum):
     CUSTOM = "custom"
 
 
+@dataclass(frozen=True, slots=True)
+class GaussianBenchmarkHardwareRequirement:
+    """Non-performance identity contract for a named benchmark target."""
+
+    profile: GaussianBenchmarkHardwareProfile
+    expected_name_fragment: str
+    nominal_vram_mib: float
+    minimum_vram_mib: float
+
+    def matches(self, *, gpu_name: str, total_vram_mib: float) -> bool:
+        if self.profile is GaussianBenchmarkHardwareProfile.CUSTOM:
+            return bool(str(gpu_name).strip()) and float(total_vram_mib) > 0.0
+        return (
+            self.expected_name_fragment.lower() in str(gpu_name).lower()
+            and float(total_vram_mib) >= self.minimum_vram_mib
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "profile": self.profile.value,
+            "expected_name_fragment": self.expected_name_fragment,
+            "nominal_vram_mib": self.nominal_vram_mib,
+            "minimum_vram_mib": self.minimum_vram_mib,
+        }
+
+
+def gaussian_benchmark_hardware_requirement(
+    profile: GaussianBenchmarkHardwareProfile,
+) -> GaussianBenchmarkHardwareRequirement:
+    if not isinstance(profile, GaussianBenchmarkHardwareProfile):
+        raise TypeError("profile must be GaussianBenchmarkHardwareProfile.")
+    if profile is GaussianBenchmarkHardwareProfile.RTX_2060_6GB:
+        return GaussianBenchmarkHardwareRequirement(
+            profile=profile,
+            expected_name_fragment="RTX 2060",
+            nominal_vram_mib=6144.0,
+            minimum_vram_mib=6000.0,
+        )
+    if profile is GaussianBenchmarkHardwareProfile.RTX_5090_32GB:
+        return GaussianBenchmarkHardwareRequirement(
+            profile=profile,
+            expected_name_fragment="RTX 5090",
+            nominal_vram_mib=32768.0,
+            minimum_vram_mib=32000.0,
+        )
+    return GaussianBenchmarkHardwareRequirement(
+        profile=profile,
+        expected_name_fragment="",
+        nominal_vram_mib=0.0,
+        minimum_vram_mib=0.0,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianHardwareEvidence:
+    """Observed GPU/runtime provenance for one measured backend run."""
+
+    gpu_name: str = ""
+    gpu_uuid: str = ""
+    total_vram_mib: float | None = None
+    driver_version: str = ""
+    cuda_runtime_version: str = ""
+    compute_capability: tuple[int, int] | None = None
+    profile_compatible: bool | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gpu_name", str(self.gpu_name).strip())
+        object.__setattr__(self, "gpu_uuid", str(self.gpu_uuid).strip())
+        object.__setattr__(self, "driver_version", str(self.driver_version).strip())
+        object.__setattr__(self, "cuda_runtime_version", str(self.cuda_runtime_version).strip())
+        object.__setattr__(
+            self, "total_vram_mib", _optional_finite_nonnegative(self.total_vram_mib, "total_vram_mib")
+        )
+        if self.compute_capability is not None:
+            values = tuple(int(value) for value in self.compute_capability)
+            if len(values) != 2 or any(value < 0 for value in values):
+                raise ReconstructionValidationError("compute_capability must contain two non-negative integers.")
+            object.__setattr__(self, "compute_capability", values)
+        if self.profile_compatible is not None:
+            object.__setattr__(self, "profile_compatible", bool(self.profile_compatible))
+
+    @property
+    def measured(self) -> bool:
+        return bool(
+            self.gpu_name
+            and self.gpu_uuid
+            and self.total_vram_mib is not None
+            and self.driver_version
+            and self.cuda_runtime_version
+            and self.compute_capability is not None
+            and self.profile_compatible is not None
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "measured": self.measured,
+            "gpu_name": self.gpu_name,
+            "gpu_uuid": self.gpu_uuid,
+            "total_vram_mib": self.total_vram_mib,
+            "driver_version": self.driver_version,
+            "cuda_runtime_version": self.cuda_runtime_version,
+            "compute_capability": list(self.compute_capability) if self.compute_capability is not None else None,
+            "profile_compatible": self.profile_compatible,
+        }
+
+
 class GaussianBenchmarkRunState(str, Enum):
     """Lifecycle outcome for one backend benchmark attempt."""
 
@@ -125,33 +231,85 @@ class GaussianImageQualityMetrics:
 
 @dataclass(frozen=True, slots=True)
 class GaussianPerformanceMetrics:
-    """Comparable performance measurements for one backend run."""
+    """Comparable backend-native performance measurements for one run."""
 
     peak_vram_mib: float | None = None
     training_duration_s: float | None = None
     render_fps: float | None = None
+    peak_training_vram_mib: float | None = None
+    peak_render_vram_mib: float | None = None
+    render_duration_s: float | None = None
+    render_frame_count: int | None = None
+    render_repeats: int | None = None
+    measurement_scope: str = ""
+    render_measurement_mode: str = ""
 
     def __post_init__(self) -> None:
-        for field_name in ("peak_vram_mib", "training_duration_s", "render_fps"):
+        for field_name in (
+            "peak_vram_mib",
+            "training_duration_s",
+            "render_fps",
+            "peak_training_vram_mib",
+            "peak_render_vram_mib",
+            "render_duration_s",
+        ):
             object.__setattr__(
                 self,
                 field_name,
                 _optional_finite_nonnegative(getattr(self, field_name), field_name),
             )
+        for field_name in ("render_frame_count", "render_repeats"):
+            value = _optional_int(getattr(self, field_name), field_name)
+            if value is not None and value < 1:
+                raise ReconstructionValidationError(f"{field_name} must be >= 1 when present.")
+            object.__setattr__(self, field_name, value)
+        object.__setattr__(self, "measurement_scope", str(self.measurement_scope).strip())
+        object.__setattr__(self, "render_measurement_mode", str(self.render_measurement_mode).strip())
+        if self.peak_vram_mib is None and (
+            self.peak_training_vram_mib is not None and self.peak_render_vram_mib is not None
+        ):
+            object.__setattr__(
+                self,
+                "peak_vram_mib",
+                max(self.peak_training_vram_mib, self.peak_render_vram_mib),
+            )
 
     @property
     def measured(self) -> bool:
+        # Preserve the Step 1/2 public readiness contract. Step 3 additionally
+        # requires ``detailed_measured`` before declaring its own gate complete.
         return all(
             value is not None
             for value in (self.peak_vram_mib, self.training_duration_s, self.render_fps)
         )
 
+    @property
+    def detailed_measured(self) -> bool:
+        return bool(
+            self.measured
+            and self.peak_training_vram_mib is not None
+            and self.peak_render_vram_mib is not None
+            and self.render_duration_s is not None
+            and self.render_frame_count is not None
+            and self.render_repeats is not None
+            and self.measurement_scope
+            and self.render_measurement_mode
+        )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "measured": self.measured,
+            "detailed_measured": self.detailed_measured,
             "peak_vram_mib": self.peak_vram_mib,
+            "peak_training_vram_mib": self.peak_training_vram_mib,
+            "peak_render_vram_mib": self.peak_render_vram_mib,
             "training_duration_s": self.training_duration_s,
+            "render_duration_s": self.render_duration_s,
+            "render_frame_count": self.render_frame_count,
+            "render_repeats": self.render_repeats,
             "render_fps": self.render_fps,
+            "measurement_scope": self.measurement_scope,
+            "render_measurement_mode": self.render_measurement_mode,
         }
 
 
@@ -305,6 +463,7 @@ class GaussianBenchmarkBackendResult:
     validation_view_count: int
     quality: GaussianImageQualityMetrics = field(default_factory=GaussianImageQualityMetrics)
     performance: GaussianPerformanceMetrics = field(default_factory=GaussianPerformanceMetrics)
+    hardware: GaussianHardwareEvidence = field(default_factory=GaussianHardwareEvidence)
     lifecycle: GaussianLifecycleEvidence = field(default_factory=GaussianLifecycleEvidence)
     canonical_geometry_authoritative: bool = False
     certified_metrology: bool = False
@@ -335,6 +494,8 @@ class GaussianBenchmarkBackendResult:
             raise TypeError("quality must be GaussianImageQualityMetrics.")
         if not isinstance(self.performance, GaussianPerformanceMetrics):
             raise TypeError("performance must be GaussianPerformanceMetrics.")
+        if not isinstance(self.hardware, GaussianHardwareEvidence):
+            raise TypeError("hardware must be GaussianHardwareEvidence.")
         if not isinstance(self.lifecycle, GaussianLifecycleEvidence):
             raise TypeError("lifecycle must be GaussianLifecycleEvidence.")
         if bool(self.canonical_geometry_authoritative):
@@ -363,6 +524,7 @@ class GaussianBenchmarkBackendResult:
             "validation_view_count": self.validation_view_count,
             "quality": self.quality.as_dict(),
             "performance": self.performance.as_dict(),
+            "hardware": self.hardware.as_dict(),
             "lifecycle": self.lifecycle.as_dict(),
             "comparison_ready": self.comparison_ready,
             "canonical_geometry_authoritative": False,

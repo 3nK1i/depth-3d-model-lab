@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated Graphdeco held-out rendering worker for Phase 8.7D3 Step 2."""
+"""Isolated Graphdeco held-out quality/performance worker for Phase 8.7D3."""
 
 from __future__ import annotations
 
@@ -29,6 +29,17 @@ frame_map = _BENCH_COMMON.frame_map
 load_benchmark_request = _BENCH_COMMON.load_benchmark_request
 write_backend_result = _BENCH_COMMON.write_backend_result
 write_render_manifest = _BENCH_COMMON.write_render_manifest
+
+_PERF_SPEC = importlib.util.spec_from_file_location(
+    "eia_d3_gaussian_benchmark_performance", HERE / "performance.py"
+)
+if _PERF_SPEC is None or _PERF_SPEC.loader is None:
+    raise RuntimeError("cannot load D3 Gaussian performance helpers")
+_PERF = importlib.util.module_from_spec(_PERF_SPEC)
+sys.modules[_PERF_SPEC.name] = _PERF
+_PERF_SPEC.loader.exec_module(_PERF)
+ProcessTreeGpuSampler = _PERF.ProcessTreeGpuSampler
+probe_gpu_hardware = _PERF.probe_gpu_hardware
 
 if str(D2_WORKERS) not in sys.path:
     sys.path.insert(0, str(D2_WORKERS))
@@ -144,6 +155,92 @@ def _materialize_benchmark_dataset(
     return generated_by_frame, validation_names
 
 
+def _benchmark_graphdeco_native_render(
+    *,
+    graphdeco_root: Path,
+    dataset_dir: Path,
+    model_dir: Path,
+    expected_validation_count: int,
+    render_repeats: int,
+    gpu_uuid: str,
+) -> tuple[float, float, int, float]:
+    """Measure hot Graphdeco renderer throughput without image-save I/O."""
+
+    from argparse import ArgumentParser
+
+    root_text = str(graphdeco_root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    from arguments import ModelParams, PipelineParams, get_combined_args
+    from gaussian_renderer import GaussianModel, render as graphdeco_render
+    from scene import Scene
+    try:
+        from diff_gaussian_rasterization import SparseGaussianAdam  # noqa: F401
+        separate_sh = True
+    except ImportError:
+        separate_sh = False
+
+    parser = ArgumentParser(add_help=False)
+    model = ModelParams(parser, sentinel=True)
+    pipeline = PipelineParams(parser)
+    parser.add_argument("--iteration", default=-1, type=int)
+    saved_argv = sys.argv
+    try:
+        sys.argv = [
+            "eia-graphdeco-render-benchmark",
+            "-m", str(model_dir),
+            "-s", str(dataset_dir),
+            "--eval",
+            "--iteration", "-1",
+        ]
+        args = get_combined_args(parser)
+    finally:
+        sys.argv = saved_argv
+
+    dataset_args = model.extract(args)
+    pipeline_args = pipeline.extract(args)
+    with torch.no_grad():
+        gaussians = GaussianModel(dataset_args.sh_degree)
+        scene = Scene(dataset_args, gaussians, load_iteration=int(args.iteration), shuffle=False)
+        views = list(scene.getTestCameras())
+        if len(views) != expected_validation_count:
+            raise RuntimeError(
+                f"Graphdeco native render view mismatch: {len(views)} != {expected_validation_count}"
+            )
+        background = torch.tensor(
+            [1.0, 1.0, 1.0] if dataset_args.white_background else [0.0, 0.0, 0.0],
+            dtype=torch.float32,
+            device="cuda",
+        )
+        for view in views:
+            graphdeco_render(
+                view, gaussians, pipeline_args, background,
+                use_trained_exp=dataset_args.train_test_exp,
+                separate_sh=separate_sh,
+            )["render"]
+        torch.cuda.synchronize()
+
+        sampler = ProcessTreeGpuSampler(
+            root_pid=os.getpid(), gpu_uuid=gpu_uuid, interval_s=0.10
+        ).start()
+        started = time.monotonic()
+        for _repeat in range(render_repeats):
+            for view in views:
+                graphdeco_render(
+                    view, gaussians, pipeline_args, background,
+                    use_trained_exp=dataset_args.train_test_exp,
+                    separate_sh=separate_sh,
+                )["render"]
+        torch.cuda.synchronize()
+        duration_s = float(time.monotonic() - started)
+        peak_vram_mib = sampler.stop()
+
+    frame_count = render_repeats * len(views)
+    if duration_s <= 0.0 or frame_count < 1:
+        raise RuntimeError("Graphdeco native render benchmark produced invalid timing")
+    return duration_s, peak_vram_mib, frame_count, float(frame_count / duration_s)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request", required=True)
@@ -169,6 +266,10 @@ def main() -> int:
     steps = int(request.get("training_steps", PROFILE_DEFAULT_STEPS[str(request["profile"])]))
     if steps < 1 or steps > 100_000:
         raise RuntimeError("training_steps must lie in [1, 100000]")
+    measure_performance = bool(request.get("measure_performance", False))
+    render_repeats = int(request.get("render_repeats", 1))
+    if render_repeats < 1 or render_repeats > 100:
+        raise RuntimeError("Graphdeco render_repeats must lie in [1, 100]")
 
     artifact_dir = Path(str(request["output_dir"])).resolve() / "graphdeco-reference"
     dataset_dir = artifact_dir / "benchmark-dataset"
@@ -184,7 +285,7 @@ def main() -> int:
         validation_frame_ids=tuple(str(value) for value in request["validation_frame_ids"]),
     )
 
-    started = time.monotonic()
+    hardware_probe = probe_gpu_hardware(0) if measure_performance else None
     train_command = [
         sys.executable,
         str(graphdeco_root / "train.py"),
@@ -201,9 +302,16 @@ def main() -> int:
         "--disable_viewer",
         "--quiet",
     ]
+    training_sampler = None
+    if measure_performance:
+        assert hardware_probe is not None
+        training_sampler = ProcessTreeGpuSampler(
+            root_pid=os.getpid(), gpu_uuid=hardware_probe.uuid, interval_s=0.10
+        ).start()
+    started = time.monotonic()
     _run_logged(train_command, cwd=graphdeco_root, log_path=artifact_dir / "train.log", timeout_s=3600.0)
-    torch.cuda.synchronize()
     training_duration_s = float(time.monotonic() - started)
+    peak_training_vram_mib = training_sampler.stop() if training_sampler is not None else None
 
     point_cloud = model_dir / "point_cloud" / f"iteration_{steps}" / "point_cloud.ply"
     if not point_cloud.is_file():
@@ -224,7 +332,30 @@ def main() -> int:
         "--skip_train",
         "--quiet",
     ]
-    _run_logged(render_command, cwd=graphdeco_root, log_path=artifact_dir / "render.log", timeout_s=1800.0)
+    render_duration_s = None
+    peak_render_vram_mib = None
+    render_fps = None
+    render_frame_count = None
+    # Always use the pinned reference render.py once to materialize the exact
+    # held-out images consumed by the Step 2 quality evaluator.
+    _run_logged(
+        render_command, cwd=graphdeco_root, log_path=artifact_dir / "render.log", timeout_s=1800.0
+    )
+    if measure_performance:
+        assert hardware_probe is not None
+        (
+            render_duration_s,
+            peak_render_vram_mib,
+            render_frame_count,
+            render_fps,
+        ) = _benchmark_graphdeco_native_render(
+            graphdeco_root=graphdeco_root,
+            dataset_dir=dataset_dir,
+            model_dir=model_dir,
+            expected_validation_count=len(validation_names),
+            render_repeats=render_repeats,
+            gpu_uuid=hardware_probe.uuid,
+        )
     candidates = sorted(model_dir.glob("test/ours_*/renders/*.png"))
     if len(candidates) != len(validation_names):
         raise RuntimeError(
@@ -269,11 +400,41 @@ def main() -> int:
         training_steps=steps,
         training_duration_s=training_duration_s,
         device=f"cuda:0 {torch.cuda.get_device_name(0)}",
+        performance=(
+            {
+                "measurement_scope": "backend_process_tree_nvidia_smi",
+                "peak_training_vram_mib": peak_training_vram_mib,
+                "peak_render_vram_mib": peak_render_vram_mib,
+                "peak_vram_mib": max(float(peak_training_vram_mib), float(peak_render_vram_mib)),
+                "training_duration_s": training_duration_s,
+                "render_duration_s": render_duration_s,
+                "render_frame_count": render_frame_count,
+                "render_repeats": render_repeats,
+                "render_fps": render_fps,
+                "render_measurement_mode": "backend_native_warm",
+            }
+            if measure_performance else {}
+        ),
+        hardware=(
+            {
+                **hardware_probe.as_dict(),
+                "torch_version": str(torch.__version__),
+                "cuda_runtime_version": str(torch.version.cuda or ""),
+                "compute_capability": list(torch.cuda.get_device_capability(0)),
+            }
+            if hardware_probe is not None else {}
+        ),
     )
-    print(
+    message = (
         f"EIA Graphdeco held-out benchmark: PASS training={len(request['training_frame_ids'])} "
         f"validation={len(request['validation_frame_ids'])} steps={steps} revision={revision[:12]}"
     )
+    if measure_performance:
+        message += (
+            f" train_vram={peak_training_vram_mib:.1f}MiB "
+            f"render_vram={peak_render_vram_mib:.1f}MiB render_fps={render_fps:.2f}"
+        )
+    print(message)
     return 0
 
 
