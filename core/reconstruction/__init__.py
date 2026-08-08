@@ -74,6 +74,23 @@ from core.reconstruction.surface_mesh import (
     write_surface_mesh_obj,
 )
 
+from core.reconstruction.semantic_geometry import (
+    SEMANTIC_GEOMETRY_POSE_CONVENTION,
+    SEMANTIC_GEOMETRY_SCHEMA_VERSION,
+    MeshProjection,
+    Semantic3DObject,
+    SemanticAssociationPolicy,
+    SemanticFrameObservation,
+    SemanticGeometryResult,
+    SemanticGeometryRole,
+    SemanticGeometryStatistics,
+    SemanticObservationProjection,
+    SemanticProjectionRejection,
+    build_semantic_3d_geometry,
+    project_surface_mesh_vertices,
+    write_semantic_groups_obj,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
@@ -406,6 +423,20 @@ from core.reconstruction.sparse import SparseLandmark, SparseObservation
 from core.reconstruction.trajectory import ReconstructionTrajectory
 
 __all__ = [
+    "SEMANTIC_GEOMETRY_POSE_CONVENTION",
+    "SEMANTIC_GEOMETRY_SCHEMA_VERSION",
+    "MeshProjection",
+    "Semantic3DObject",
+    "SemanticAssociationPolicy",
+    "SemanticFrameObservation",
+    "SemanticGeometryResult",
+    "SemanticGeometryRole",
+    "SemanticGeometryStatistics",
+    "SemanticObservationProjection",
+    "SemanticProjectionRejection",
+    "build_semantic_3d_geometry",
+    "project_surface_mesh_vertices",
+    "write_semantic_groups_obj",
     "GLOBAL_CONSISTENCY_SCHEMA_VERSION",
     "GlobalConsistencyResult",
     "LoopClosureCandidate",
