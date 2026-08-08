@@ -113,6 +113,44 @@ from core.reconstruction.inspection_qc import (
     write_reference_assembly_json,
 )
 
+
+from core.reconstruction.neural_scene import (
+    NEURAL_SCENE_DATASET_SCHEMA_VERSION,
+    NEURAL_SCENE_POSE_CONVENTION,
+    NeuralSceneDataset,
+    NeuralSceneFrame,
+    neural_scene_dataset_fingerprint,
+    write_neural_scene_dataset_manifest,
+)
+
+from core.reconstruction.gaussian_splatting import (
+    GAUSSIAN_GRAPHDECO_LICENSE_URL,
+    GAUSSIAN_GRAPHDECO_REPOSITORY,
+    GAUSSIAN_GSPLAT_LICENSE_URL,
+    GAUSSIAN_GSPLAT_REPOSITORY,
+    GAUSSIAN_PREFERRED_LICENSE,
+    GAUSSIAN_PREFERRED_PACKAGE,
+    GAUSSIAN_SPLATTING_POSE_CONVENTION,
+    GAUSSIAN_SPLATTING_SCHEMA_VERSION,
+    GaussianBackendKind,
+    GaussianBackendProvenance,
+    GaussianEnvironmentProbe,
+    GaussianOptimizationProfile,
+    GaussianOptimizationState,
+    GaussianSceneArtifact,
+    GaussianSceneRole,
+    GaussianSeed,
+    GaussianUsageScope,
+    GaussianWorkerExecutionError,
+    GaussianWorkerProcessSpec,
+    GaussianWorkerRequest,
+    build_gaussian_seed,
+    gaussian_backend_provenance,
+    probe_gaussian_environment,
+    run_gaussian_external_worker,
+    write_gaussian_seed_npz,
+)
+
 from core.reconstruction.scale_reference import (
     SCALE_REFERENCE_SCHEMA_VERSION,
     MetricGeometryStatus,
