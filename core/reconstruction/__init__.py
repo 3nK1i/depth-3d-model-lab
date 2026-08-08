@@ -99,6 +99,15 @@ from core.reconstruction.live_global_consistency import (
     native_global_consistency_status_from_payload,
     native_loop_closure_result_from_payload,
 )
+from core.reconstruction.live_trajectory import (
+    LIVE_TRAJECTORY_SCHEMA_VERSION,
+    LiveOptimizedTrajectory,
+    LiveTrajectoryCorrection,
+    LiveTrajectoryPose,
+    LiveTrajectoryPoseLayer,
+    LiveTrajectoryRevisionUpdate,
+    LiveTrajectorySnapshot,
+)
 from core.reconstruction.live_mailbox import (
     LatestLiveFrameMailbox,
     LiveFrameMailboxStats,
@@ -320,6 +329,13 @@ __all__ = [
     "constraint_residual",
     "predicted_relative_transform",
     "RelocalizationAcceptancePolicy",
+    "LIVE_TRAJECTORY_SCHEMA_VERSION",
+    "LiveOptimizedTrajectory",
+    "LiveTrajectoryCorrection",
+    "LiveTrajectoryPose",
+    "LiveTrajectoryPoseLayer",
+    "LiveTrajectoryRevisionUpdate",
+    "LiveTrajectorySnapshot",
     "BackendCapabilities",
     "BoundedFrameCache",
     "CachedKeyframeImage",

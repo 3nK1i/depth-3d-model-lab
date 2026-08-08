@@ -165,7 +165,7 @@ while True:
             },
             'pose': pose,
             'is_keyframe': frame['sequence_index'] == 0,
-            'keyframe_id': 'fake-keyframe-0' if frame['sequence_index'] == 0 else '',
+            'keyframe_id': 'stella-keyframe-0' if frame['sequence_index'] == 0 else '',
             'map_snapshot': {
                 'revision': 1,
                 'keyframe_count': 1,
@@ -201,7 +201,7 @@ while True:
                 'pose_layer': 'optimized',
                 'pose_convention': 'T_reconstruction_from_camera',
                 'T_reconstruction_from_camera': [
-                    [1.0, 0.0, 0.0, 0.1],
+                    [1.0, 0.0, 0.0, 0.1 - 0.01 * accepted_loop_requests],
                     [0.0, 1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
