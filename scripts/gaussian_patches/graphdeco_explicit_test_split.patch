@@ -1,0 +1,6 @@
+diff --git a/scene/__init__.py b/scene/__init__.py
+--- a/scene/__init__.py
++++ b/scene/__init__.py
+@@ -39 +39 @@
+-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
++            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp, llffhold=0)

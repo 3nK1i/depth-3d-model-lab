@@ -16,6 +16,9 @@ GRAPHDECO_REVISION="54c035f7834b564019656c3e3fcc3646292f727d"
 GRAPHDECO_CSTDINT_PATCH_ID="diff-gaussian-rasterization-pr49-cstdint"
 GRAPHDECO_CSTDINT_PATCH="$SCRIPT_DIR/gaussian_patches/graphdeco_diff_gaussian_rasterization_cstdint.patch"
 GRAPHDECO_CSTDINT_PATCH_SHA256="2bb9a353d3dc6646c43507dcbd02718b819c94216368af9fd22b396220deed79"
+GRAPHDECO_TEST_SPLIT_PATCH_ID="explicit-test-txt-heldout-split"
+GRAPHDECO_TEST_SPLIT_PATCH="$SCRIPT_DIR/gaussian_patches/graphdeco_explicit_test_split.patch"
+GRAPHDECO_TEST_SPLIT_PATCH_SHA256="852800901cbd2419dc8c2e4822bbbb1fceb42dc48dbb1d50d670f5e0d97438b9"
 TORCH_VERSION="2.7.1"
 TORCHVISION_VERSION="0.22.1"
 CUDA_VERSION="12.8"
@@ -133,6 +136,37 @@ apply_graphdeco_compatibility_patch() {
   }
 }
 
+apply_graphdeco_test_split_patch() {
+  local checkout="$1"
+
+  [[ -f "$GRAPHDECO_TEST_SPLIT_PATCH" ]] || {
+    echo "ERROR: missing Graphdeco held-out split compatibility patch: $GRAPHDECO_TEST_SPLIT_PATCH" >&2
+    exit 1
+  }
+
+  local actual_sha256
+  actual_sha256="$(sha256sum "$GRAPHDECO_TEST_SPLIT_PATCH" | awk '{print $1}')"
+  if [[ "$actual_sha256" != "$GRAPHDECO_TEST_SPLIT_PATCH_SHA256" ]]; then
+    echo "ERROR: Graphdeco held-out split patch checksum mismatch" >&2
+    exit 1
+  fi
+
+  if git -C "$checkout" apply --unidiff-zero --check "$GRAPHDECO_TEST_SPLIT_PATCH"; then
+    git -C "$checkout" apply --unidiff-zero "$GRAPHDECO_TEST_SPLIT_PATCH"
+    echo "Applied Graphdeco compatibility patch: $GRAPHDECO_TEST_SPLIT_PATCH_ID"
+  elif git -C "$checkout" apply --unidiff-zero --reverse --check "$GRAPHDECO_TEST_SPLIT_PATCH"; then
+    echo "Graphdeco compatibility patch already applied: $GRAPHDECO_TEST_SPLIT_PATCH_ID"
+  else
+    echo "ERROR: Graphdeco held-out split patch does not apply cleanly to pinned source" >&2
+    exit 1
+  fi
+
+  grep -Fq 'llffhold=0' "$checkout/scene/__init__.py" || {
+    echo "ERROR: Graphdeco held-out split patch verification failed" >&2
+    exit 1
+  }
+}
+
 setup_gsplat() {
   local checkout="$ROOT_DIR/gsplat"
   remove_if_recreate "$GSPLAT_ENV" "$checkout"
@@ -172,6 +206,7 @@ setup_graphdeco() {
   git -C "$checkout" checkout --detach "$GRAPHDECO_REVISION"
   git -C "$checkout" submodule update --init --recursive --depth 1
   apply_graphdeco_compatibility_patch "$checkout"
+  apply_graphdeco_test_split_patch "$checkout"
 
   local prefix
   prefix="$(env_prefix "$GRAPHDECO_ENV")"
@@ -185,7 +220,7 @@ setup_graphdeco() {
   conda run -n "$GRAPHDECO_ENV" python -c \
     "import sys; sys.path.insert(0, r'$checkout'); import torch, diff_gaussian_rasterization, simple_knn._C; print('torch=', torch.__version__); print('torch_cuda=', torch.version.cuda); print('cuda_available=', torch.cuda.is_available()); print('graphdeco_extensions=ready')"
   echo "revision=$(git -C "$checkout" rev-parse HEAD)"
-  echo "compatibility_patch=$GRAPHDECO_CSTDINT_PATCH_ID"
+  echo "compatibility_patches=$GRAPHDECO_CSTDINT_PATCH_ID,$GRAPHDECO_TEST_SPLIT_PATCH_ID"
   echo "python=$(conda run -n "$GRAPHDECO_ENV" python -c 'import sys; print(sys.executable)' | tail -n 1)"
   echo "checkout=$checkout"
 }

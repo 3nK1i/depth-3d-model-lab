@@ -32,6 +32,7 @@ GSPLAT_QUALIFIED_TAG = "v1.5.3"
 GSPLAT_QUALIFIED_COMMIT_SHORT = "937e299"
 GRAPHDECO_QUALIFIED_REVISION = "54c035f7834b564019656c3e3fcc3646292f727d"
 GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH = "diff-gaussian-rasterization-pr49-cstdint"
+GRAPHDECO_HELDOUT_SPLIT_COMPATIBILITY_PATCH = "explicit-test-txt-heldout-split"
 GAUSSIAN_QUALIFIED_PYTHON = "3.10"
 GAUSSIAN_QUALIFIED_TORCH = "2.7.1"
 GAUSSIAN_QUALIFIED_TORCHVISION = "0.22.1"
@@ -103,7 +104,10 @@ def gaussian_backend_runtime_pin(backend_kind: GaussianBackendKind) -> GaussianB
             backend_kind=backend_kind,
             backend_version=GRAPHDECO_QUALIFIED_REVISION,
             upstream_revision=GRAPHDECO_QUALIFIED_REVISION,
-            compatibility_patches=(GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,),
+            compatibility_patches=(
+                GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,
+                GRAPHDECO_HELDOUT_SPLIT_COMPATIBILITY_PATCH,
+            ),
         )
     raise ReconstructionValidationError("No real-backend runtime pin exists for this backend kind.")
 

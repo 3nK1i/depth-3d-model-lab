@@ -272,3 +272,93 @@ def write_neural_scene_dataset_manifest(dataset: NeuralSceneDataset, path: str |
     payload["dataset_fingerprint_sha256"] = neural_scene_dataset_fingerprint(dataset)
     target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return target
+
+
+def neural_scene_frame_from_dict(payload: dict[str, Any]) -> NeuralSceneFrame:
+    """Reconstruct one strict neural-scene frame from a manifest payload."""
+
+    if not isinstance(payload, dict):
+        raise ReconstructionValidationError("Neural scene frame payload must be a JSON object.")
+    try:
+        return NeuralSceneFrame(
+            frame_id=str(payload["frame_id"]),
+            image_path=str(payload["image_path"]),
+            width=int(payload["width"]),
+            height=int(payload["height"]),
+            fx=float(payload["fx"]),
+            fy=float(payload["fy"]),
+            cx=float(payload["cx"]),
+            cy=float(payload["cy"]),
+            T_reconstruction_from_camera=np.asarray(
+                payload["T_reconstruction_from_camera"], dtype=np.float64
+            ),
+            pose_layer=str(payload["pose_layer"]),
+            camera_profile_id=str(payload["camera_profile_id"]),
+            timestamp_ns=int(payload.get("timestamp_ns", 0)),
+            mask_path=str(payload.get("mask_path", "")),
+            depth_path=str(payload.get("depth_path", "")),
+        )
+    except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+        raise ReconstructionValidationError(f"Invalid neural scene frame payload: {exc}") from exc
+
+
+def neural_scene_dataset_from_dict(
+    payload: dict[str, Any],
+    *,
+    verify_fingerprint: bool = True,
+) -> NeuralSceneDataset:
+    """Load a canonical :class:`NeuralSceneDataset` from its JSON representation.
+
+    Unknown derived fields such as ``frame_count`` and ``pose_layers`` are not
+    trusted; they are recomputed from the reconstructed dataset.  When a
+    manifest fingerprint is present it is verified by default.
+    """
+
+    if not isinstance(payload, dict):
+        raise ReconstructionValidationError("Neural scene dataset payload must be a JSON object.")
+    try:
+        raw_frames = payload["frames"]
+        if not isinstance(raw_frames, list):
+            raise ReconstructionValidationError("Neural scene frames must be a JSON array.")
+        dataset = NeuralSceneDataset(
+            session_id=str(payload["session_id"]),
+            scene_profile=DenseSceneProfile(str(payload["scene_profile"])),
+            reconstruction_frame_id=str(payload["reconstruction_frame_id"]),
+            camera_profile_id=str(payload["camera_profile_id"]),
+            scale_profile_id=str(payload["scale_profile_id"]),
+            metric_geometry_status=MetricGeometryStatus(str(payload["metric_geometry_status"])),
+            scale_status=SfmScaleStatus(str(payload["scale_status"])),
+            world_alignment_status=SfmWorldAlignmentStatus(str(payload["world_alignment_status"])),
+            unit_to_metre=payload.get("unit_to_metre"),
+            relative_scale_uncertainty=payload.get("relative_scale_uncertainty"),
+            frames=tuple(neural_scene_frame_from_dict(frame) for frame in raw_frames),
+            certified_metrology=bool(payload.get("certified_metrology", False)),
+            pose_convention=str(payload.get("pose_convention", "")),
+            schema_version=int(payload.get("schema_version", 0)),
+        )
+    except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+        raise ReconstructionValidationError(f"Invalid neural scene dataset payload: {exc}") from exc
+
+    if "frame_count" in payload and int(payload["frame_count"]) != dataset.frame_count:
+        raise ReconstructionValidationError("Neural scene manifest frame_count mismatch.")
+    if "pose_layers" in payload and tuple(payload["pose_layers"]) != dataset.pose_layers:
+        raise ReconstructionValidationError("Neural scene manifest pose_layers mismatch.")
+    if verify_fingerprint and "dataset_fingerprint_sha256" in payload:
+        expected = str(payload["dataset_fingerprint_sha256"]).strip().lower()
+        actual = neural_scene_dataset_fingerprint(dataset)
+        if expected != actual:
+            raise ReconstructionValidationError("Neural scene dataset fingerprint mismatch.")
+    return dataset
+
+
+def read_neural_scene_dataset_manifest(path: str | Path) -> NeuralSceneDataset:
+    """Read and verify a neural-scene dataset manifest written by this module."""
+
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ReconstructionValidationError(f"Neural scene manifest does not exist: {source}")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReconstructionValidationError(f"Cannot read neural scene manifest: {exc}") from exc
+    return neural_scene_dataset_from_dict(payload, verify_fingerprint=True)

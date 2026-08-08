@@ -16,6 +16,7 @@ from core.reconstruction import (
     GAUSSIAN_QUALIFIED_PYTHON,
     GAUSSIAN_QUALIFIED_TORCH,
     GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,
+    GRAPHDECO_HELDOUT_SPLIT_COMPATIBILITY_PATCH,
     GRAPHDECO_QUALIFIED_REVISION,
     GSPLAT_QUALIFIED_TAG,
     GSPLAT_QUALIFIED_VERSION,
@@ -139,7 +140,10 @@ def test_runtime_pins_are_explicit_and_stable() -> None:
     assert gsplat.upstream_revision == GSPLAT_QUALIFIED_TAG == "v1.5.3"
     assert graphdeco.backend_version == GRAPHDECO_QUALIFIED_REVISION
     assert gsplat.compatibility_patches == ()
-    assert graphdeco.compatibility_patches == (GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,)
+    assert graphdeco.compatibility_patches == (
+        GRAPHDECO_QUALIFIED_COMPATIBILITY_PATCH,
+        GRAPHDECO_HELDOUT_SPLIT_COMPATIBILITY_PATCH,
+    )
     assert len(GRAPHDECO_QUALIFIED_REVISION) == 40
     assert gsplat.python_version == graphdeco.python_version == GAUSSIAN_QUALIFIED_PYTHON == "3.10"
     assert gsplat.torch_version == graphdeco.torch_version == GAUSSIAN_QUALIFIED_TORCH == "2.7.1"
@@ -410,6 +414,20 @@ def test_setup_script_applies_audited_graphdeco_cstdint_compatibility_patch() ->
     assert 'git -C "$rasterizer" apply --unidiff-zero --reverse --check "$GRAPHDECO_CSTDINT_PATCH"' in setup_text
     assert "+#include <cstdint>" in patch_text
     match = re.search(r'GRAPHDECO_CSTDINT_PATCH_SHA256="([0-9a-f]{64})"', setup_text)
+    assert match is not None
+    assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == match.group(1)
+
+
+def test_setup_script_applies_audited_graphdeco_heldout_split_patch() -> None:
+    setup_text = (ROOT / "scripts/setup_gaussian_backends.sh").read_text(encoding="utf-8")
+    patch_path = ROOT / "scripts/gaussian_patches/graphdeco_explicit_test_split.patch"
+    patch_text = patch_path.read_text(encoding="utf-8")
+    assert 'GRAPHDECO_TEST_SPLIT_PATCH_ID="explicit-test-txt-heldout-split"' in setup_text
+    assert 'sha256sum "$GRAPHDECO_TEST_SPLIT_PATCH"' in setup_text
+    assert 'git -C "$checkout" apply --unidiff-zero --check "$GRAPHDECO_TEST_SPLIT_PATCH"' in setup_text
+    assert 'git -C "$checkout" apply --unidiff-zero --reverse --check "$GRAPHDECO_TEST_SPLIT_PATCH"' in setup_text
+    assert 'llffhold=0' in patch_text
+    match = re.search(r'GRAPHDECO_TEST_SPLIT_PATCH_SHA256="([0-9a-f]{64})"', setup_text)
     assert match is not None
     assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == match.group(1)
 

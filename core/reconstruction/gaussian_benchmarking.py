@@ -2,8 +2,9 @@
 
 This module is intentionally dependency-light. It defines reproducible benchmark
 splits, target-hardware identities, result/evidence contracts, and JSON writers.
-Actual PSNR/SSIM/LPIPS computation and real backend execution are added in later
-D3 steps so Step 1 cannot fabricate quality or performance measurements.
+Step 2 extends these dependency-light contracts with held-out render/evaluation
+manifests. The actual LPIPS network still runs only in an isolated metrics worker;
+production core remains free of torch/LPIPS backend imports.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from core.reconstruction.neural_scene import (
 )
 
 GAUSSIAN_BENCHMARK_SCHEMA_VERSION = 1
+GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION = 1
+GAUSSIAN_QUALITY_EVALUATION_SCHEMA_VERSION = 1
 
 
 class GaussianBenchmarkHardwareProfile(str, Enum):
@@ -443,3 +446,344 @@ def write_real_scene_gaussian_benchmark_report(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(report.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return target
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianHeldOutRender:
+    """One held-out reference/render image pair produced by a real backend."""
+
+    frame_id: str
+    reference_image_path: str
+    rendered_image_path: str
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "frame_id", require_nonempty(self.frame_id, field_name="frame_id"))
+        for field_name in ("reference_image_path", "rendered_image_path"):
+            path = Path(require_nonempty(getattr(self, field_name), field_name=field_name)).expanduser()
+            if not path.is_absolute():
+                raise ReconstructionValidationError(f"{field_name} must be absolute.")
+            object.__setattr__(self, field_name, str(path.resolve()))
+        for field_name in ("width", "height"):
+            value = int(getattr(self, field_name))
+            if value < 2:
+                raise ReconstructionValidationError(f"{field_name} must be >= 2.")
+            object.__setattr__(self, field_name, value)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "frame_id": self.frame_id,
+            "reference_image_path": self.reference_image_path,
+            "rendered_image_path": self.rendered_image_path,
+            "width": self.width,
+            "height": self.height,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "GaussianHeldOutRender":
+        try:
+            return cls(
+                frame_id=str(payload["frame_id"]),
+                reference_image_path=str(payload["reference_image_path"]),
+                rendered_image_path=str(payload["rendered_image_path"]),
+                width=int(payload["width"]),
+                height=int(payload["height"]),
+            )
+        except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+            raise ReconstructionValidationError(f"Invalid held-out render payload: {exc}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianHeldOutRenderManifest:
+    """Backend-neutral manifest of renders for exactly the benchmark validation split."""
+
+    backend_kind: GaussianBackendKind
+    benchmark_fingerprint_sha256: str
+    dataset_fingerprint_sha256: str
+    validation_frame_ids: tuple[str, ...]
+    renders: tuple[GaussianHeldOutRender, ...]
+    schema_version: int = GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.backend_kind not in {
+            GaussianBackendKind.GSPLAT_EXTERNAL,
+            GaussianBackendKind.GRAPHDECO_REFERENCE_EXTERNAL,
+        }:
+            raise ReconstructionValidationError("Held-out render manifests require a real external backend.")
+        for field_name in ("benchmark_fingerprint_sha256", "dataset_fingerprint_sha256"):
+            digest = str(getattr(self, field_name)).strip().lower()
+            if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise ReconstructionValidationError(f"{field_name} must be a SHA-256 hex digest.")
+            object.__setattr__(self, field_name, digest)
+        frame_ids = tuple(require_nonempty(value, field_name="validation_frame_id") for value in self.validation_frame_ids)
+        renders = tuple(self.renders)
+        if not frame_ids:
+            raise ReconstructionValidationError("Held-out render manifest requires validation views.")
+        if len(set(frame_ids)) != len(frame_ids):
+            raise ReconstructionValidationError("Held-out validation frame IDs must be unique.")
+        if any(not isinstance(value, GaussianHeldOutRender) for value in renders):
+            raise TypeError("renders must contain GaussianHeldOutRender values.")
+        render_ids = tuple(value.frame_id for value in renders)
+        if len(set(render_ids)) != len(render_ids):
+            raise ReconstructionValidationError("Held-out render frame IDs must be unique.")
+        if set(render_ids) != set(frame_ids) or len(render_ids) != len(frame_ids):
+            raise ReconstructionValidationError("Held-out renders must cover every validation frame exactly once.")
+        if int(self.schema_version) != GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION:
+            raise ReconstructionValidationError("Unsupported held-out render manifest schema version.")
+        object.__setattr__(self, "validation_frame_ids", frame_ids)
+        object.__setattr__(self, "renders", renders)
+        object.__setattr__(self, "schema_version", GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "backend_kind": self.backend_kind.value,
+            "benchmark_fingerprint_sha256": self.benchmark_fingerprint_sha256,
+            "dataset_fingerprint_sha256": self.dataset_fingerprint_sha256,
+            "validation_frame_ids": list(self.validation_frame_ids),
+            "renders": [value.as_dict() for value in self.renders],
+            "canonical_geometry_authoritative": False,
+            "certified_metrology": False,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "GaussianHeldOutRenderManifest":
+        try:
+            raw_renders = payload["renders"]
+            if not isinstance(raw_renders, list):
+                raise ReconstructionValidationError("renders must be a JSON array.")
+            return cls(
+                backend_kind=GaussianBackendKind(str(payload["backend_kind"])),
+                benchmark_fingerprint_sha256=str(payload["benchmark_fingerprint_sha256"]),
+                dataset_fingerprint_sha256=str(payload["dataset_fingerprint_sha256"]),
+                validation_frame_ids=tuple(str(value) for value in payload["validation_frame_ids"]),
+                renders=tuple(GaussianHeldOutRender.from_payload(value) for value in raw_renders),
+                schema_version=int(payload.get("schema_version", 0)),
+            )
+        except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+            raise ReconstructionValidationError(f"Invalid held-out render manifest: {exc}") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianHeldOutViewMetrics:
+    """PSNR/SSIM/LPIPS for one held-out validation view."""
+
+    frame_id: str
+    psnr_db: float
+    ssim: float
+    lpips: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "frame_id", require_nonempty(self.frame_id, field_name="frame_id"))
+        object.__setattr__(self, "psnr_db", _finite_nonnegative(self.psnr_db, "psnr_db"))
+        ssim = float(self.ssim)
+        if not isfinite(ssim) or not 0.0 <= ssim <= 1.0:
+            raise ReconstructionValidationError("ssim must be finite and lie in [0, 1].")
+        object.__setattr__(self, "ssim", ssim)
+        object.__setattr__(self, "lpips", _finite_nonnegative(self.lpips, "lpips"))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "frame_id": self.frame_id,
+            "psnr_db": self.psnr_db,
+            "ssim": self.ssim,
+            "lpips": self.lpips,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "GaussianHeldOutViewMetrics":
+        try:
+            return cls(
+                frame_id=str(payload["frame_id"]),
+                psnr_db=float(payload["psnr_db"]),
+                ssim=float(payload["ssim"]),
+                lpips=float(payload["lpips"]),
+            )
+        except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+            raise ReconstructionValidationError(f"Invalid held-out view metrics: {exc}") from exc
+
+
+def aggregate_gaussian_held_out_metrics(
+    views: tuple[GaussianHeldOutViewMetrics, ...] | list[GaussianHeldOutViewMetrics],
+) -> GaussianImageQualityMetrics:
+    """Return the arithmetic mean over identically-defined held-out view metrics."""
+
+    values = tuple(views)
+    if not values:
+        raise ReconstructionValidationError("Cannot aggregate an empty held-out metric set.")
+    if any(not isinstance(value, GaussianHeldOutViewMetrics) for value in values):
+        raise TypeError("views must contain GaussianHeldOutViewMetrics values.")
+    if len({value.frame_id for value in values}) != len(values):
+        raise ReconstructionValidationError("Held-out metric frame IDs must be unique.")
+    count = float(len(values))
+    return GaussianImageQualityMetrics(
+        psnr_db=sum(value.psnr_db for value in values) / count,
+        ssim=sum(value.ssim for value in values) / count,
+        lpips=sum(value.lpips for value in values) / count,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class GaussianHeldOutQualityEvaluation:
+    """Auditable held-out metric evidence from one common evaluator implementation."""
+
+    backend_kind: GaussianBackendKind
+    benchmark_fingerprint_sha256: str
+    dataset_fingerprint_sha256: str
+    validation_frame_ids: tuple[str, ...]
+    views: tuple[GaussianHeldOutViewMetrics, ...]
+    aggregate: GaussianImageQualityMetrics
+    evaluator_name: str = "eia-heldout-quality"
+    psnr_definition: str = "rgb_mse_unit_range_mse_floor_1e-12"
+    ssim_definition: str = "gaussian_11_sigma_1.5_rgb_unit_range"
+    lpips_network: str = "alex"
+    lpips_version: str = "0.1"
+    lpips_package_version: str = "0.1.4"
+    schema_version: int = GAUSSIAN_QUALITY_EVALUATION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.backend_kind not in {
+            GaussianBackendKind.GSPLAT_EXTERNAL,
+            GaussianBackendKind.GRAPHDECO_REFERENCE_EXTERNAL,
+        }:
+            raise ReconstructionValidationError("Quality evaluation requires a real external backend.")
+        for field_name in ("benchmark_fingerprint_sha256", "dataset_fingerprint_sha256"):
+            digest = str(getattr(self, field_name)).strip().lower()
+            if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise ReconstructionValidationError(f"{field_name} must be a SHA-256 hex digest.")
+            object.__setattr__(self, field_name, digest)
+        frame_ids = tuple(require_nonempty(value, field_name="validation_frame_id") for value in self.validation_frame_ids)
+        views = tuple(self.views)
+        if not frame_ids or len(set(frame_ids)) != len(frame_ids):
+            raise ReconstructionValidationError("Quality evaluation requires unique validation frame IDs.")
+        if any(not isinstance(value, GaussianHeldOutViewMetrics) for value in views):
+            raise TypeError("views must contain GaussianHeldOutViewMetrics values.")
+        if set(value.frame_id for value in views) != set(frame_ids) or len(views) != len(frame_ids):
+            raise ReconstructionValidationError("Quality metrics must cover every validation frame exactly once.")
+        if not isinstance(self.aggregate, GaussianImageQualityMetrics) or not self.aggregate.measured:
+            raise ReconstructionValidationError("Quality evaluation requires measured aggregate metrics.")
+        recomputed = aggregate_gaussian_held_out_metrics(views)
+        for field_name in ("psnr_db", "ssim", "lpips"):
+            if abs(float(getattr(self.aggregate, field_name)) - float(getattr(recomputed, field_name))) > 1e-9:
+                raise ReconstructionValidationError("Aggregate held-out metrics do not match per-view evidence.")
+        for field_name in (
+            "evaluator_name",
+            "psnr_definition",
+            "ssim_definition",
+            "lpips_network",
+            "lpips_version",
+            "lpips_package_version",
+        ):
+            object.__setattr__(self, field_name, require_nonempty(getattr(self, field_name), field_name=field_name))
+        if (
+            self.lpips_network != "alex"
+            or self.lpips_version != "0.1"
+            or self.lpips_package_version != "0.1.4"
+        ):
+            raise ReconstructionValidationError(
+                "Phase 8.7D3 Step 2 requires LPIPS AlexNet metric 0.1 from package 0.1.4."
+            )
+        if int(self.schema_version) != GAUSSIAN_QUALITY_EVALUATION_SCHEMA_VERSION:
+            raise ReconstructionValidationError("Unsupported quality evaluation schema version.")
+        object.__setattr__(self, "validation_frame_ids", frame_ids)
+        object.__setattr__(self, "views", views)
+        object.__setattr__(self, "schema_version", GAUSSIAN_QUALITY_EVALUATION_SCHEMA_VERSION)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "backend_kind": self.backend_kind.value,
+            "benchmark_fingerprint_sha256": self.benchmark_fingerprint_sha256,
+            "dataset_fingerprint_sha256": self.dataset_fingerprint_sha256,
+            "validation_frame_ids": list(self.validation_frame_ids),
+            "views": [value.as_dict() for value in self.views],
+            "aggregate": self.aggregate.as_dict(),
+            "evaluator": {
+                "name": self.evaluator_name,
+                "psnr_definition": self.psnr_definition,
+                "ssim_definition": self.ssim_definition,
+                "lpips_network": self.lpips_network,
+                "lpips_version": self.lpips_version,
+                "lpips_package_version": self.lpips_package_version,
+            },
+            "canonical_geometry_authoritative": False,
+            "certified_metrology": False,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "GaussianHeldOutQualityEvaluation":
+        try:
+            raw_views = payload["views"]
+            evaluator = payload["evaluator"]
+            aggregate_payload = payload["aggregate"]
+            if not isinstance(raw_views, list) or not isinstance(evaluator, Mapping):
+                raise ReconstructionValidationError("Invalid quality evaluation arrays/metadata.")
+            aggregate = GaussianImageQualityMetrics(
+                psnr_db=aggregate_payload["psnr_db"],
+                ssim=aggregate_payload["ssim"],
+                lpips=aggregate_payload["lpips"],
+            )
+            return cls(
+                backend_kind=GaussianBackendKind(str(payload["backend_kind"])),
+                benchmark_fingerprint_sha256=str(payload["benchmark_fingerprint_sha256"]),
+                dataset_fingerprint_sha256=str(payload["dataset_fingerprint_sha256"]),
+                validation_frame_ids=tuple(str(value) for value in payload["validation_frame_ids"]),
+                views=tuple(GaussianHeldOutViewMetrics.from_payload(value) for value in raw_views),
+                aggregate=aggregate,
+                evaluator_name=str(evaluator["name"]),
+                psnr_definition=str(evaluator["psnr_definition"]),
+                ssim_definition=str(evaluator["ssim_definition"]),
+                lpips_network=str(evaluator["lpips_network"]),
+                lpips_version=str(evaluator["lpips_version"]),
+                lpips_package_version=str(evaluator["lpips_package_version"]),
+                schema_version=int(payload.get("schema_version", 0)),
+            )
+        except (KeyError, TypeError, ValueError, ReconstructionValidationError) as exc:
+            raise ReconstructionValidationError(f"Invalid quality evaluation payload: {exc}") from exc
+
+
+def write_gaussian_held_out_render_manifest(
+    manifest: GaussianHeldOutRenderManifest,
+    path: str | Path,
+) -> Path:
+    if not isinstance(manifest, GaussianHeldOutRenderManifest):
+        raise TypeError("manifest must be GaussianHeldOutRenderManifest.")
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(manifest.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return target
+
+
+def read_gaussian_held_out_render_manifest(path: str | Path) -> GaussianHeldOutRenderManifest:
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ReconstructionValidationError(f"Held-out render manifest does not exist: {source}")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReconstructionValidationError(f"Cannot read held-out render manifest: {exc}") from exc
+    return GaussianHeldOutRenderManifest.from_payload(payload)
+
+
+def write_gaussian_held_out_quality_evaluation(
+    evaluation: GaussianHeldOutQualityEvaluation,
+    path: str | Path,
+) -> Path:
+    if not isinstance(evaluation, GaussianHeldOutQualityEvaluation):
+        raise TypeError("evaluation must be GaussianHeldOutQualityEvaluation.")
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(evaluation.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return target
+
+
+def read_gaussian_held_out_quality_evaluation(path: str | Path) -> GaussianHeldOutQualityEvaluation:
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise ReconstructionValidationError(f"Quality evaluation does not exist: {source}")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReconstructionValidationError(f"Cannot read quality evaluation: {exc}") from exc
+    return GaussianHeldOutQualityEvaluation.from_payload(payload)
