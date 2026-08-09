@@ -557,6 +557,7 @@ class ReconstructionStageExecutionContext:
     provider: ReconstructionProviderDescriptor
     required_inputs: tuple[ReconstructionPipelineArtifact, ...]
     optional_inputs: tuple[ReconstructionPipelineArtifact, ...]
+    control: ReconstructionOperationControl | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.request, ReconstructionPipelineRequest):
@@ -572,6 +573,13 @@ class ReconstructionStageExecutionContext:
             if any(not isinstance(value, ReconstructionPipelineArtifact) for value in values):
                 raise TypeError(f"{name} must contain ReconstructionPipelineArtifact values.")
             object.__setattr__(self, name, values)
+        if self.control is not None and not isinstance(self.control, ReconstructionOperationControl):
+            raise TypeError("control must be ReconstructionOperationControl or None.")
+
+    def checkpoint(self) -> None:
+        """Cooperative whole-engine cancellation poll for long-running providers."""
+        if self.control is not None:
+            self.control.checkpoint()
 
 
 class ReconstructionStageExecutor(Protocol):
@@ -974,9 +982,14 @@ class ReconstructionPipelineOrchestrator:
                     provider=provider,
                     required_inputs=tuple(required_inputs),
                     optional_inputs=optional_inputs,
+                    control=control,
                 )
                 try:
                     artifact = executor.execute(context)
+                    # Providers may either poll context.checkpoint() while working,
+                    # or cancellation may arrive during an uncooperative call. In
+                    # both cases the engine must not accept a post-cancel artifact.
+                    control.checkpoint()
                 except ReconstructionCancelledError:
                     stage_results.append(
                         ReconstructionStageRunResult(

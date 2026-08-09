@@ -741,6 +741,18 @@ from core.reconstruction.pipeline_appearance import (
     materialize_appearance_dataset,
 )
 
+
+from core.reconstruction.engine_hardening import (
+    ENGINE_HARDENING_SCHEMA_VERSION,
+    ENGINE_HARDENING_PHASE,
+    ReconstructionEngineRunState,
+    ReconstructionEngineProcessSpec,
+    ReconstructionEngineProcessOutcome,
+    ReconstructionEngineRecoveryReport,
+    run_supervised_engine_process,
+    recovery_report,
+)
+
 from core.reconstruction.persistent_scene import (
     PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
@@ -1275,4 +1287,12 @@ __all__ = [
     "write_persistent_reconstruction_scene",
     "read_persistent_reconstruction_scene",
     "verify_persistent_scene_file_references",
+    "ENGINE_HARDENING_SCHEMA_VERSION",
+    "ENGINE_HARDENING_PHASE",
+    "ReconstructionEngineRunState",
+    "ReconstructionEngineProcessSpec",
+    "ReconstructionEngineProcessOutcome",
+    "ReconstructionEngineRecoveryReport",
+    "run_supervised_engine_process",
+    "recovery_report",
 ]
