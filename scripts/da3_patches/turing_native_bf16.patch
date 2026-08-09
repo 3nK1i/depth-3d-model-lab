@@ -1,0 +1,16 @@
+diff --git a/src/depth_anything_3/api.py b/src/depth_anything_3/api.py
+--- a/src/depth_anything_3/api.py
++++ b/src/depth_anything_3/api.py
+@@ -112,7 +112,11 @@
+         Returns:
+             Dictionary containing model predictions
+         """
+         # Determine optimal autocast dtype
+-        autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
++        autocast_dtype = (
++            torch.bfloat16
++            if torch.cuda.is_bf16_supported(including_emulation=False)
++            else torch.float16
++        )
+         with torch.no_grad():
+             with torch.autocast(device_type=image.device.type, dtype=autocast_dtype):
