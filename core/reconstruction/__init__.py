@@ -728,6 +728,19 @@ from core.reconstruction.pipeline_geometry import (
     summarize_f3_pipeline_result,
 )
 
+from core.reconstruction.pipeline_appearance import (
+    PIPELINE_APPEARANCE_SCHEMA_VERSION,
+    PIPELINE_GAUSSIAN_PROVIDER_ID,
+    PIPELINE_NERF_PROVIDER_ID,
+    PIPELINE_F4_ADAPTER_VERSION,
+    AppearanceDatasetBundle,
+    GaussianAppearanceProviderExecutor,
+    NerfAppearanceProviderExecutor,
+    F4AppearanceIntegrationSummary,
+    appearance_provider_descriptors,
+    materialize_appearance_dataset,
+)
+
 __all__ = [
     "RECONSTRUCTION_ORCHESTRATION_SCHEMA_VERSION",
     "STAGE_CONTRACTS",
@@ -1221,4 +1234,14 @@ __all__ = [
     "da3_camera_profile_from_result",
     "da3_supporting_evidence_from_result",
     "summarize_f3_pipeline_result",
+    "PIPELINE_APPEARANCE_SCHEMA_VERSION",
+    "PIPELINE_GAUSSIAN_PROVIDER_ID",
+    "PIPELINE_NERF_PROVIDER_ID",
+    "PIPELINE_F4_ADAPTER_VERSION",
+    "AppearanceDatasetBundle",
+    "GaussianAppearanceProviderExecutor",
+    "NerfAppearanceProviderExecutor",
+    "F4AppearanceIntegrationSummary",
+    "appearance_provider_descriptors",
+    "materialize_appearance_dataset",
 ]
