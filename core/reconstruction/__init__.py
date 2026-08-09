@@ -741,6 +741,23 @@ from core.reconstruction.pipeline_appearance import (
     materialize_appearance_dataset,
 )
 
+from core.reconstruction.persistent_scene import (
+    PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION,
+    PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
+    PERSISTENT_RECONSTRUCTION_SCENE_CHECKSUM,
+    PERSISTENT_SCENE_PHASE,
+    PersistentReconstructionSceneState,
+    PersistentSceneArtifactRecord,
+    PersistentSceneFallbackEvidence,
+    PersistentSceneFileReference,
+    PersistentReconstructionScene,
+    persistent_scene_from_pipeline_payload,
+    persistent_scene_from_pipeline_result,
+    write_persistent_reconstruction_scene,
+    read_persistent_reconstruction_scene,
+    verify_persistent_scene_file_references,
+)
+
 __all__ = [
     "RECONSTRUCTION_ORCHESTRATION_SCHEMA_VERSION",
     "STAGE_CONTRACTS",
@@ -1244,4 +1261,18 @@ __all__ = [
     "F4AppearanceIntegrationSummary",
     "appearance_provider_descriptors",
     "materialize_appearance_dataset",
+    "PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION",
+    "PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST",
+    "PERSISTENT_RECONSTRUCTION_SCENE_CHECKSUM",
+    "PERSISTENT_SCENE_PHASE",
+    "PersistentReconstructionSceneState",
+    "PersistentSceneArtifactRecord",
+    "PersistentSceneFallbackEvidence",
+    "PersistentSceneFileReference",
+    "PersistentReconstructionScene",
+    "persistent_scene_from_pipeline_payload",
+    "persistent_scene_from_pipeline_result",
+    "write_persistent_reconstruction_scene",
+    "read_persistent_reconstruction_scene",
+    "verify_persistent_scene_file_references",
 ]
