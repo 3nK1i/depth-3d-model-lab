@@ -348,6 +348,14 @@ class PipelinePayloadStore:
     def contains(self, payload_ref: str, expected_type: type[Any]) -> bool:
         return (str(payload_ref), expected_type) in self._payloads
 
+    def contains_ref(self, payload_ref: str) -> bool:
+        ref = require_nonempty(payload_ref, field_name="payload_ref")
+        return any(stored_ref == ref for stored_ref, _kind in self._payloads)
+
+    @property
+    def payload_refs(self) -> tuple[str, ...]:
+        return tuple(sorted({stored_ref for stored_ref, _kind in self._payloads}))
+
     def find_unique(self, expected_type: type[_T], *, predicate: Callable[[_T], bool] | None = None) -> _T:
         values = [
             value

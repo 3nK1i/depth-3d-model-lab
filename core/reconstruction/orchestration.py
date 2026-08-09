@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from core.contracts.validation import (
     JsonValue,
@@ -901,13 +901,45 @@ class ReconstructionPipelineOrchestrator:
     def plan(self) -> ReconstructionPipelinePlan:
         return self._plan
 
-    def run(self, *, control: ReconstructionOperationControl | None = None) -> ReconstructionPipelineRunResult:
+    def run(
+        self,
+        *,
+        control: ReconstructionOperationControl | None = None,
+        resume_stage_results: Sequence[ReconstructionStageRunResult] = (),
+        stage_commit_hook: Callable[[tuple[ReconstructionStageRunResult, ...]], None] | None = None,
+    ) -> ReconstructionPipelineRunResult:
         control = control or ReconstructionOperationControl()
+        resumed = tuple(resume_stage_results)
+        if any(not isinstance(item, ReconstructionStageRunResult) for item in resumed):
+            raise TypeError("resume_stage_results must contain ReconstructionStageRunResult values.")
+        if len(resumed) > len(self._plan.stages):
+            raise ReconstructionValidationError("Resume stage prefix is longer than the pipeline plan.")
+
         artifacts_by_kind: dict[ReconstructionArtifactKind, ReconstructionPipelineArtifact] = {}
         stage_results: list[ReconstructionStageRunResult] = []
         degraded = False
+        for index, result in enumerate(resumed):
+            planned = self._plan.stages[index]
+            if result.stage is not planned.stage:
+                raise ReconstructionValidationError("Resume stage results must be a canonical plan prefix.")
+            if result.state not in {ReconstructionStageRunState.COMPLETED, ReconstructionStageRunState.SKIPPED}:
+                raise ReconstructionValidationError("Resume stage results may only contain completed/skipped stages.")
+            if result.required and result.state is ReconstructionStageRunState.SKIPPED:
+                raise ReconstructionValidationError("Required stages cannot be skipped in a resumable prefix.")
+            if result.state is ReconstructionStageRunState.COMPLETED:
+                artifact = result.artifact
+                if artifact is None:
+                    raise ReconstructionValidationError("Completed resume stages require an artifact.")
+                if artifact.session_id != self._plan.request.session_id or artifact.stage is not planned.stage:
+                    raise ReconstructionValidationError("Resume artifact identity does not match the current plan.")
+                if result.provider_id not in planned.candidate_provider_ids:
+                    raise ReconstructionValidationError("Resume provider is not a candidate for the current plan stage.")
+                artifacts_by_kind[artifact.kind] = artifact
+            if result.state is ReconstructionStageRunState.SKIPPED or result.fallback_used:
+                degraded = True
+            stage_results.append(result)
 
-        for planned in self._plan.stages:
+        for planned in self._plan.stages[len(resumed):]:
             try:
                 control.checkpoint()
             except ReconstructionCancelledError:
@@ -933,6 +965,8 @@ class ReconstructionPipelineOrchestrator:
                         reason=planned.skip_reason,
                     )
                 )
+                if stage_commit_hook is not None:
+                    stage_commit_hook(tuple(stage_results))
                 continue
 
             required_inputs: list[ReconstructionPipelineArtifact] = []
@@ -1054,6 +1088,8 @@ class ReconstructionPipelineOrchestrator:
                     reason="",
                 )
             )
+            if stage_commit_hook is not None:
+                stage_commit_hook(tuple(stage_results))
 
         status = ReconstructionPipelineRunStatus.DEGRADED if degraded else ReconstructionPipelineRunStatus.COMPLETED
         return self._finalize(stage_results, status)

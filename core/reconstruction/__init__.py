@@ -742,6 +742,21 @@ from core.reconstruction.pipeline_appearance import (
 )
 
 
+
+from core.reconstruction.engine_checkpoint import (
+    ENGINE_CHECKPOINT_SCHEMA_VERSION,
+    ENGINE_CHECKPOINT_PHASE,
+    ENGINE_CHECKPOINT_MANIFEST,
+    ENGINE_CHECKPOINT_CHECKSUM,
+    ReconstructionResumeCompatibilityStatus,
+    ReconstructionEngineCheckpoint,
+    ReconstructionResumeCompatibilityResult,
+    create_reconstruction_engine_checkpoint,
+    check_reconstruction_engine_resume_compatibility,
+    write_reconstruction_engine_checkpoint,
+    read_reconstruction_engine_checkpoint,
+)
+
 from core.reconstruction.engine_hardening import (
     ENGINE_HARDENING_SCHEMA_VERSION,
     ENGINE_HARDENING_PHASE,
@@ -1287,6 +1302,17 @@ __all__ = [
     "write_persistent_reconstruction_scene",
     "read_persistent_reconstruction_scene",
     "verify_persistent_scene_file_references",
+    "ENGINE_CHECKPOINT_SCHEMA_VERSION",
+    "ENGINE_CHECKPOINT_PHASE",
+    "ENGINE_CHECKPOINT_MANIFEST",
+    "ENGINE_CHECKPOINT_CHECKSUM",
+    "ReconstructionResumeCompatibilityStatus",
+    "ReconstructionEngineCheckpoint",
+    "ReconstructionResumeCompatibilityResult",
+    "create_reconstruction_engine_checkpoint",
+    "check_reconstruction_engine_resume_compatibility",
+    "write_reconstruction_engine_checkpoint",
+    "read_reconstruction_engine_checkpoint",
     "ENGINE_HARDENING_SCHEMA_VERSION",
     "ENGINE_HARDENING_PHASE",
     "ReconstructionEngineRunState",
