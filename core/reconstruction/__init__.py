@@ -768,6 +768,15 @@ from core.reconstruction.engine_hardening import (
     recovery_report,
 )
 
+from core.reconstruction.engine_endurance import (
+    ENGINE_ENDURANCE_SCHEMA_VERSION,
+    ENGINE_ENDURANCE_PHASE,
+    ReconstructionEnduranceScenario,
+    ReconstructionEnduranceCycleEvidence,
+    ReconstructionEnduranceCampaignReport,
+    build_reconstruction_endurance_campaign,
+)
+
 from core.reconstruction.persistent_scene import (
     PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
@@ -1321,4 +1330,10 @@ __all__ = [
     "ReconstructionEngineRecoveryReport",
     "run_supervised_engine_process",
     "recovery_report",
+    "ENGINE_ENDURANCE_SCHEMA_VERSION",
+    "ENGINE_ENDURANCE_PHASE",
+    "ReconstructionEnduranceScenario",
+    "ReconstructionEnduranceCycleEvidence",
+    "ReconstructionEnduranceCampaignReport",
+    "build_reconstruction_endurance_campaign",
 ]
