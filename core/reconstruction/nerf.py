@@ -267,6 +267,19 @@ def nerfstudio_camera_to_world_from_eia_pose(value: object) -> list[list[float]]
     return result.tolist()
 
 
+def eia_pose_from_nerfstudio_camera_to_world(value: object) -> list[list[float]]:
+    """Convert Nerfstudio/OpenGL camera-to-world to EIA OpenCV-style c2w.
+
+    This is the exact inverse of :func:`nerfstudio_camera_to_world_from_eia_pose`.
+    It is used by E3 dataset preparation so public real-scene camera poses enter
+    the same canonical ``T_reconstruction_from_camera`` convention as the rest
+    of the reconstruction stack.
+    """
+
+    # The convention change is its own inverse: negate camera-axis columns Y/Z.
+    return nerfstudio_camera_to_world_from_eia_pose(value)
+
+
 @dataclass(frozen=True, slots=True)
 class NerfWorkerRequest:
     request_id: str

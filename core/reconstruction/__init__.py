@@ -157,9 +157,34 @@ from core.reconstruction.nerf import (
     NerfWorkerRequest,
     nerf_backend_provenance,
     nerf_backend_runtime_pin,
+    eia_pose_from_nerfstudio_camera_to_world,
     nerfstudio_camera_to_world_from_eia_pose,
     probe_nerf_environment,
     run_nerf_external_worker,
+)
+
+from core.reconstruction.nerf_validation import (
+    NERF_E3_DEFAULT_TRAINING_STEPS,
+    NERF_E3_MAX_TRAINING_STEPS,
+    NERF_E3_MIN_TRAINING_FRAMES,
+    NERF_E3_MIN_TRAINING_STEPS,
+    NERF_E3_MIN_VALIDATION_FRAMES,
+    NERF_HELD_OUT_RENDER_SCHEMA_VERSION,
+    NERF_QUALITY_EVALUATION_SCHEMA_VERSION,
+    NERF_REAL_SCENE_VALIDATION_SCHEMA_VERSION,
+    NerfHeldOutQualityEvaluation,
+    NerfHeldOutRender,
+    NerfHeldOutRenderManifest,
+    NerfHeldOutViewMetrics,
+    NerfImageQualityMetrics,
+    NerfQualitySanityPolicy,
+    NerfRealSceneValidationSpec,
+    aggregate_nerf_held_out_metrics,
+    deterministic_nerf_validation_split,
+    read_nerf_held_out_render_manifest,
+    write_nerf_held_out_quality_evaluation,
+    write_nerf_held_out_render_manifest,
+    write_nerf_real_scene_validation_spec,
 )
 
 from core.reconstruction.gaussian_splatting import (

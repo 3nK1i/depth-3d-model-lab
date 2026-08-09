@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, Sequence
 
 from core.reconstruction import (
     NeuralSceneDataset,
@@ -37,18 +37,25 @@ def profile_settings(profile: NerfOptimizationProfile) -> dict[str, int]:
     }
 
 
+def _safe_frame_token(frame_id: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(frame_id).strip())
+    return token or "frame"
+
+
 def export_nerfstudio_dataset(
     dataset: NeuralSceneDataset,
     output_dir: str | Path,
     *,
     copy_images: bool = True,
+    training_frame_ids: Sequence[str] | None = None,
+    validation_frame_ids: Sequence[str] | None = None,
 ) -> Path:
     """Export an EIA neural-scene dataset to Nerfstudio ``transforms.json``.
 
-    The canonical EIA pose is OpenCV-style camera-to-world (X right, Y down,
-    Z forward).  Nerfstudio's dataset format consumes OpenGL-style c2w poses;
-    the conversion flips camera-axis Y/Z while preserving the reconstruction
-    world frame.
+    E2 keeps its historical default split when explicit IDs are omitted. E3 can
+    provide exact train/held-out frame IDs; those IDs must be disjoint and cover
+    the dataset exactly. The canonical EIA pose is OpenCV-style camera-to-world
+    (X right, Y down, Z forward), while Nerfstudio consumes OpenGL-style c2w.
     """
 
     if not isinstance(dataset, NeuralSceneDataset):
@@ -57,14 +64,39 @@ def export_nerfstudio_dataset(
     images_dir = root / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    dataset_ids = tuple(frame.frame_id for frame in dataset.frames)
+    explicit_split = training_frame_ids is not None or validation_frame_ids is not None
+    if explicit_split:
+        if training_frame_ids is None or validation_frame_ids is None:
+            raise ValueError("training_frame_ids and validation_frame_ids must be provided together")
+        training_ids = tuple(str(value).strip() for value in training_frame_ids)
+        validation_ids = tuple(str(value).strip() for value in validation_frame_ids)
+        if not training_ids or not validation_ids:
+            raise ValueError("explicit Nerfstudio train/validation splits must be non-empty")
+        if any(not value for value in training_ids + validation_ids):
+            raise ValueError("explicit Nerfstudio split frame IDs must be non-empty")
+        if len(set(training_ids)) != len(training_ids) or len(set(validation_ids)) != len(validation_ids):
+            raise ValueError("explicit Nerfstudio split frame IDs must be unique")
+        if set(training_ids) & set(validation_ids):
+            raise ValueError("explicit Nerfstudio train/validation splits must be disjoint")
+        if set(training_ids) | set(validation_ids) != set(dataset_ids):
+            raise ValueError("explicit Nerfstudio split must cover the dataset exactly")
+    else:
+        if len(dataset_ids) >= 2:
+            training_ids = dataset_ids[:-1]
+            validation_ids = (dataset_ids[-1],)
+        else:
+            training_ids = dataset_ids
+            validation_ids = dataset_ids
+
     frames: list[dict[str, Any]] = []
-    relative_paths: list[str] = []
+    relative_by_id: dict[str, str] = {}
     for index, frame in enumerate(dataset.frames):
         source = Path(frame.image_path).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(f"NeRF input image is missing: {source}")
         suffix = source.suffix.lower() or ".png"
-        target = images_dir / f"{index:05d}_{frame.frame_id}{suffix}"
+        target = images_dir / f"{index:05d}_{_safe_frame_token(frame.frame_id)}{suffix}"
         if copy_images:
             shutil.copy2(source, target)
         else:
@@ -72,10 +104,11 @@ def export_nerfstudio_dataset(
                 target.unlink()
             target.symlink_to(source)
         relative = target.relative_to(root).as_posix()
-        relative_paths.append(relative)
+        relative_by_id[frame.frame_id] = relative
         frames.append(
             {
                 "file_path": relative,
+                "eia_frame_id": frame.frame_id,
                 "fl_x": float(frame.fx),
                 "fl_y": float(frame.fy),
                 "cx": float(frame.cx),
@@ -88,16 +121,8 @@ def export_nerfstudio_dataset(
             }
         )
 
-    # E2 qualifies backend execution, not held-out quality.  We nevertheless
-    # provide an explicit deterministic validation camera so rendering reloads
-    # exercise Nerfstudio's test/val path.  E3 owns real held-out evaluation.
-    if len(relative_paths) >= 2:
-        train_paths = relative_paths[:-1]
-        eval_paths = [relative_paths[-1]]
-    else:
-        train_paths = list(relative_paths)
-        eval_paths = list(relative_paths)
-
+    train_paths = [relative_by_id[value] for value in training_ids]
+    eval_paths = [relative_by_id[value] for value in validation_ids]
     payload = {
         "camera_model": "OPENCV",
         "orientation_override": "none",
@@ -107,7 +132,8 @@ def export_nerfstudio_dataset(
         "test_filenames": eval_paths,
         "eia_pose_source_convention": "T_reconstruction_from_camera",
         "eia_nerfstudio_camera_convention": "OpenGL_c2w",
-        "eia_backend_qualification_only": True,
+        "eia_explicit_heldout_split": bool(explicit_split),
+        "eia_backend_qualification_only": not bool(explicit_split),
     }
     transforms = root / "transforms.json"
     transforms.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
