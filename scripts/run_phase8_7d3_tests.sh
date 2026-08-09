@@ -15,21 +15,25 @@ case "$MODE" in
       tests/unit/test_phase8_7d3_backward_compatibility.py \
       tests/unit/test_phase8_7d3_step2_backward_compatibility.py \
       tests/unit/test_phase8_7d3_step3_backward_compatibility.py \
-      tests/unit/test_phase8_7d3_step4_backward_compatibility.py
+      tests/unit/test_phase8_7d3_step4_backward_compatibility.py \
+      tests/unit/test_reconstruction_gaussian_d3_finalization.py \
+      tests/unit/test_phase8_7d3_final_backward_compatibility.py
     ;;
   integration)
     pytest -q \
       tests/integration/test_reconstruction_gaussian_benchmark_contracts.py \
       tests/integration/test_reconstruction_gaussian_heldout_quality.py \
       tests/integration/test_reconstruction_gaussian_performance_benchmark.py \
-      tests/integration/test_reconstruction_gaussian_backend_robustness.py
+      tests/integration/test_reconstruction_gaussian_backend_robustness.py \
+      tests/integration/test_reconstruction_gaussian_d3_finalization.py
     ;;
   stress)
     pytest -q \
       tests/stress/test_reconstruction_gaussian_benchmark_contracts_stress.py \
       tests/stress/test_reconstruction_gaussian_heldout_quality_stress.py \
       tests/stress/test_reconstruction_gaussian_performance_benchmark_stress.py \
-      tests/stress/test_reconstruction_gaussian_backend_robustness_stress.py
+      tests/stress/test_reconstruction_gaussian_backend_robustness_stress.py \
+      tests/stress/test_reconstruction_gaussian_d3_finalization_stress.py
     ;;
   full)
     for group in tests/unit tests/ui tests/integration tests/stress; do
