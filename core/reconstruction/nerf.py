@@ -40,6 +40,12 @@ NERFSTUDIO_METHOD = "nerfacto"
 NERFSTUDIO_DOCUMENTED_MEMORY_MIB = 6144
 TINY_CUDA_NN_REPOSITORY = "https://github.com/NVlabs/tiny-cuda-nn"
 TINY_CUDA_NN_LICENSE = "BSD-3-Clause"
+TINY_CUDA_NN_E2_REVISION = "b3473c81396fe927293bdfd5a6be32df8769927c"
+NERFSTUDIO_E2_PYTHON = "3.10"
+NERFSTUDIO_E2_TORCH = "2.1.2"
+NERFSTUDIO_E2_TORCHVISION = "0.16.2"
+NERFSTUDIO_E2_CUDA = "11.8"
+NERFSTUDIO_E2_RTX2060_COMPUTE_CAPABILITY = (7, 5)
 
 
 class NerfWorkerExecutionError(ReconstructionError):
@@ -238,6 +244,29 @@ def nerf_backend_runtime_pin() -> NerfBackendRuntimePin:
     )
 
 
+def nerfstudio_camera_to_world_from_eia_pose(value: object) -> list[list[float]]:
+    """Convert EIA OpenCV-style camera-to-world pose to Nerfstudio/OpenGL c2w.
+
+    EIA reconstruction cameras use X-right, Y-down, Z-forward.  Nerfstudio
+    camera-to-world matrices use X-right, Y-up, Z-back.  Therefore the world
+    transform is preserved and only camera-axis columns Y/Z are negated.
+    """
+
+    try:
+        import numpy as np
+
+        matrix = np.asarray(value, dtype=np.float64)
+    except Exception as exc:
+        raise ReconstructionValidationError("NeRF pose must be convertible to a 4x4 matrix.") from exc
+    if matrix.shape != (4, 4) or not np.isfinite(matrix).all():
+        raise ReconstructionValidationError("NeRF pose must be a finite 4x4 matrix.")
+    if not np.allclose(matrix[3], np.asarray([0.0, 0.0, 0.0, 1.0]), atol=1e-9):
+        raise ReconstructionValidationError("NeRF pose must be homogeneous.")
+    result = matrix.copy()
+    result[:3, 1:3] *= -1.0
+    return result.tolist()
+
+
 @dataclass(frozen=True, slots=True)
 class NerfWorkerRequest:
     request_id: str
@@ -248,6 +277,7 @@ class NerfWorkerRequest:
     output_dir: str
     scene_profile: DenseSceneProfile
     maximum_input_frames: int
+    qualification_training_steps: int = 0
     method_name: str = NERFSTUDIO_METHOD
     schema_version: int = NERF_SCHEMA_VERSION
 
@@ -269,6 +299,10 @@ class NerfWorkerRequest:
         if maximum < 1:
             raise ReconstructionValidationError("maximum_input_frames must be >= 1.")
         object.__setattr__(self, "maximum_input_frames", maximum)
+        qualification_steps = _nonnegative_int(self.qualification_training_steps, "qualification_training_steps")
+        if qualification_steps > 256:
+            raise ReconstructionValidationError("qualification_training_steps must be <= 256.")
+        object.__setattr__(self, "qualification_training_steps", qualification_steps)
         method = require_nonempty(self.method_name, field_name="method_name")
         if method != NERFSTUDIO_METHOD:
             raise ReconstructionValidationError("Phase 8.7E1 supports the Nerfacto contract only.")
@@ -288,6 +322,7 @@ class NerfWorkerRequest:
         dataset_manifest_path: str | Path,
         output_dir: str | Path,
         maximum_input_frames: int,
+        qualification_training_steps: int = 0,
     ) -> "NerfWorkerRequest":
         if not isinstance(dataset, NeuralSceneDataset):
             raise TypeError("dataset must be NeuralSceneDataset.")
@@ -300,6 +335,7 @@ class NerfWorkerRequest:
             output_dir=str(Path(output_dir)),
             scene_profile=dataset.scene_profile,
             maximum_input_frames=maximum_input_frames,
+            qualification_training_steps=qualification_training_steps,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -315,6 +351,7 @@ class NerfWorkerRequest:
             "output_dir": self.output_dir,
             "scene_profile": self.scene_profile.value,
             "maximum_input_frames": self.maximum_input_frames,
+            "qualification_training_steps": self.qualification_training_steps,
         }
 
 
@@ -569,9 +606,13 @@ payload = {
     "torch_version": "",
     "tinycudann_available": False,
     "ns_train_available": False,
+    "ns_render_available": False,
     "cuda_available": False,
     "cuda_device_count": 0,
     "cuda_device_names": [],
+    "cuda_compute_capabilities": [],
+    "cuda_total_vram_mib": [],
+    "torch_cuda_version": "",
     "error": "",
 }
 try:
@@ -591,12 +632,17 @@ else:
         payload["tinycudann_available"] = True
     except Exception as exc:
         payload["error"] = f"tinycudann probe failed: {type(exc).__name__}: {exc}"
-    payload["ns_train_available"] = ((Path(sys.executable).resolve().parent / "ns-train").is_file() or shutil.which("ns-train") is not None)
+    bin_dir = Path(sys.executable).resolve().parent
+    payload["ns_train_available"] = ((bin_dir / "ns-train").is_file() or shutil.which("ns-train") is not None)
+    payload["ns_render_available"] = ((bin_dir / "ns-render").is_file() or shutil.which("ns-render") is not None)
+    payload["torch_cuda_version"] = str(getattr(getattr(torch, "version", None), "cuda", "") or "")
     try:
         payload["cuda_available"] = bool(torch.cuda.is_available())
         payload["cuda_device_count"] = int(torch.cuda.device_count()) if payload["cuda_available"] else 0
         if payload["cuda_available"]:
             payload["cuda_device_names"] = [str(torch.cuda.get_device_name(i)) for i in range(payload["cuda_device_count"])]
+            payload["cuda_compute_capabilities"] = [list(torch.cuda.get_device_capability(i)) for i in range(payload["cuda_device_count"])]
+            payload["cuda_total_vram_mib"] = [float(torch.cuda.get_device_properties(i).total_memory / (1024 ** 2)) for i in range(payload["cuda_device_count"])]
     except Exception as exc:
         payload["error"] = f"CUDA probe failed: {type(exc).__name__}: {exc}"
 print(json.dumps(payload, sort_keys=True))
@@ -611,9 +657,13 @@ class NerfEnvironmentProbe:
     torch_version: str = ""
     tinycudann_available: bool = False
     ns_train_available: bool = False
+    ns_render_available: bool = False
     cuda_available: bool = False
     cuda_device_count: int = 0
     cuda_device_names: tuple[str, ...] = ()
+    cuda_compute_capabilities: tuple[tuple[int, int], ...] = ()
+    cuda_total_vram_mib: tuple[float, ...] = ()
+    torch_cuda_version: str = ""
     error: str = ""
 
     def __post_init__(self) -> None:
@@ -626,17 +676,27 @@ class NerfEnvironmentProbe:
         object.__setattr__(self, "torch_version", str(self.torch_version).strip())
         object.__setattr__(self, "tinycudann_available", bool(self.tinycudann_available))
         object.__setattr__(self, "ns_train_available", bool(self.ns_train_available))
+        object.__setattr__(self, "ns_render_available", bool(self.ns_render_available))
         object.__setattr__(self, "cuda_available", bool(self.cuda_available))
         count = _nonnegative_int(self.cuda_device_count, "cuda_device_count")
         names = tuple(str(value).strip() for value in self.cuda_device_names if str(value).strip())
-        if count != len(names):
-            raise ReconstructionValidationError("NeRF CUDA device count must match device names.")
+        capabilities = tuple(tuple(int(part) for part in value) for value in self.cuda_compute_capabilities)
+        total_vram = tuple(float(value) for value in self.cuda_total_vram_mib)
+        if count != len(names) or count != len(capabilities) or count != len(total_vram):
+            raise ReconstructionValidationError("NeRF CUDA device evidence lengths must match cuda_device_count.")
+        if any(len(value) != 2 or value[0] < 1 or value[1] < 0 for value in capabilities):
+            raise ReconstructionValidationError("NeRF compute capabilities must contain positive major/minor pairs.")
+        if any(not isfinite(value) or value <= 0.0 for value in total_vram):
+            raise ReconstructionValidationError("NeRF CUDA VRAM values must be finite and positive.")
         if count > 0 and not self.cuda_available:
             raise ReconstructionValidationError("NeRF CUDA device count cannot be positive when CUDA is unavailable.")
         if self.available and (not self.nerfstudio_version or not self.torch_version):
             raise ReconstructionValidationError("Available NeRF environments must report Nerfstudio and torch versions.")
         object.__setattr__(self, "cuda_device_count", count)
         object.__setattr__(self, "cuda_device_names", names)
+        object.__setattr__(self, "cuda_compute_capabilities", capabilities)
+        object.__setattr__(self, "cuda_total_vram_mib", total_vram)
+        object.__setattr__(self, "torch_cuda_version", str(self.torch_cuda_version).strip())
         object.__setattr__(self, "error", str(self.error).strip())
 
     @property
@@ -649,6 +709,7 @@ class NerfEnvironmentProbe:
             self.available
             and self.tinycudann_available
             and self.ns_train_available
+            and self.ns_render_available
             and self.cuda_available
             and self.cuda_device_count > 0
         )
@@ -669,9 +730,13 @@ class NerfEnvironmentProbe:
             "torch_version": self.torch_version,
             "tinycudann_available": self.tinycudann_available,
             "ns_train_available": self.ns_train_available,
+            "ns_render_available": self.ns_render_available,
             "cuda_available": self.cuda_available,
             "cuda_device_count": self.cuda_device_count,
             "cuda_device_names": list(self.cuda_device_names),
+            "cuda_compute_capabilities": [list(value) for value in self.cuda_compute_capabilities],
+            "cuda_total_vram_mib": list(self.cuda_total_vram_mib),
+            "torch_cuda_version": self.torch_cuda_version,
             "backend_ready": self.backend_ready,
             "error": self.error,
         }
@@ -709,8 +774,12 @@ def probe_nerf_environment(python_executable: str | Path, *, timeout_s: float = 
         torch_version=str(payload.get("torch_version", "")),
         tinycudann_available=bool(payload.get("tinycudann_available", False)),
         ns_train_available=bool(payload.get("ns_train_available", False)),
+        ns_render_available=bool(payload.get("ns_render_available", False)),
         cuda_available=bool(payload.get("cuda_available", False)),
         cuda_device_count=int(payload.get("cuda_device_count", 0)),
         cuda_device_names=tuple(payload.get("cuda_device_names", ())),
+        cuda_compute_capabilities=tuple(tuple(value) for value in payload.get("cuda_compute_capabilities", ())),
+        cuda_total_vram_mib=tuple(payload.get("cuda_total_vram_mib", ())),
+        torch_cuda_version=str(payload.get("torch_cuda_version", "")),
         error=str(payload.get("error", "")),
     )
