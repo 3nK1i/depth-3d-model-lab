@@ -391,6 +391,7 @@ class ReconstructionCanvas(QObject):
     MAX_TRAJECTORY_POSES = 20_000
     MAX_TRAJECTORY_DISPLAY_POINTS = 4_096
     MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
+    MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -467,6 +468,29 @@ class ReconstructionCanvas(QObject):
         self._sparse_landmark_total_count = 0
         self._sparse_landmark_display_count = 0
         self._sparse_map_revision: int | None = None
+        self._keyframe_frustums = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(0.94, 0.66, 0.24, 0.52),
+            width=1.0,
+            parent=self._view.scene,
+        )
+        self._keyframe_centers = scene.visuals.Markers(parent=self._view.scene)
+        self._keyframe_centers.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.94, 0.66, 0.24, 0.74),
+            size=3.4,
+            edge_width=0,
+        )
+        self._keyframes_visible = True
+        self._keyframe_frustums.visible = True
+        self._keyframe_centers.visible = True
+        self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
+        self._keyframe_ids: tuple[str, ...] = ()
+        self._keyframe_total_count = 0
+        self._keyframe_display_count = 0
+        self._keyframe_map_revision: int | None = None
         self._trajectory_positions: list[np.ndarray] = []
         self._trajectory_display_count = 0
         self._current_camera_position: np.ndarray | None = None
@@ -553,6 +577,14 @@ class ReconstructionCanvas(QObject):
         self._sparse_landmark_total_count = 0
         self._sparse_landmark_display_count = 0
         self._sparse_map_revision = None
+        self._keyframe_frustums.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="segments")
+        self._keyframe_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
+        self._keyframe_ids = ()
+        self._keyframe_total_count = 0
+        self._keyframe_display_count = 0
+        self._keyframe_map_revision = None
         self._world_axis_length = 0.28
         self._update_world_axes_visuals()
         self._current_camera_position = None
@@ -611,6 +643,75 @@ class ReconstructionCanvas(QObject):
         self._sparse_landmarks.visible = self._sparse_landmarks_visible
         self._canvas.update()
 
+    def update_keyframe_poses(
+        self,
+        matrices_reconstruction: np.ndarray,
+        *,
+        keyframe_ids: tuple[str, ...] | list[str] = (),
+        total_count: int | None = None,
+        revision: int | None = None,
+    ) -> None:
+        from app.reconstruction_visualization import (
+            keyframe_centers_in_viewer,
+            keyframe_display_indices,
+        )
+
+        matrices = np.asarray(matrices_reconstruction, dtype=np.float64)
+        if matrices.size == 0:
+            matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or not np.isfinite(matrices).all():
+            raise ValueError("matrices_reconstruction must be a finite (N, 4, 4) array.")
+        ids = tuple(str(value).strip() for value in keyframe_ids)
+        if ids and len(ids) != matrices.shape[0]:
+            raise ValueError("keyframe_ids must match matrices_reconstruction length.")
+        if ids and (any(not value for value in ids) or len(set(ids)) != len(ids)):
+            raise ValueError("keyframe_ids must be non-empty and unique.")
+
+        indices = keyframe_display_indices(
+            matrices.shape[0], max_keyframes=self.MAX_KEYFRAME_DISPLAY_FRUSTUMS
+        )
+        self._keyframe_matrices = np.ascontiguousarray(matrices[indices])
+        self._keyframe_positions = keyframe_centers_in_viewer(self._keyframe_matrices)
+        self._keyframe_ids = tuple(ids[index] for index in indices) if ids else ()
+        self._keyframe_total_count = max(
+            int(total_count) if total_count is not None else int(matrices.shape[0]),
+            int(matrices.shape[0]),
+        )
+        self._keyframe_display_count = int(self._keyframe_matrices.shape[0])
+        self._keyframe_map_revision = None if revision is None else int(revision)
+        self._refresh_world_axis_scale()
+        self._refresh_keyframe_visual()
+        self._canvas.update()
+
+    def set_keyframes_visible(self, visible: bool) -> None:
+        self._keyframes_visible = bool(visible)
+        self._keyframe_frustums.visible = self._keyframes_visible
+        self._keyframe_centers.visible = self._keyframes_visible
+        if self._keyframes_visible:
+            self._refresh_keyframe_visual()
+        self._canvas.update()
+
+    def _refresh_keyframe_visual(self) -> None:
+        from app.reconstruction_visualization import keyframe_frustum_segments_in_viewer
+
+        if self._keyframe_matrices.shape[0] == 0:
+            self._keyframe_frustums.set_data(
+                pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+            )
+            self._keyframe_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+            return
+        depth = float(np.clip(self._world_axis_length * 0.26, 0.035, 0.11))
+        segments = keyframe_frustum_segments_in_viewer(self._keyframe_matrices, depth=depth)
+        self._keyframe_frustums.set_data(pos=segments, connect="segments")
+        self._keyframe_centers.set_data(
+            pos=self._keyframe_positions,
+            face_color=(0.94, 0.66, 0.24, 0.74),
+            size=3.4,
+            edge_width=0,
+        )
+        self._keyframe_frustums.visible = self._keyframes_visible
+        self._keyframe_centers.visible = self._keyframes_visible
+
     def _refresh_trajectory_visual(self) -> None:
         from app.reconstruction_visualization import trajectory_display_indices
 
@@ -641,12 +742,16 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
         if self._sparse_landmark_positions.size:
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+        if self._keyframe_positions.size:
+            groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
         points = np.vstack(groups) if groups else None
         target = adaptive_world_axis_length(points)
         if abs(target - self._world_axis_length) <= max(0.01, self._world_axis_length * 0.12):
             return
         self._world_axis_length = float(target)
         self._update_world_axes_visuals()
+        if self._keyframe_matrices.shape[0]:
+            self._refresh_keyframe_visual()
 
     def _create_world_axes_visuals(self):
         axis_x = scene.visuals.Line(
@@ -708,6 +813,8 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
         if self._sparse_landmark_positions.size:
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+        if self._keyframe_positions.size:
+            groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
         if groups:
             points = np.vstack(groups)
             center = points.mean(axis=0)
@@ -820,6 +927,30 @@ class ReconstructionCanvas(QObject):
     @property
     def has_sparse_map(self) -> bool:
         return self._sparse_landmark_display_count > 0
+
+    @property
+    def keyframes_visible(self) -> bool:
+        return self._keyframes_visible
+
+    @property
+    def keyframe_count(self) -> int:
+        return self._keyframe_total_count
+
+    @property
+    def keyframe_display_count(self) -> int:
+        return self._keyframe_display_count
+
+    @property
+    def keyframe_map_revision(self) -> int | None:
+        return self._keyframe_map_revision
+
+    @property
+    def keyframe_ids(self) -> tuple[str, ...]:
+        return self._keyframe_ids
+
+    @property
+    def has_keyframes(self) -> bool:
+        return self._keyframe_display_count > 0
 
     @property
     def world_axis_length(self) -> float:

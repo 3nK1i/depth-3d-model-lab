@@ -81,7 +81,7 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-w
 fi
 
 cat > "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt" <<INFO
-EIA TECH Phase 8.8C3 isolated stella_vslam sparse-map worker
+EIA TECH Phase 8.8C4 isolated stella_vslam map-structure worker
 worker_status=PASS
 worker_protocol_version=1
 worker_executable=$WORKER
@@ -94,6 +94,8 @@ loop_closure_supported=true
 global_optimization_supported=true
 sparse_landmark_samples_supported=true
 sparse_landmark_sample_cap=4096
+keyframe_pose_samples_supported=true
+keyframe_pose_sample_cap=256
 default_session_loop_closure=false
 default_session_global_optimization=false
 pixel_transport=posix_shared_memory

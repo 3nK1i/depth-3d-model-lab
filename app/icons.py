@@ -55,6 +55,7 @@ _ICON_PATHS: dict[str, str] = {
     "reset": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
     "trajectory": '<path d="M4 18c2-6 4-9 8-9s3 6 6 6 2-3 2-5"/><circle cx="4" cy="18" r="1.5"/><circle cx="20" cy="10" r="1.5"/>',
     "landmarks": '<circle cx="5" cy="7" r="1.3"/><circle cx="11" cy="5" r="1.3"/><circle cx="18" cy="8" r="1.3"/><circle cx="8" cy="13" r="1.3"/><circle cx="15" cy="14" r="1.3"/><circle cx="20" cy="18" r="1.3"/><circle cx="4" cy="19" r="1.3"/><circle cx="12" cy="20" r="1.3"/>',
+    "keyframes": '<path d="M4 7h5l1.5-2h3L15 7h5v10H4z"/><path d="M7 11l2-1.5 2 1.5"/><path d="M13 11l2-1.5 2 1.5"/><path d="M7 14h10"/>',
 }
 
 

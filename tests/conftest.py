@@ -160,6 +160,7 @@ def _install_fake_vispy_canvas() -> None:
         escape_pressed = pyqtSignal()
 
         MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
+        MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
 
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
@@ -175,6 +176,13 @@ def _install_fake_vispy_canvas() -> None:
             self._sparse_landmark_total_count = 0
             self._sparse_landmark_display_count = 0
             self._sparse_map_revision = None
+            self._keyframes_visible = True
+            self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
+            self._keyframe_ids = ()
+            self._keyframe_total_count = 0
+            self._keyframe_display_count = 0
+            self._keyframe_map_revision = None
             # C3 production axes gained scene-space arrowheads.  The Qt-only
             # test double keeps lightweight visibility sentinels so UI tests
             # can validate the same presentation contract without OpenGL.
@@ -221,6 +229,12 @@ def _install_fake_vispy_canvas() -> None:
             self._sparse_landmark_total_count = 0
             self._sparse_landmark_display_count = 0
             self._sparse_map_revision = None
+            self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
+            self._keyframe_ids = ()
+            self._keyframe_total_count = 0
+            self._keyframe_display_count = 0
+            self._keyframe_map_revision = None
             # Visibility preferences intentionally survive a new live session,
             # matching the production C2/C3 canvas behavior.
             self._world_axis_length = 0.28
@@ -271,6 +285,53 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_sparse_landmarks_visible(self, visible: bool) -> None:
             self._sparse_landmarks_visible = bool(visible)
+
+        def update_keyframe_poses(
+            self,
+            matrices_reconstruction,
+            *,
+            keyframe_ids=(),
+            total_count: int | None = None,
+            revision: int | None = None,
+        ) -> None:
+            from app.reconstruction_visualization import (
+                adaptive_world_axis_length,
+                keyframe_centers_in_viewer,
+                keyframe_display_indices,
+            )
+
+            matrices = np.asarray(matrices_reconstruction, dtype=np.float64)
+            if matrices.size == 0:
+                matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or not np.isfinite(matrices).all():
+                raise ValueError("matrices_reconstruction must be a finite (N, 4, 4) array.")
+            ids = tuple(str(value).strip() for value in keyframe_ids)
+            if ids and len(ids) != matrices.shape[0]:
+                raise ValueError("keyframe_ids must match matrices_reconstruction length.")
+            indices = keyframe_display_indices(
+                matrices.shape[0], max_keyframes=self.MAX_KEYFRAME_DISPLAY_FRUSTUMS
+            )
+            self._keyframe_matrices = np.ascontiguousarray(matrices[indices])
+            self._keyframe_positions = keyframe_centers_in_viewer(self._keyframe_matrices)
+            self._keyframe_ids = tuple(ids[index] for index in indices) if ids else ()
+            self._keyframe_total_count = max(
+                int(total_count) if total_count is not None else int(matrices.shape[0]),
+                int(matrices.shape[0]),
+            )
+            self._keyframe_display_count = int(self._keyframe_matrices.shape[0])
+            self._keyframe_map_revision = None if revision is None else int(revision)
+            groups = []
+            if self._trajectory_positions:
+                groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
+            if self._sparse_landmark_positions.size:
+                groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+            if self._keyframe_positions.size:
+                groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+            if groups:
+                self._world_axis_length = adaptive_world_axis_length(np.vstack(groups))
+
+        def set_keyframes_visible(self, visible: bool) -> None:
+            self._keyframes_visible = bool(visible)
 
         def fit_scene(self) -> None:
             self.fit_calls += 1
@@ -331,6 +392,30 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def has_sparse_map(self) -> bool:
             return self._sparse_landmark_display_count > 0
+
+        @property
+        def keyframes_visible(self) -> bool:
+            return self._keyframes_visible
+
+        @property
+        def keyframe_count(self) -> int:
+            return self._keyframe_total_count
+
+        @property
+        def keyframe_display_count(self) -> int:
+            return self._keyframe_display_count
+
+        @property
+        def keyframe_map_revision(self) -> int | None:
+            return self._keyframe_map_revision
+
+        @property
+        def keyframe_ids(self):
+            return self._keyframe_ids
+
+        @property
+        def has_keyframes(self) -> bool:
+            return self._keyframe_display_count > 0
 
         @property
         def world_axis_length(self) -> float:

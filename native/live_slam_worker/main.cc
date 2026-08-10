@@ -44,11 +44,12 @@ using json = nlohmann::json;
 constexpr int kProtocolVersion = 1;
 constexpr std::size_t kMaxMessageBytes = 1024 * 1024;
 constexpr std::size_t kHeaderBytes = sizeof(std::uint64_t);
-constexpr const char* kWorkerVersion = "phase8.8c3-worker-v1";
+constexpr const char* kWorkerVersion = "phase8.8c4-worker-v1";
 constexpr const char* kPoseInputConvention = "T_camera_from_reconstruction";
 constexpr const char* kPoseOutputConvention = "T_reconstruction_from_camera";
 constexpr const char* kReconstructionFrame = "arbitrary_gauge_live_reconstruction";
 constexpr std::size_t kMaxSparseLandmarkSamples = 4096;
+constexpr std::size_t kMaxLiveKeyframePoseSamples = 256;
 constexpr std::uint64_t kSparseMapPublishIntervalFrames = 10;
 
 struct Options {
@@ -654,6 +655,40 @@ public:
                 samples.push_back({pos(0), pos(1), pos(2)});
             }
             map_snapshot["landmarks_reconstruction"] = std::move(samples);
+
+            // Publish a bounded, deterministic sample of optimized historical
+            // keyframe poses alongside the sparse landmarks.  These poses stay
+            // in the same arbitrary-gauge reconstruction frame and are used
+            // only for C4 map-structure presentation.
+            std::vector<std::shared_ptr<stella_vslam::data::keyframe>> ordered_keyframes;
+            ordered_keyframes.reserve(keyframes.size());
+            for (const auto& keyframe : keyframes) {
+                if (keyframe) ordered_keyframes.push_back(keyframe);
+            }
+            std::sort(
+                ordered_keyframes.begin(), ordered_keyframes.end(),
+                [](const auto& lhs, const auto& rhs) { return lhs->id_ < rhs->id_; });
+            json keyframe_samples = json::array();
+            const std::size_t keyframe_total = ordered_keyframes.size();
+            const std::size_t keyframe_emit =
+                std::min(keyframe_total, kMaxLiveKeyframePoseSamples);
+            for (std::size_t sample_index = 0; sample_index < keyframe_emit; ++sample_index) {
+                const std::size_t source_index = keyframe_emit <= 1
+                    ? 0
+                    : (sample_index * (keyframe_total - 1)) / (keyframe_emit - 1);
+                const auto& keyframe = ordered_keyframes[source_index];
+                const Eigen::Matrix4d T_reconstruction_from_camera = keyframe->get_pose_wc();
+                if (!T_reconstruction_from_camera.allFinite()) continue;
+                const std::uint64_t keyframe_timestamp_ns = static_cast<std::uint64_t>(
+                    std::max(0.0, keyframe->timestamp_) * 1.0e9 + 0.5);
+                keyframe_samples.push_back({
+                    {"keyframe_id", "stella-keyframe-" + std::to_string(keyframe->id_)},
+                    {"timestamp_ns", keyframe_timestamp_ns},
+                    {"pose_convention", kPoseOutputConvention},
+                    {"T_reconstruction_from_camera", matrix_to_json(T_reconstruction_from_camera)},
+                });
+            }
+            map_snapshot["keyframes_reconstruction"] = std::move(keyframe_samples);
             last_sparse_map_revision_ = map_revision_;
         }
 

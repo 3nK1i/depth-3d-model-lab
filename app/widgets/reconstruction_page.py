@@ -1,8 +1,9 @@
-"""Reconstruction workspace through Phase 8.8C2.
+"""Reconstruction workspace through Phase 8.8C4.
 
-B5 enabled primary navigation. C1 introduced the dedicated VisPy viewport; C2
-adds live camera trajectory presentation and a screen-space orientation gizmo
-while preserving the authoritative runtime, scale, and calibration contracts.
+B5 enabled primary navigation. C1 introduced the dedicated VisPy viewport, C2
+added live trajectory/orientation presentation, C3 added sparse SLAM landmarks,
+and C4 adds bounded historical keyframe/map-structure visualization while
+preserving authoritative runtime, scale, and calibration contracts.
 """
 
 from __future__ import annotations
@@ -86,6 +87,7 @@ class ReconstructionPage(QWidget):
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
+        self._pending_keyframes: tuple[np.ndarray, tuple[str, ...], int, int] | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._build_ui()
@@ -304,7 +306,7 @@ class ReconstructionPage(QWidget):
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(headline)
         detail = QLabel(
-            "World origin, grid, current camera pose, live trajectory, and sparse SLAM landmarks are active. Dense/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
+            "World origin, current camera pose, trajectory, sparse SLAM landmarks, and historical keyframe structure are active. Dense/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
         )
         detail.setObjectName("reconstructionViewportHint")
         detail.setWordWrap(True)
@@ -369,6 +371,17 @@ class ReconstructionPage(QWidget):
         landmarks_button.toggled.connect(self._reconstruction_canvas.set_sparse_landmarks_visible)
         self._viewport_tool_buttons["landmarks"] = landmarks_button
         tool_row.addWidget(landmarks_button)
+        keyframes_button = IconButton(
+            "keyframes",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide historical SLAM keyframe cameras",
+            checkable=True,
+        )
+        keyframes_button.setChecked(True)
+        keyframes_button.toggled.connect(self._reconstruction_canvas.set_keyframes_visible)
+        self._viewport_tool_buttons["keyframes"] = keyframes_button
+        tool_row.addWidget(keyframes_button)
 
         grid.addWidget(
             tools,
@@ -1065,6 +1078,31 @@ class ReconstructionPage(QWidget):
                         int(getattr(snapshot, "revision", 0)),
                     )
                     visual_update_pending = True
+            if hasattr(snapshot, "keyframes_reconstruction"):
+                raw_keyframes = tuple(getattr(snapshot, "keyframes_reconstruction"))
+                matrices: list[np.ndarray] = []
+                keyframe_ids: list[str] = []
+                for sample in raw_keyframes:
+                    matrix = getattr(sample, "T_reconstruction_from_camera", None)
+                    keyframe_id = str(getattr(sample, "keyframe_id", "")).strip()
+                    if matrix is None or not keyframe_id:
+                        continue
+                    value = np.asarray(matrix, dtype=np.float64)
+                    if value.shape == (4, 4) and np.isfinite(value).all():
+                        matrices.append(np.array(value, copy=True))
+                        keyframe_ids.append(keyframe_id)
+                keyframe_array = (
+                    np.asarray(matrices, dtype=np.float64)
+                    if matrices
+                    else np.zeros((0, 4, 4), dtype=np.float64)
+                )
+                self._pending_keyframes = (
+                    keyframe_array,
+                    tuple(keyframe_ids),
+                    int(getattr(snapshot, "keyframe_count", keyframe_array.shape[0])),
+                    int(getattr(snapshot, "revision", 0)),
+                )
+                visual_update_pending = True
         if visual_update_pending and not self._visual_pose_timer.isActive():
             self._visual_pose_timer.start()
 
@@ -1072,12 +1110,15 @@ class ReconstructionPage(QWidget):
         if self._viewport_shutdown:
             self._pending_visual_pose = None
             self._pending_sparse_landmarks = None
+            self._pending_keyframes = None
             return
         matrix = self._pending_visual_pose
         landmark_update = self._pending_sparse_landmarks
+        keyframe_update = self._pending_keyframes
         self._pending_visual_pose = None
         self._pending_sparse_landmarks = None
-        if matrix is None and landmark_update is None:
+        self._pending_keyframes = None
+        if matrix is None and landmark_update is None and keyframe_update is None:
             return
         try:
             if matrix is not None:
@@ -1087,10 +1128,24 @@ class ReconstructionPage(QWidget):
                 self._reconstruction_canvas.update_sparse_landmarks(
                     points, total_count=total_count, revision=revision
                 )
-            if self._reconstruction_canvas.has_pose or self._reconstruction_canvas.has_sparse_map:
+            if keyframe_update is not None:
+                matrices, keyframe_ids, total_count, revision = keyframe_update
+                self._reconstruction_canvas.update_keyframe_poses(
+                    matrices,
+                    keyframe_ids=keyframe_ids,
+                    total_count=total_count,
+                    revision=revision,
+                )
+            if (
+                self._reconstruction_canvas.has_pose
+                or self._reconstruction_canvas.has_sparse_map
+                or self._reconstruction_canvas.has_keyframes
+            ):
                 self._viewport_placeholder.setVisible(False)
             if not self._visualizer_fitted_once and (
-                self._reconstruction_canvas.has_pose or self._reconstruction_canvas.has_sparse_map
+                self._reconstruction_canvas.has_pose
+                or self._reconstruction_canvas.has_sparse_map
+                or self._reconstruction_canvas.has_keyframes
             ):
                 self._reconstruction_canvas.fit_scene()
                 self._visualizer_fitted_once = True
@@ -1252,6 +1307,7 @@ class ReconstructionPage(QWidget):
         if state is LiveCaptureRuntimeState.STARTING and previous_state is not LiveCaptureRuntimeState.STARTING:
             self._pending_visual_pose = None
             self._pending_sparse_landmarks = None
+            self._pending_keyframes = None
             self._visual_pose_timer.stop()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
@@ -1389,6 +1445,8 @@ class ReconstructionPage(QWidget):
         self._viewport_shutdown = True
         self._visual_pose_timer.stop()
         self._pending_visual_pose = None
+        self._pending_sparse_landmarks = None
+        self._pending_keyframes = None
         if hasattr(self, "_orientation_gizmo"):
             self._orientation_gizmo.shutdown()
         self._reconstruction_canvas.close()

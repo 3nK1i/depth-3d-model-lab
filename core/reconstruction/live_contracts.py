@@ -321,6 +321,44 @@ class LiveTrackingQuality:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveMapKeyframeSample:
+    """Bounded historical keyframe pose for live map presentation.
+
+    Keyframe samples remain in the arbitrary-gauge live reconstruction frame.
+    They are presentation/map-structure evidence only and never establish metric
+    scale, world alignment, or metrology authority.
+    """
+
+    keyframe_id: str
+    timestamp_ns: int
+    T_reconstruction_from_camera: np.ndarray
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "keyframe_id", require_nonempty(self.keyframe_id, field_name="keyframe_id")
+        )
+        object.__setattr__(
+            self, "timestamp_ns", require_timestamp_ns(self.timestamp_ns, field_name="timestamp_ns")
+        )
+        object.__setattr__(
+            self,
+            "T_reconstruction_from_camera",
+            validate_rigid_matrix(
+                self.T_reconstruction_from_camera,
+                field_name="T_reconstruction_from_camera",
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "keyframe_id": self.keyframe_id,
+            "timestamp_ns": self.timestamp_ns,
+            "pose_convention": "T_reconstruction_from_camera",
+            "T_reconstruction_from_camera": self.T_reconstruction_from_camera.tolist(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class LiveMapSnapshot:
     revision: int
     keyframe_count: int
@@ -360,6 +398,7 @@ class LiveMapGeometrySnapshot(LiveMapSnapshot):
     """
 
     landmarks_reconstruction: tuple[tuple[float, float, float], ...] = ()
+    keyframes_reconstruction: tuple[LiveMapKeyframeSample, ...] = ()
 
     def __post_init__(self) -> None:
         LiveMapSnapshot.__post_init__(self)
@@ -377,9 +416,29 @@ class LiveMapGeometrySnapshot(LiveMapSnapshot):
             )
         object.__setattr__(self, "landmarks_reconstruction", tuple(normalized))
 
+        keyframes: list[LiveMapKeyframeSample] = []
+        seen_ids: set[str] = set()
+        for index, sample in enumerate(tuple(self.keyframes_reconstruction)):
+            if not isinstance(sample, LiveMapKeyframeSample):
+                raise TypeError(f"keyframes_reconstruction[{index}] must be LiveMapKeyframeSample.")
+            if sample.keyframe_id in seen_ids:
+                raise ReconstructionValidationError(
+                    f"Duplicate live map keyframe sample: {sample.keyframe_id}."
+                )
+            seen_ids.add(sample.keyframe_id)
+            keyframes.append(sample)
+        if len(keyframes) > self.keyframe_count:
+            raise ReconstructionValidationError(
+                "Keyframe pose samples cannot exceed keyframe_count."
+            )
+        object.__setattr__(self, "keyframes_reconstruction", tuple(keyframes))
+
     def as_dict(self) -> dict[str, Any]:
         payload = LiveMapSnapshot.as_dict(self)
         payload["landmarks_reconstruction"] = [list(point) for point in self.landmarks_reconstruction]
+        payload["keyframes_reconstruction"] = [
+            sample.as_dict() for sample in self.keyframes_reconstruction
+        ]
         return payload
 
 

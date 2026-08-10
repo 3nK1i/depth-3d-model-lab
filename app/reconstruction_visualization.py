@@ -318,3 +318,61 @@ def world_axis_arrowhead_segments(axis_index: int, length: float) -> np.ndarray:
         base - perp_b * width,
     )
     return np.asarray([value for item in bases for value in (tip, item)], dtype=np.float32)
+
+def keyframe_display_indices(count: int, *, max_keyframes: int = 96) -> np.ndarray:
+    """Return deterministic bounded indices for historical keyframe frustums.
+
+    The first and last available keyframes are always retained when decimation is
+    required so the displayed map structure spans the full sampled history.
+    """
+
+    count = int(count)
+    max_keyframes = int(max_keyframes)
+    if count < 0 or max_keyframes < 2:
+        raise ValueError("count must be non-negative and max_keyframes must be >= 2.")
+    if count == 0:
+        return np.zeros((0,), dtype=np.int64)
+    if count <= max_keyframes:
+        return np.arange(count, dtype=np.int64)
+    indices = np.linspace(0, count - 1, max_keyframes).round().astype(np.int64)
+    indices[0] = 0
+    indices[-1] = count - 1
+    return indices
+
+
+def keyframe_centers_in_viewer(poses: np.ndarray) -> np.ndarray:
+    """Return viewer-space centres for an ``(N,4,4)`` keyframe pose array."""
+
+    value = np.asarray(poses, dtype=np.float64)
+    if value.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if value.ndim != 3 or value.shape[1:] != (4, 4):
+        raise ValueError("poses must have shape (N, 4, 4).")
+    centers = [camera_position_in_viewer(_validate_pose(pose)) for pose in value]
+    return np.asarray(centers, dtype=np.float32)
+
+
+def keyframe_frustum_segments_in_viewer(
+    poses: np.ndarray,
+    *,
+    depth: float,
+) -> np.ndarray:
+    """Build concatenated symbolic frustum segments for historical keyframes.
+
+    These frustums are map-structure presentation only. They intentionally use a
+    symbolic pinhole shape and therefore do not imply metric camera dimensions.
+    """
+
+    value = np.asarray(poses, dtype=np.float64)
+    if value.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if value.ndim != 3 or value.shape[1:] != (4, 4):
+        raise ValueError("poses must have shape (N, 4, 4).")
+    depth = float(depth)
+    if not np.isfinite(depth) or depth <= 0.0:
+        raise ValueError("depth must be positive and finite.")
+    segments = [
+        camera_frustum_segments_in_viewer(pose, depth=depth)
+        for pose in value
+    ]
+    return np.ascontiguousarray(np.vstack(segments), dtype=np.float32)
