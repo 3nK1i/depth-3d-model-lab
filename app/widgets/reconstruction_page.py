@@ -85,6 +85,7 @@ class ReconstructionPage(QWidget):
         self._scene_availability = ReconstructionSceneAvailability.NONE
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
+        self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._build_ui()
@@ -303,7 +304,7 @@ class ReconstructionPage(QWidget):
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(headline)
         detail = QLabel(
-            "World origin, grid, current camera pose, and live trajectory are active. Sparse/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
+            "World origin, grid, current camera pose, live trajectory, and sparse SLAM landmarks are active. Dense/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
         )
         detail.setObjectName("reconstructionViewportHint")
         detail.setWordWrap(True)
@@ -357,6 +358,17 @@ class ReconstructionPage(QWidget):
         trajectory_button.toggled.connect(self._reconstruction_canvas.set_trajectory_visible)
         self._viewport_tool_buttons["trajectory"] = trajectory_button
         tool_row.addWidget(trajectory_button)
+        landmarks_button = IconButton(
+            "landmarks",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide live sparse SLAM landmarks",
+            checkable=True,
+        )
+        landmarks_button.setChecked(True)
+        landmarks_button.toggled.connect(self._reconstruction_canvas.set_sparse_landmarks_visible)
+        self._viewport_tool_buttons["landmarks"] = landmarks_button
+        tool_row.addWidget(landmarks_button)
 
         grid.addWidget(
             tools,
@@ -1017,6 +1029,7 @@ class ReconstructionPage(QWidget):
     def set_live_observation(self, observation: object) -> None:
         if self._viewport_shutdown:
             return
+        visual_update_pending = False
         pose = getattr(observation, "pose", None)
         if pose is not None:
             self._live_pose_count += 1
@@ -1027,10 +1040,10 @@ class ReconstructionPage(QWidget):
                     # Worker-thread observations are already queued onto the Qt/UI
                     # thread by the controller. C1 additionally coalesces visual
                     # updates so a high-rate live stream cannot force one GL update
-                    # per observation.
+                    # per observation. C3 coalesces sparse-map samples on the same
+                    # presentation timer.
                     self._pending_visual_pose = np.array(value, copy=True)
-                    if not self._visual_pose_timer.isActive():
-                        self._visual_pose_timer.start()
+                    visual_update_pending = True
         if bool(getattr(observation, "is_keyframe", False)):
             self._live_keyframe_count += 1
         snapshot = getattr(observation, "map_snapshot", None)
@@ -1040,19 +1053,45 @@ class ReconstructionPage(QWidget):
                 int(getattr(snapshot, "keyframe_count", 0)),
             )
             self._live_landmark_count = int(getattr(snapshot, "landmark_count", 0))
+            if hasattr(snapshot, "landmarks_reconstruction"):
+                raw_points = getattr(snapshot, "landmarks_reconstruction")
+                points = np.asarray(raw_points, dtype=np.float64)
+                if points.size == 0:
+                    points = np.zeros((0, 3), dtype=np.float64)
+                if points.ndim == 2 and points.shape[1:] == (3,) and np.isfinite(points).all():
+                    self._pending_sparse_landmarks = (
+                        np.array(points, copy=True),
+                        int(getattr(snapshot, "landmark_count", points.shape[0])),
+                        int(getattr(snapshot, "revision", 0)),
+                    )
+                    visual_update_pending = True
+        if visual_update_pending and not self._visual_pose_timer.isActive():
+            self._visual_pose_timer.start()
 
     def _flush_pending_visual_pose(self) -> None:
         if self._viewport_shutdown:
             self._pending_visual_pose = None
+            self._pending_sparse_landmarks = None
             return
         matrix = self._pending_visual_pose
+        landmark_update = self._pending_sparse_landmarks
         self._pending_visual_pose = None
-        if matrix is None:
+        self._pending_sparse_landmarks = None
+        if matrix is None and landmark_update is None:
             return
         try:
-            self._reconstruction_canvas.update_live_pose(matrix)
-            self._viewport_placeholder.setVisible(False)
-            if not self._visualizer_fitted_once:
+            if matrix is not None:
+                self._reconstruction_canvas.update_live_pose(matrix)
+            if landmark_update is not None:
+                points, total_count, revision = landmark_update
+                self._reconstruction_canvas.update_sparse_landmarks(
+                    points, total_count=total_count, revision=revision
+                )
+            if self._reconstruction_canvas.has_pose or self._reconstruction_canvas.has_sparse_map:
+                self._viewport_placeholder.setVisible(False)
+            if not self._visualizer_fitted_once and (
+                self._reconstruction_canvas.has_pose or self._reconstruction_canvas.has_sparse_map
+            ):
                 self._reconstruction_canvas.fit_scene()
                 self._visualizer_fitted_once = True
             self._refresh_viewport_state()
@@ -1212,6 +1251,7 @@ class ReconstructionPage(QWidget):
         self._live_state = state
         if state is LiveCaptureRuntimeState.STARTING and previous_state is not LiveCaptureRuntimeState.STARTING:
             self._pending_visual_pose = None
+            self._pending_sparse_landmarks = None
             self._visual_pose_timer.stop()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)

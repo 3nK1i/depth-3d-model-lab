@@ -350,6 +350,40 @@ class LiveMapSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveMapGeometrySnapshot(LiveMapSnapshot):
+    """Optional sparse-map sample attached to a live map-count snapshot.
+
+    The base :class:`LiveMapSnapshot` contract remains unchanged for backward
+    compatibility. Native backends may return this subclass when bounded sparse
+    landmark coordinates are available for presentation. Coordinates stay in the
+    arbitrary-gauge reconstruction frame and therefore carry no metric authority.
+    """
+
+    landmarks_reconstruction: tuple[tuple[float, float, float], ...] = ()
+
+    def __post_init__(self) -> None:
+        LiveMapSnapshot.__post_init__(self)
+        normalized: list[tuple[float, float, float]] = []
+        for index, point in enumerate(tuple(self.landmarks_reconstruction)):
+            value = np.asarray(point, dtype=np.float64)
+            if value.shape != (3,) or not np.isfinite(value).all():
+                raise ReconstructionValidationError(
+                    f"landmarks_reconstruction[{index}] must be a finite 3-vector."
+                )
+            normalized.append((float(value[0]), float(value[1]), float(value[2])))
+        if len(normalized) > self.landmark_count:
+            raise ReconstructionValidationError(
+                "Sparse landmark samples cannot exceed landmark_count."
+            )
+        object.__setattr__(self, "landmarks_reconstruction", tuple(normalized))
+
+    def as_dict(self) -> dict[str, Any]:
+        payload = LiveMapSnapshot.as_dict(self)
+        payload["landmarks_reconstruction"] = [list(point) for point in self.landmarks_reconstruction]
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class LiveSlamObservation:
     session_id: str
     frame_id: str

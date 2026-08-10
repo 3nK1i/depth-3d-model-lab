@@ -377,15 +377,62 @@ def parse_live_observation_message(
     raw_map = raw.get("map_snapshot")
     if raw_map is not None:
         map_payload = _payload_mapping(raw_map, "observation.map_snapshot")
-        map_snapshot = LiveMapSnapshot(
-            revision=_payload_int(map_payload.get("revision"), "map.revision"),
-            keyframe_count=_payload_int(
-                map_payload.get("keyframe_count"), "map.keyframe_count"
-            ),
-            landmark_count=_payload_int(
-                map_payload.get("landmark_count"), "map.landmark_count"
-            ),
+        revision = _payload_int(map_payload.get("revision"), "map.revision")
+        keyframe_count = _payload_int(
+            map_payload.get("keyframe_count"), "map.keyframe_count"
         )
+        landmark_count = _payload_int(
+            map_payload.get("landmark_count"), "map.landmark_count"
+        )
+        raw_landmarks = map_payload.get("landmarks_reconstruction")
+        if raw_landmarks is None:
+            map_snapshot = LiveMapSnapshot(
+                revision=revision,
+                keyframe_count=keyframe_count,
+                landmark_count=landmark_count,
+            )
+        else:
+            from core.reconstruction.live_contracts import LiveMapGeometrySnapshot
+
+            # Empty JSON arrays are normalized through the generic metadata layer as
+            # an empty tuple.  On conversion back to Python, that representation is
+            # ambiguous with an empty JSON object and is reconstructed as ``{}``.
+            # This field is schema-defined as an array, so accept only that empty
+            # mapping sentinel as an empty sparse-landmark sample.  Non-empty
+            # mappings remain invalid and are rejected below.
+            if isinstance(raw_landmarks, Mapping) and not raw_landmarks:
+                raw_landmarks = ()
+            if not isinstance(raw_landmarks, (list, tuple)):
+                raise LiveSlamProtocolError(
+                    "observation.map_snapshot.landmarks_reconstruction must be a sequence."
+                )
+            if len(raw_landmarks) > 16_384:
+                raise LiveSlamProtocolError(
+                    "observation.map_snapshot contains too many sparse landmark samples."
+                )
+            points: list[tuple[float, float, float]] = []
+            for index, raw_point in enumerate(raw_landmarks):
+                if not isinstance(raw_point, (list, tuple)) or len(raw_point) != 3:
+                    raise LiveSlamProtocolError(
+                        f"map landmark sample {index} must contain exactly three coordinates."
+                    )
+                try:
+                    point = tuple(float(value) for value in raw_point)
+                except (TypeError, ValueError) as exc:
+                    raise LiveSlamProtocolError(
+                        f"map landmark sample {index} contains non-numeric coordinates."
+                    ) from exc
+                if not all(np.isfinite(value) for value in point):
+                    raise LiveSlamProtocolError(
+                        f"map landmark sample {index} contains non-finite coordinates."
+                    )
+                points.append(point)
+            map_snapshot = LiveMapGeometrySnapshot(
+                revision=revision,
+                keyframe_count=keyframe_count,
+                landmark_count=landmark_count,
+                landmarks_reconstruction=tuple(points),
+            )
 
     is_keyframe = raw.get("is_keyframe", False)
     if not isinstance(is_keyframe, bool):

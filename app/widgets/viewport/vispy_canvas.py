@@ -390,6 +390,7 @@ class ReconstructionCanvas(QObject):
 
     MAX_TRAJECTORY_POSES = 20_000
     MAX_TRAJECTORY_DISPLAY_POINTS = 4_096
+    MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -453,6 +454,19 @@ class ReconstructionCanvas(QObject):
             edge_width=0,
         )
         self._trajectory_start.visible = True
+        self._sparse_landmarks = scene.visuals.Markers(parent=self._view.scene)
+        self._sparse_landmarks.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.72, 0.82, 0.90, 0.82),
+            size=2.6,
+            edge_width=0,
+        )
+        self._sparse_landmarks_visible = True
+        self._sparse_landmarks.visible = True
+        self._sparse_landmark_positions = np.zeros((0, 3), dtype=np.float32)
+        self._sparse_landmark_total_count = 0
+        self._sparse_landmark_display_count = 0
+        self._sparse_map_revision: int | None = None
         self._trajectory_positions: list[np.ndarray] = []
         self._trajectory_display_count = 0
         self._current_camera_position: np.ndarray | None = None
@@ -534,6 +548,11 @@ class ReconstructionCanvas(QObject):
         self._trajectory_line.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
         self._trajectory_start.set_data(pos=np.zeros((0, 3), dtype=np.float32))
         self._trajectory_display_count = 0
+        self._sparse_landmarks.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._sparse_landmark_positions = np.zeros((0, 3), dtype=np.float32)
+        self._sparse_landmark_total_count = 0
+        self._sparse_landmark_display_count = 0
+        self._sparse_map_revision = None
         self._world_axis_length = 0.28
         self._update_world_axes_visuals()
         self._current_camera_position = None
@@ -546,6 +565,50 @@ class ReconstructionCanvas(QObject):
         self._trajectory_start.visible = self._trajectory_visible
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
+        self._canvas.update()
+
+    def update_sparse_landmarks(
+        self,
+        points_reconstruction: np.ndarray,
+        *,
+        total_count: int | None = None,
+        revision: int | None = None,
+    ) -> None:
+        from app.reconstruction_visualization import (
+            sparse_landmark_display_indices,
+            sparse_landmarks_to_viewer,
+        )
+
+        points = np.asarray(points_reconstruction, dtype=np.float64)
+        if points.size == 0:
+            points = np.zeros((0, 3), dtype=np.float64)
+        if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+            raise ValueError("points_reconstruction must be a finite (N, 3) array.")
+        viewer = sparse_landmarks_to_viewer(points)
+        indices = sparse_landmark_display_indices(
+            viewer.shape[0], max_points=self.MAX_SPARSE_LANDMARK_DISPLAY_POINTS
+        )
+        display = np.ascontiguousarray(viewer[indices])
+        self._sparse_landmark_positions = display
+        self._sparse_landmark_total_count = max(
+            int(total_count) if total_count is not None else int(points.shape[0]),
+            int(points.shape[0]),
+        )
+        self._sparse_landmark_display_count = int(display.shape[0])
+        self._sparse_map_revision = None if revision is None else int(revision)
+        self._sparse_landmarks.set_data(
+            pos=display,
+            face_color=(0.72, 0.82, 0.90, 0.82),
+            size=2.6,
+            edge_width=0,
+        )
+        self._sparse_landmarks.visible = self._sparse_landmarks_visible
+        self._refresh_world_axis_scale()
+        self._canvas.update()
+
+    def set_sparse_landmarks_visible(self, visible: bool) -> None:
+        self._sparse_landmarks_visible = bool(visible)
+        self._sparse_landmarks.visible = self._sparse_landmarks_visible
         self._canvas.update()
 
     def _refresh_trajectory_visual(self) -> None:
@@ -573,11 +636,12 @@ class ReconstructionCanvas(QObject):
     def _refresh_world_axis_scale(self) -> None:
         from app.reconstruction_visualization import adaptive_world_axis_length
 
-        points = (
-            np.asarray(self._trajectory_positions, dtype=np.float64)
-            if self._trajectory_positions
-            else None
-        )
+        groups: list[np.ndarray] = []
+        if self._trajectory_positions:
+            groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
+        if self._sparse_landmark_positions.size:
+            groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+        points = np.vstack(groups) if groups else None
         target = adaptive_world_axis_length(points)
         if abs(target - self._world_axis_length) <= max(0.01, self._world_axis_length * 0.12):
             return
@@ -592,6 +656,15 @@ class ReconstructionCanvas(QObject):
             connect="segments", color=(0.30, 0.72, 0.48, 0.72), width=1.25, parent=self._view.scene
         )
         axis_z = scene.visuals.Line(
+            connect="segments", color=(0.34, 0.52, 0.90, 0.72), width=1.25, parent=self._view.scene
+        )
+        self._axis_x_head = scene.visuals.Line(
+            connect="segments", color=(0.84, 0.28, 0.34, 0.72), width=1.25, parent=self._view.scene
+        )
+        self._axis_y_head = scene.visuals.Line(
+            connect="segments", color=(0.30, 0.72, 0.48, 0.72), width=1.25, parent=self._view.scene
+        )
+        self._axis_z_head = scene.visuals.Line(
             connect="segments", color=(0.34, 0.52, 0.90, 0.72), width=1.25, parent=self._view.scene
         )
         origin = scene.visuals.Markers(parent=self._view.scene)
@@ -617,12 +690,26 @@ class ReconstructionCanvas(QObject):
         self._axis_z.set_data(
             pos=np.asarray([origin, [0.0, 0.0, length]], dtype=np.float32), connect="segments"
         )
-        for visual in (self._axis_x, self._axis_y, self._axis_z, self._axis_origin):
+        from app.reconstruction_visualization import world_axis_arrowhead_segments
+
+        self._axis_x_head.set_data(pos=world_axis_arrowhead_segments(0, length), connect="segments")
+        self._axis_y_head.set_data(pos=world_axis_arrowhead_segments(1, length), connect="segments")
+        self._axis_z_head.set_data(pos=world_axis_arrowhead_segments(2, length), connect="segments")
+        for visual in (
+            self._axis_x, self._axis_y, self._axis_z,
+            self._axis_x_head, self._axis_y_head, self._axis_z_head,
+            self._axis_origin,
+        ):
             visual.visible = self._axes_visible
 
     def fit_scene(self) -> None:
+        groups: list[np.ndarray] = []
         if self._trajectory_positions:
-            points = np.asarray(self._trajectory_positions, dtype=np.float64)
+            groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
+        if self._sparse_landmark_positions.size:
+            groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+        if groups:
+            points = np.vstack(groups)
             center = points.mean(axis=0)
             span = np.ptp(points, axis=0)
             radius = max(float(np.linalg.norm(span)) * 0.6, 0.5)
@@ -668,7 +755,11 @@ class ReconstructionCanvas(QObject):
 
     def set_axes_visible(self, visible: bool) -> None:
         self._axes_visible = bool(visible)
-        for visual in (self._axis_x, self._axis_y, self._axis_z, self._axis_origin):
+        for visual in (
+            self._axis_x, self._axis_y, self._axis_z,
+            self._axis_x_head, self._axis_y_head, self._axis_z_head,
+            self._axis_origin,
+        ):
             visual.visible = self._axes_visible
         self._canvas.update()
 
@@ -709,6 +800,26 @@ class ReconstructionCanvas(QObject):
     @property
     def trajectory_display_count(self) -> int:
         return self._trajectory_display_count
+
+    @property
+    def sparse_landmarks_visible(self) -> bool:
+        return self._sparse_landmarks_visible
+
+    @property
+    def sparse_landmark_count(self) -> int:
+        return self._sparse_landmark_total_count
+
+    @property
+    def sparse_landmark_display_count(self) -> int:
+        return self._sparse_landmark_display_count
+
+    @property
+    def sparse_map_revision(self) -> int | None:
+        return self._sparse_map_revision
+
+    @property
+    def has_sparse_map(self) -> bool:
+        return self._sparse_landmark_display_count > 0
 
     @property
     def world_axis_length(self) -> float:

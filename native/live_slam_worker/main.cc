@@ -44,10 +44,12 @@ using json = nlohmann::json;
 constexpr int kProtocolVersion = 1;
 constexpr std::size_t kMaxMessageBytes = 1024 * 1024;
 constexpr std::size_t kHeaderBytes = sizeof(std::uint64_t);
-constexpr const char* kWorkerVersion = "phase8.5b-worker-v2";
+constexpr const char* kWorkerVersion = "phase8.8c3-worker-v1";
 constexpr const char* kPoseInputConvention = "T_camera_from_reconstruction";
 constexpr const char* kPoseOutputConvention = "T_reconstruction_from_camera";
 constexpr const char* kReconstructionFrame = "arbitrary_gauge_live_reconstruction";
+constexpr std::size_t kMaxSparseLandmarkSamples = 4096;
+constexpr std::uint64_t kSparseMapPublishIntervalFrames = 10;
 
 struct Options {
     std::string socket_path;
@@ -477,6 +479,7 @@ public:
         previous_keyframes_ = 0;
         previous_landmarks_ = 0;
         map_revision_ = 0;
+        last_sparse_map_revision_ = static_cast<std::uint64_t>(-1);
         optimized_pose_revision_ = 1;
         accepted_loop_closure_requests_ = 0;
         relocalization_count_ = 0;
@@ -629,6 +632,31 @@ public:
             }
             if (have_id) keyframe_id = "stella-keyframe-" + std::to_string(newest_id);
         }
+        json map_snapshot = {
+            {"revision", map_revision_},
+            {"keyframe_count", keyframe_count},
+            {"landmark_count", landmark_count},
+        };
+        const bool publish_sparse_map =
+            map_revision_ != last_sparse_map_revision_ ||
+            sequence_index % kSparseMapPublishIntervalFrames == 0;
+        if (publish_sparse_map) {
+            json samples = json::array();
+            const std::size_t total = landmarks.size();
+            const std::size_t stride = total > kMaxSparseLandmarkSamples
+                ? (total + kMaxSparseLandmarkSamples - 1) / kMaxSparseLandmarkSamples
+                : 1;
+            for (std::size_t index = 0; index < total && samples.size() < kMaxSparseLandmarkSamples; index += stride) {
+                const auto& landmark = landmarks[index];
+                if (!landmark) continue;
+                const auto pos = landmark->get_pos_in_world();
+                if (!std::isfinite(pos(0)) || !std::isfinite(pos(1)) || !std::isfinite(pos(2))) continue;
+                samples.push_back({pos(0), pos(1), pos(2)});
+            }
+            map_snapshot["landmarks_reconstruction"] = std::move(samples);
+            last_sparse_map_revision_ = map_revision_;
+        }
+
         json observation = {
             {"session_id", options_.session_id},
             {"frame_id", frame_id},
@@ -645,11 +673,7 @@ public:
             {"pose", pose},
             {"is_keyframe", is_keyframe},
             {"keyframe_id", keyframe_id},
-            {"map_snapshot", {
-                {"revision", map_revision_},
-                {"keyframe_count", keyframe_count},
-                {"landmark_count", landmark_count},
-            }},
+            {"map_snapshot", map_snapshot},
         };
         channel_.send_message("observation", {{"observation", observation}});
     }
@@ -811,6 +835,7 @@ private:
     unsigned int previous_keyframes_ = 0;
     unsigned int previous_landmarks_ = 0;
     std::uint64_t map_revision_ = 0;
+    std::uint64_t last_sparse_map_revision_ = static_cast<std::uint64_t>(-1);
     std::uint64_t optimized_pose_revision_ = 1;
     std::uint64_t accepted_loop_closure_requests_ = 0;
     std::uint64_t relocalization_count_ = 0;
@@ -839,6 +864,8 @@ int run_worker(const Options& options) {
             {"pose_output_convention", kPoseOutputConvention},
             {"pixel_transport", "posix_shared_memory"},
             {"control_transport", "af_unix_json_lines"},
+            {"sparse_landmark_samples_supported", true},
+            {"sparse_landmark_sample_cap", kMaxSparseLandmarkSamples},
         });
     channel.send_message(
         "ready",
@@ -847,6 +874,8 @@ int run_worker(const Options& options) {
             {"loop_closure_supported_in_phase8_4", false},
             {"loop_closure_supported_in_phase8_5", true},
             {"global_optimization_supported_in_phase8_5", true},
+            {"sparse_landmark_samples_supported", true},
+            {"sparse_landmark_sample_cap", kMaxSparseLandmarkSamples},
             {"default_loop_closure_enabled", false},
             {"default_global_optimization_enabled", false},
             {"metric_scale", false},

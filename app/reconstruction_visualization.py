@@ -262,3 +262,59 @@ def trajectory_display_indices(count: int, *, max_points: int = 4096) -> np.ndar
         indices[0] = 0
         indices[-1] = count - 1
     return indices
+
+
+def sparse_landmarks_to_viewer(points: np.ndarray) -> np.ndarray:
+    """Convert sparse live-map landmarks into the viewer's Z-up frame.
+
+    Sparse SLAM landmarks remain arbitrary-gauge reconstruction geometry. This
+    helper performs presentation-only axis conversion and does not establish
+    scale or world alignment.
+    """
+
+    return reconstruction_points_to_viewer(points).astype(np.float32, copy=False)
+
+
+def sparse_landmark_display_indices(count: int, *, max_points: int = 8192) -> np.ndarray:
+    """Return deterministic bounded indices for unordered sparse-map rendering."""
+
+    count = int(count)
+    max_points = int(max_points)
+    if count < 0 or max_points < 1:
+        raise ValueError("count must be non-negative and max_points must be >= 1.")
+    if count == 0:
+        return np.zeros((0,), dtype=np.int64)
+    if count <= max_points:
+        return np.arange(count, dtype=np.int64)
+    return np.linspace(0, count - 1, max_points).round().astype(np.int64)
+
+
+def world_axis_arrowhead_segments(axis_index: int, length: float) -> np.ndarray:
+    """Return four restrained 3-D arrowhead rays at one world-axis tip.
+
+    The geometry mirrors the arrowhead visual language already used by the
+    Live-3D viewport while remaining a true scene-space world-origin visual.
+    Output is suitable for ``Line(connect='segments')``.
+    """
+
+    axis_index = int(axis_index)
+    length = float(length)
+    if axis_index not in (0, 1, 2):
+        raise ValueError("axis_index must be 0, 1 or 2.")
+    if not np.isfinite(length) or length <= 0.0:
+        raise ValueError("length must be positive and finite.")
+
+    axis = np.eye(3, dtype=np.float64)[axis_index]
+    other = [index for index in (0, 1, 2) if index != axis_index]
+    perp_a = np.eye(3, dtype=np.float64)[other[0]]
+    perp_b = np.eye(3, dtype=np.float64)[other[1]]
+    tip = axis * length
+    base = tip - axis * (length * 0.17)
+    width = length * 0.065
+    bases = (
+        base + perp_a * width,
+        base - perp_a * width,
+        base + perp_b * width,
+        base - perp_b * width,
+    )
+    return np.asarray([value for item in bases for value in (tip, item)], dtype=np.float32)

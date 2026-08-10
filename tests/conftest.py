@@ -159,6 +159,8 @@ def _install_fake_vispy_canvas() -> None:
         interaction_ended = pyqtSignal()
         escape_pressed = pyqtSignal()
 
+        MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
+
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
             self._native = _NativeWidget(self)
@@ -168,6 +170,17 @@ def _install_fake_vispy_canvas() -> None:
             self._trajectory_visible = True
             self._trajectory_positions = []
             self._trajectory_display_count = 0
+            self._sparse_landmarks_visible = True
+            self._sparse_landmark_positions = np.zeros((0, 3), dtype=np.float32)
+            self._sparse_landmark_total_count = 0
+            self._sparse_landmark_display_count = 0
+            self._sparse_map_revision = None
+            # C3 production axes gained scene-space arrowheads.  The Qt-only
+            # test double keeps lightweight visibility sentinels so UI tests
+            # can validate the same presentation contract without OpenGL.
+            self._axis_x_head = types.SimpleNamespace(visible=True)
+            self._axis_y_head = types.SimpleNamespace(visible=True)
+            self._axis_z_head = types.SimpleNamespace(visible=True)
             self._world_axis_length = 0.28
             self._current_camera_position = None
             self._has_pose = False
@@ -204,12 +217,60 @@ def _install_fake_vispy_canvas() -> None:
         def clear_live_state(self) -> None:
             self._trajectory_positions.clear()
             self._trajectory_display_count = 0
+            self._sparse_landmark_positions = np.zeros((0, 3), dtype=np.float32)
+            self._sparse_landmark_total_count = 0
+            self._sparse_landmark_display_count = 0
+            self._sparse_map_revision = None
+            # Visibility preferences intentionally survive a new live session,
+            # matching the production C2/C3 canvas behavior.
             self._world_axis_length = 0.28
             self._current_camera_position = None
             self._has_pose = False
 
         def set_trajectory_visible(self, visible: bool) -> None:
             self._trajectory_visible = bool(visible)
+
+        def update_sparse_landmarks(
+            self,
+            points_reconstruction,
+            *,
+            total_count: int | None = None,
+            revision: int | None = None,
+        ) -> None:
+            from app.reconstruction_visualization import (
+                adaptive_world_axis_length,
+                sparse_landmark_display_indices,
+                sparse_landmarks_to_viewer,
+            )
+
+            points = np.asarray(points_reconstruction, dtype=np.float64)
+            if points.size == 0:
+                points = np.zeros((0, 3), dtype=np.float64)
+            if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+                raise ValueError("points_reconstruction must be a finite (N, 3) array.")
+            viewer = sparse_landmarks_to_viewer(points)
+            indices = sparse_landmark_display_indices(
+                viewer.shape[0], max_points=self.MAX_SPARSE_LANDMARK_DISPLAY_POINTS
+            )
+            display = np.ascontiguousarray(viewer[indices])
+            self._sparse_landmark_positions = display
+            self._sparse_landmark_total_count = max(
+                int(total_count) if total_count is not None else int(points.shape[0]),
+                int(points.shape[0]),
+            )
+            self._sparse_landmark_display_count = int(display.shape[0])
+            self._sparse_map_revision = None if revision is None else int(revision)
+
+            groups = []
+            if self._trajectory_positions:
+                groups.append(np.asarray(self._trajectory_positions, dtype=np.float64))
+            if self._sparse_landmark_positions.size:
+                groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
+            if groups:
+                self._world_axis_length = adaptive_world_axis_length(np.vstack(groups))
+
+        def set_sparse_landmarks_visible(self, visible: bool) -> None:
+            self._sparse_landmarks_visible = bool(visible)
 
         def fit_scene(self) -> None:
             self.fit_calls += 1
@@ -231,6 +292,9 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_axes_visible(self, visible: bool) -> None:
             self._axes_visible = bool(visible)
+            self._axis_x_head.visible = self._axes_visible
+            self._axis_y_head.visible = self._axes_visible
+            self._axis_z_head.visible = self._axes_visible
 
         @property
         def interaction_mode(self) -> str:
@@ -247,6 +311,26 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def trajectory_display_count(self) -> int:
             return self._trajectory_display_count
+
+        @property
+        def sparse_landmarks_visible(self) -> bool:
+            return self._sparse_landmarks_visible
+
+        @property
+        def sparse_landmark_count(self) -> int:
+            return self._sparse_landmark_total_count
+
+        @property
+        def sparse_landmark_display_count(self) -> int:
+            return self._sparse_landmark_display_count
+
+        @property
+        def sparse_map_revision(self) -> int | None:
+            return self._sparse_map_revision
+
+        @property
+        def has_sparse_map(self) -> bool:
+            return self._sparse_landmark_display_count > 0
 
         @property
         def world_axis_length(self) -> float:
