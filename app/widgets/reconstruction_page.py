@@ -1,15 +1,15 @@
-"""Dormant Reconstruction workspace through Phase 8.8B3.
+"""Dormant Reconstruction workspace through Phase 8.8B4.
 
-B3 activates state-driven runtime controls over the already-hardened live/offline
-controller bridges. Primary navigation remains locked; selecting a source still
-never starts a backend.
+B4 adds truthful stage/progress/elapsed/telemetry presentation on top of the
+authoritative B3 live/offline runtime controls. Primary navigation remains locked.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from time import monotonic
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QProgressBar,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -28,6 +29,14 @@ from app.reconstruction_controller import (
     ReconstructionWorkflow,
 )
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
+from app.reconstruction_status import (
+    ReconstructionStatusPresentation,
+    format_elapsed_seconds,
+    format_live_telemetry,
+    present_live_state,
+    present_offline_event,
+    present_offline_state,
+)
 from app.theme import (
     PAGE_MARGIN_BOTTOM,
     PAGE_MARGIN_H,
@@ -58,11 +67,27 @@ class ReconstructionPage(QWidget):
         self._live_camera_mode: str | None = None
         self._last_live_source_identity: tuple[str, str, str] | None = None
         self._last_workflow = ReconstructionWorkflow.NONE
+        self._runtime_started_at: float | None = None
+        self._runtime_elapsed_frozen = 0.0
+        self._active_runtime_kind: str | None = None
+        self._live_pose_count = 0
+        self._live_keyframe_count = 0
+        self._live_landmark_count: int | None = None
+        self._last_runtime_error = ""
         self._build_ui()
+        self._telemetry_timer = QTimer(self)
+        self._telemetry_timer.setInterval(500)
+        self._telemetry_timer.timeout.connect(self._refresh_runtime_telemetry)
         self.set_live_state(LiveCaptureRuntimeState.IDLE)
         self.set_offline_state(OfflineReconstructionRunState.IDLE)
         self.set_scene_availability(ReconstructionSceneAvailability.NONE)
         self.set_checkpoint(None, "")
+        self._apply_runtime_presentation(
+            ReconstructionStatusPresentation(
+                "Waiting for source",
+                "Choose a Reconstruction workflow to begin.",
+            )
+        )
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -163,9 +188,36 @@ class ReconstructionPage(QWidget):
         self._live_value = self._status_value()
         self._offline_value = self._status_value()
         self._scene_value = self._status_value()
+        self._stage_value = self._status_value()
+        self._elapsed_value = self._value_label("—")
         self._add_status_row(layout, "Live SLAM", self._live_value)
         self._add_status_row(layout, "Offline", self._offline_value)
         self._add_status_row(layout, "Scene", self._scene_value)
+        self._add_status_row(layout, "Stage", self._stage_value)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setObjectName("reconstructionProgressBar")
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFormat("Waiting")
+        self._progress_bar.setTextVisible(True)
+        self._progress_bar.setToolTip(
+            "Stage-local progress when the backend exposes a meaningful finite fraction. "
+            "Live tracking is intentionally shown as ongoing activity rather than a fake percentage."
+        )
+        progress_row = QHBoxLayout()
+        progress_row.setSpacing(8)
+        progress_row.addWidget(self._progress_bar, stretch=1)
+        self._elapsed_value.setMinimumWidth(42)
+        self._elapsed_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        progress_row.addWidget(self._elapsed_value)
+        layout.addLayout(progress_row)
+
+        self._runtime_message = QLabel("Choose a Reconstruction workflow to begin.")
+        self._runtime_message.setObjectName("reconstructionRuntimeMessage")
+        self._runtime_message.setWordWrap(True)
+        self._runtime_message.setProperty("statusKind", "neutral")
+        layout.addWidget(self._runtime_message)
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
@@ -260,9 +312,11 @@ class ReconstructionPage(QWidget):
         self._session_value = self._settings_value("No active session")
         self._checkpoint_value = self._settings_value("No checkpoint")
         self._scene_manifest_value = self._settings_value("No persistent scene")
+        self._telemetry_value = self._settings_value("No runtime telemetry")
         self._add_status_row(session_layout, "Session", self._session_value)
         self._add_status_row(session_layout, "Scene", self._scene_manifest_value)
         self._add_status_row(session_layout, "Checkpoint", self._checkpoint_value)
+        self._add_status_row(session_layout, "Telemetry", self._telemetry_value)
         layout.addWidget(session)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
@@ -344,7 +398,10 @@ class ReconstructionPage(QWidget):
         self._controller = controller
 
         controller.live_state_changed.connect(self.set_live_state)
+        controller.live_observation_ready.connect(self.set_live_observation)
         controller.offline_state_changed.connect(self.set_offline_state)
+        controller.offline_event_received.connect(self.set_offline_event)
+        controller.offline_result_ready.connect(self._on_offline_result_ready)
         controller.offline_run_finished.connect(self._on_offline_run_finished)
         controller.source_selection_changed.connect(self.set_source_selection)
         controller.scene_availability_changed.connect(self.set_scene_availability)
@@ -361,6 +418,8 @@ class ReconstructionPage(QWidget):
         scene = controller.persistent_scene
         self.set_persistent_scene(scene, str(controller.persistent_scene_manifest or ""))
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
+        self._telemetry_timer.start()
+        self._refresh_runtime_telemetry()
 
     def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
         if not isinstance(selection, ReconstructionSourceSelection):
@@ -420,6 +479,40 @@ class ReconstructionPage(QWidget):
             self._runtime_prerequisite_value.setText("Choose a workflow")
             self._runtime_prerequisite_value.setToolTip("")
             self._refresh_camera_authority()
+        preserve_live_terminal = (
+            workflow is ReconstructionWorkflow.LIVE_SOURCE
+            and self._live_state in {
+                LiveCaptureRuntimeState.STOPPED,
+                LiveCaptureRuntimeState.FAILED,
+            }
+        )
+        if (
+            (self._controller is None or not self._controller.is_active)
+            and not preserve_live_terminal
+        ):
+            if selection.ready:
+                self._apply_runtime_presentation(
+                    ReconstructionStatusPresentation(
+                        "Ready to start",
+                        "Source validated. Start is available when application resource guards are clear.",
+                        "ready",
+                    )
+                )
+            elif workflow is ReconstructionWorkflow.NONE:
+                self._apply_runtime_presentation(
+                    ReconstructionStatusPresentation(
+                        "Waiting for source",
+                        "Choose a Reconstruction workflow to begin.",
+                    )
+                )
+            else:
+                self._apply_runtime_presentation(
+                    ReconstructionStatusPresentation(
+                        "Source needs attention",
+                        selection.detail,
+                        "warning",
+                    )
+                )
         self._refresh_runtime_controls()
 
     def _select_live_source(self) -> None:
@@ -477,6 +570,7 @@ class ReconstructionPage(QWidget):
             self.set_error(selection.detail or "Select a ready reconstruction source first.")
             self._refresh_runtime_controls()
             return
+        self._prepare_runtime_presentation_for_start(selection.workflow)
         try:
             if selection.workflow is ReconstructionWorkflow.LIVE_SOURCE:
                 prepared = self._prepare_live_camera_for_start()
@@ -684,7 +778,159 @@ class ReconstructionPage(QWidget):
         finally:
             self._refresh_runtime_controls()
 
+    def _prepare_runtime_presentation_for_start(self, workflow: ReconstructionWorkflow) -> None:
+        self._runtime_started_at = None
+        self._runtime_elapsed_frozen = 0.0
+        self._active_runtime_kind = None
+        self._last_runtime_error = ""
+        if workflow is ReconstructionWorkflow.LIVE_SOURCE:
+            self._live_pose_count = 0
+            self._live_keyframe_count = 0
+            self._live_landmark_count = None
+            self._telemetry_value.setText("Waiting for live telemetry")
+            self._apply_runtime_presentation(
+                ReconstructionStatusPresentation(
+                    "Preparing live session",
+                    "Validating camera geometry and live reconstruction prerequisites.",
+                    "running",
+                    indeterminate=True,
+                )
+            )
+        else:
+            self._telemetry_value.setText("Waiting for offline telemetry")
+            self._apply_runtime_presentation(
+                ReconstructionStatusPresentation(
+                    "Preparing offline job",
+                    "Preparing the isolated offline reconstruction worker.",
+                    "running",
+                    indeterminate=True,
+                )
+            )
+
+    def _begin_runtime_clock(self, kind: str) -> None:
+        if self._active_runtime_kind == kind and self._runtime_started_at is not None:
+            return
+        self._active_runtime_kind = kind
+        self._runtime_started_at = monotonic()
+        self._runtime_elapsed_frozen = 0.0
+        self._refresh_elapsed_label()
+
+    def _freeze_runtime_clock(self) -> None:
+        if self._runtime_started_at is not None:
+            self._runtime_elapsed_frozen = max(0.0, monotonic() - self._runtime_started_at)
+            self._runtime_started_at = None
+        self._active_runtime_kind = None
+        self._refresh_elapsed_label()
+
+    def _refresh_elapsed_label(self) -> None:
+        elapsed = self._runtime_elapsed_frozen
+        if self._runtime_started_at is not None:
+            elapsed = max(0.0, monotonic() - self._runtime_started_at)
+        self._elapsed_value.setText(format_elapsed_seconds(elapsed) if elapsed > 0.0 else "—")
+
+    def _apply_runtime_presentation(self, presentation: ReconstructionStatusPresentation) -> None:
+        if not isinstance(presentation, ReconstructionStatusPresentation):
+            raise TypeError("presentation must be ReconstructionStatusPresentation.")
+        self._stage_value.setText(presentation.stage_label)
+        self._stage_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._stage_value)
+        self._runtime_message.setText(presentation.message)
+        self._runtime_message.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._runtime_message)
+
+        if presentation.indeterminate:
+            self._progress_bar.setRange(0, 0)
+            self._progress_bar.setFormat("Active")
+        else:
+            self._progress_bar.setRange(0, 100)
+            if presentation.progress_fraction is None:
+                self._progress_bar.setValue(0)
+                self._progress_bar.setFormat(
+                    presentation.stage_label if presentation.status_kind in {"error", "warning"} else "—"
+                )
+            else:
+                value = max(0, min(100, round(presentation.progress_fraction * 100.0)))
+                self._progress_bar.setValue(value)
+                self._progress_bar.setFormat("%p%")
+        self._progress_bar.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._progress_bar)
+
+    def set_offline_event(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        self._apply_runtime_presentation(present_offline_event(payload))
+        if self._offline_state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        }:
+            self._begin_runtime_clock("offline")
+
+    def _on_offline_result_ready(self, payload: object, _output_dir: str) -> None:
+        if not isinstance(payload, dict):
+            return
+        sfm = payload.get("sfm_summary", {})
+        if not isinstance(sfm, dict):
+            return
+        registered = sfm.get("registered_keyframes")
+        total = sfm.get("input_keyframes")
+        landmarks = sfm.get("landmarks")
+        error = sfm.get("mean_reprojection_error_px")
+        parts: list[str] = []
+        if isinstance(registered, int):
+            if isinstance(total, int) and total > 0:
+                parts.append(f"{registered}/{total} keyframes")
+            else:
+                parts.append(f"{registered} keyframes")
+        if isinstance(landmarks, int):
+            parts.append(f"{landmarks:,} landmarks")
+        if isinstance(error, (int, float)):
+            parts.append(f"{float(error):.2f} px")
+        if parts:
+            self._telemetry_value.setText(" • ".join(parts))
+            self._telemetry_value.setToolTip("Offline sparse-reconstruction result summary.")
+
+    def set_live_observation(self, observation: object) -> None:
+        if getattr(observation, "pose", None) is not None:
+            self._live_pose_count += 1
+        if bool(getattr(observation, "is_keyframe", False)):
+            self._live_keyframe_count += 1
+        snapshot = getattr(observation, "map_snapshot", None)
+        if snapshot is not None:
+            self._live_keyframe_count = max(
+                self._live_keyframe_count,
+                int(getattr(snapshot, "keyframe_count", 0)),
+            )
+            self._live_landmark_count = int(getattr(snapshot, "landmark_count", 0))
+
+    def _refresh_runtime_telemetry(self) -> None:
+        self._refresh_elapsed_label()
+        controller = self._controller
+        if controller is None:
+            return
+        if self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+            LiveCaptureRuntimeState.STOPPING,
+        }:
+            stats = controller.live_stats
+            self._telemetry_value.setText(
+                format_live_telemetry(
+                    stats,
+                    pose_count=self._live_pose_count,
+                    keyframe_count=self._live_keyframe_count,
+                    landmark_count=self._live_landmark_count,
+                )
+            )
+            self._telemetry_value.setToolTip(
+                "Live statistics are presentation-only telemetry from the authoritative live runtime."
+            )
+            self._apply_runtime_presentation(present_live_state(self._live_state, stats))
+
     def _on_offline_run_finished(self, _result: object) -> None:
+        self._refresh_runtime_telemetry()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
 
@@ -787,6 +1033,25 @@ class ReconstructionPage(QWidget):
         self._live_value.setText(self._humanize(state))
         self._live_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._live_value)
+        if state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+            LiveCaptureRuntimeState.STOPPING,
+        }:
+            self._begin_runtime_clock("live")
+        elif state in {LiveCaptureRuntimeState.STOPPED, LiveCaptureRuntimeState.FAILED}:
+            self._freeze_runtime_clock()
+        stats = self._controller.live_stats if self._controller is not None else None
+        presentation = present_live_state(state, stats)
+        if state is LiveCaptureRuntimeState.FAILED and self._last_runtime_error:
+            presentation = ReconstructionStatusPresentation(
+                presentation.stage_label,
+                self._last_runtime_error,
+                "error",
+            )
+        self._apply_runtime_presentation(presentation)
         self._refresh_session_label()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
@@ -796,6 +1061,28 @@ class ReconstructionPage(QWidget):
         self._offline_value.setText(self._humanize(state))
         self._offline_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._offline_value)
+        if state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        }:
+            self._begin_runtime_clock("offline")
+        elif state in {
+            OfflineReconstructionRunState.COMPLETED,
+            OfflineReconstructionRunState.FAILED,
+            OfflineReconstructionRunState.CANCELLED,
+        }:
+            self._freeze_runtime_clock()
+        # Preserve a richer worker event while RUNNING; state transitions own terminal presentation.
+        if state is not OfflineReconstructionRunState.RUNNING:
+            presentation = present_offline_state(state)
+            if state is OfflineReconstructionRunState.FAILED and self._last_runtime_error:
+                presentation = ReconstructionStatusPresentation(
+                    presentation.stage_label,
+                    self._last_runtime_error,
+                    "error",
+                )
+            self._apply_runtime_presentation(presentation)
         self._refresh_session_label()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
@@ -832,10 +1119,14 @@ class ReconstructionPage(QWidget):
         text = str(message).strip()
         if not text:
             return
+        self._last_runtime_error = text
         self._readiness_badge.setText("CONTROLLER WARNING")
         self._readiness_badge.setProperty("statusKind", "warning")
         self._readiness_badge.setToolTip(text)
         self._refresh_style(self._readiness_badge)
+        self._runtime_message.setText(text)
+        self._runtime_message.setProperty("statusKind", "error")
+        self._refresh_style(self._runtime_message)
 
     def _refresh_session_label(self) -> None:
         controller = self._controller

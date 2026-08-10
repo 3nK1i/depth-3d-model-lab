@@ -1304,6 +1304,48 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.text_muted};
     }}
 
+    QProgressBar#reconstructionProgressBar {{
+        background-color: {p.bg_input};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 4px;
+        color: {p.text_secondary};
+        font-size: 9px;
+        font-weight: 700;
+        min-height: 12px;
+        max-height: 12px;
+        text-align: center;
+    }}
+    QProgressBar#reconstructionProgressBar::chunk {{
+        background-color: {p.badge_compatible_fg};
+        border-radius: 3px;
+    }}
+    QProgressBar#reconstructionProgressBar[statusKind="warning"]::chunk {{
+        background-color: {p.footer_status_amber_fg};
+    }}
+    QProgressBar#reconstructionProgressBar[statusKind="error"]::chunk {{
+        background-color: {p.footer_status_red_fg};
+    }}
+    QProgressBar#reconstructionProgressBar[statusKind="ready"]::chunk {{
+        background-color: {p.footer_status_green_fg};
+    }}
+
+    QLabel#reconstructionRuntimeMessage {{
+        color: {p.viewport_text_dim};
+        background-color: transparent;
+        border: none;
+        font-size: 9px;
+        min-height: 20px;
+    }}
+    QLabel#reconstructionRuntimeMessage[statusKind="warning"] {{
+        color: {p.footer_status_amber_fg};
+    }}
+    QLabel#reconstructionRuntimeMessage[statusKind="error"] {{
+        color: {p.footer_status_red_fg};
+    }}
+    QLabel#reconstructionRuntimeMessage[statusKind="ready"] {{
+        color: {p.footer_status_green_fg};
+    }}
+
     QFrame#reconstructionViewportCard {{
         background-color: {p.viewport_canvas_bg};
         border: 1px solid {p.viewport_border};
