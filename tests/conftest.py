@@ -152,8 +152,115 @@ def _install_fake_vispy_canvas() -> None:
         def close(self) -> None:
             self._native.close()
 
+    class ReconstructionCanvas(QObject):
+        """Qt-only test double for the Phase 8.8C reconstruction canvas."""
+
+        interaction_started = pyqtSignal()
+        interaction_ended = pyqtSignal()
+        escape_pressed = pyqtSignal()
+
+        def __init__(self, parent: QObject | None = None) -> None:
+            super().__init__(parent)
+            self._native = _NativeWidget(self)
+            self._interaction_mode = "orbit"
+            self._grid_visible = True
+            self._axes_visible = True
+            self._trajectory_visible = False
+            self._trajectory_positions = []
+            self._current_camera_position = None
+            self._has_pose = False
+            self._is_interacting = False
+            self._intrinsics_matrix = None
+            self._image_size = None
+            self.fit_calls = 0
+            self.focus_calls = 0
+            self.reset_calls = 0
+            self.closed = False
+
+        @property
+        def native(self):
+            return self._native
+
+        def configure_camera_geometry(self, *, intrinsics_matrix, image_size) -> None:
+            self._intrinsics_matrix = None if intrinsics_matrix is None else np.asarray(intrinsics_matrix).copy()
+            self._image_size = image_size
+
+        def update_live_pose(self, T_reconstruction_from_camera) -> None:
+            from app.reconstruction_visualization import camera_position_in_viewer
+
+            position = camera_position_in_viewer(T_reconstruction_from_camera).astype(np.float32)
+            self._current_camera_position = position
+            self._trajectory_positions.append(position.copy())
+            self._has_pose = True
+
+        def clear_live_state(self) -> None:
+            self._trajectory_positions.clear()
+            self._current_camera_position = None
+            self._has_pose = False
+
+        def set_trajectory_visible(self, visible: bool) -> None:
+            self._trajectory_visible = bool(visible)
+
+        def fit_scene(self) -> None:
+            self.fit_calls += 1
+
+        def focus_current_camera(self) -> None:
+            self.focus_calls += 1
+
+        def reset_view(self) -> None:
+            self.reset_calls += 1
+
+        def set_interaction_mode(self, mode: str) -> None:
+            normalized = str(mode).strip().lower()
+            if normalized not in valid_modes:
+                raise ValueError(f"Unsupported viewport interaction mode: {mode!r}")
+            self._interaction_mode = normalized
+
+        def set_grid_visible(self, visible: bool) -> None:
+            self._grid_visible = bool(visible)
+
+        def set_axes_visible(self, visible: bool) -> None:
+            self._axes_visible = bool(visible)
+
+        @property
+        def interaction_mode(self) -> str:
+            return self._interaction_mode
+
+        @property
+        def trajectory_count(self) -> int:
+            return len(self._trajectory_positions)
+
+        @property
+        def trajectory_visible(self) -> bool:
+            return self._trajectory_visible
+
+        @property
+        def current_camera_position(self):
+            return None if self._current_camera_position is None else self._current_camera_position.copy()
+
+        @property
+        def has_pose(self) -> bool:
+            return self._has_pose
+
+        @property
+        def grid_visible(self) -> bool:
+            return self._grid_visible
+
+        @property
+        def axes_visible(self) -> bool:
+            return self._axes_visible
+
+        @property
+        def is_interacting(self) -> bool:
+            return self._is_interacting
+
+        def close(self) -> None:
+            self.closed = True
+            self._native.close()
+
     fake_module = types.ModuleType(module_name)
     fake_module.PointCloudCanvas = PointCloudCanvas
+    fake_module.ReconstructionCanvas = ReconstructionCanvas
     fake_module.DEFAULT_INTERACTION_MODE = "orbit"
     fake_module.DEFAULT_POINT_SIZE = 4.0
     sys.modules[module_name] = fake_module

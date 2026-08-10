@@ -1352,6 +1352,38 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         border-radius: 7px;
     }}
 
+    QFrame#reconstructionViewportCanvasHost {{
+        background-color: {p.viewport_canvas_bg};
+        border: none;
+    }}
+
+    QWidget#reconstructionViewportPlaceholder {{
+        background-color: transparent;
+    }}
+
+    QFrame#reconstructionViewportTools {{
+        background-color: rgba(13, 16, 20, 214);
+        border: 1px solid {p.viewport_border};
+        border-radius: 6px;
+        margin: 8px;
+    }}
+    QFrame#reconstructionViewportTools QPushButton#iconButton:checked {{
+        background-color: #2a1417;
+        border-color: {p.accent};
+    }}
+
+    QLabel#reconstructionViewportSafety {{
+        color: {p.viewport_text_dim};
+        background-color: rgba(13, 16, 20, 190);
+        border: 1px solid {p.viewport_border};
+        border-radius: 4px;
+        padding: 3px 7px;
+        margin: 8px;
+        font-size: 8px;
+        font-weight: 750;
+        letter-spacing: 0.35px;
+    }}
+
     QLabel#reconstructionViewportState {{
         color: {p.viewport_text_dim};
         font-size: 10px;

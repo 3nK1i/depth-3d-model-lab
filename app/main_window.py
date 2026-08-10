@@ -907,7 +907,10 @@ class MainWindow(QMainWindow):
         self._inspection_controller.shutdown()
         self._inspection_export_controller.shutdown()
         self._inspection_page.close()
+        # Stop reconstruction producers before closing the dedicated VisPy canvas
+        # so no late worker observation can target a released GL surface.
         self._reconstruction_controller.shutdown()
+        self._reconstruction_page.shutdown_viewport()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()

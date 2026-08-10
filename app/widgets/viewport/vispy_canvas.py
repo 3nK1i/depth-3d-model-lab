@@ -373,3 +373,275 @@ class PointCloudCanvas(QObject):
 
     def close(self) -> None:
         self._canvas.close()
+
+
+class ReconstructionCanvas(QObject):
+    """VisPy foundation for the Phase 8.8C Reconstruction viewport.
+
+    C1 renders only world context and the *current* live camera pose.  A bounded
+    trajectory history is retained for C2, but its trail is intentionally hidden
+    by default so C1 does not jump ahead into live trajectory visualization.
+    """
+
+    interaction_started = pyqtSignal()
+    interaction_ended = pyqtSignal()
+    escape_pressed = pyqtSignal()
+
+    MAX_TRAJECTORY_POSES = 20_000
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        from app.reconstruction_visualization import camera_frustum_segments_in_viewer
+
+        # Keep an import reference on the instance so tests can assert that the
+        # canvas uses the dependency-light presentation transform rather than
+        # reinterpreting reconstruction poses itself.
+        self._frustum_builder = camera_frustum_segments_in_viewer
+        self._background_name = "dark"
+        self._canvas = scene.SceneCanvas(
+            keys=None,
+            bgcolor=_BACKGROUND_COLORS[self._background_name],
+            show=False,
+            vsync=True,
+        )
+        self._view = self._canvas.central_widget.add_view()
+        self._camera = _ModeTurntableCamera(
+            fov=DEFAULT_FOV,
+            distance=DEFAULT_CAMERA_DISTANCE,
+            interaction_mode=DEFAULT_INTERACTION_MODE,
+        )
+        self._camera.azimuth = 32.0
+        self._camera.elevation = 24.0
+        self._view.camera = self._camera
+
+        self._grid_visible = True
+        self._axes_visible = True
+        self._grid = self._create_grid_visual()
+        self._axes = scene.visuals.XYZAxis(parent=self._view.scene)
+        self._axes.visible = True
+
+        self._camera_frustum = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(0.88, 0.16, 0.24, 1.0),
+            width=2.0,
+            parent=self._view.scene,
+        )
+        self._camera_center = scene.visuals.Markers(parent=self._view.scene)
+        self._camera_center.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.88, 0.16, 0.24, 1.0),
+            size=6.0,
+            edge_width=0,
+        )
+        self._trajectory_line = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="strip",
+            color=(0.28, 0.72, 0.95, 0.85),
+            width=1.5,
+            parent=self._view.scene,
+        )
+        self._trajectory_visible = False
+        self._trajectory_line.visible = False
+        self._trajectory_positions: list[np.ndarray] = []
+        self._current_camera_position: np.ndarray | None = None
+        self._has_pose = False
+        self._is_interacting = False
+        self._intrinsics_matrix: np.ndarray | None = None
+        self._image_size: tuple[int, int] | None = None
+        self._closed = False
+
+        self._canvas.events.mouse_press.connect(self._on_mouse_press)
+        self._canvas.events.mouse_release.connect(self._on_mouse_release)
+        self.native.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.native.installEventFilter(self)
+        self.reset_view()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
+        if (
+            watched is self.native
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self.escape_pressed.emit()
+            return True
+        return super().eventFilter(watched, event)
+
+    @property
+    def native(self):
+        return self._canvas.native
+
+    def configure_camera_geometry(
+        self,
+        *,
+        intrinsics_matrix: np.ndarray | None,
+        image_size: tuple[int, int] | None,
+    ) -> None:
+        if intrinsics_matrix is None or image_size is None:
+            self._intrinsics_matrix = None
+            self._image_size = None
+            return
+        matrix = np.asarray(intrinsics_matrix, dtype=np.float64)
+        if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
+            raise ValueError("intrinsics_matrix must be a finite 3x3 array.")
+        width, height = int(image_size[0]), int(image_size[1])
+        if width <= 0 or height <= 0:
+            raise ValueError("image_size must contain positive width and height.")
+        self._intrinsics_matrix = np.array(matrix, copy=True)
+        self._image_size = (width, height)
+
+    def update_live_pose(self, T_reconstruction_from_camera: np.ndarray) -> None:
+        from app.reconstruction_visualization import camera_position_in_viewer
+
+        frustum = self._frustum_builder(
+            T_reconstruction_from_camera,
+            intrinsics_matrix=self._intrinsics_matrix,
+            image_size=self._image_size,
+        )
+        position = camera_position_in_viewer(T_reconstruction_from_camera).astype(np.float32)
+        self._camera_frustum.set_data(pos=frustum, connect="segments")
+        self._camera_center.set_data(
+            pos=position.reshape(1, 3),
+            face_color=(0.88, 0.16, 0.24, 1.0),
+            size=6.0,
+            edge_width=0,
+        )
+        self._current_camera_position = position
+        self._has_pose = True
+        self._trajectory_positions.append(np.array(position, copy=True))
+        if len(self._trajectory_positions) > self.MAX_TRAJECTORY_POSES:
+            del self._trajectory_positions[: len(self._trajectory_positions) - self.MAX_TRAJECTORY_POSES]
+        if self._trajectory_visible:
+            self._refresh_trajectory_visual()
+        self._canvas.update()
+
+    def clear_live_state(self) -> None:
+        self._camera_frustum.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="segments")
+        self._camera_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._trajectory_positions.clear()
+        self._trajectory_line.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
+        self._current_camera_position = None
+        self._has_pose = False
+        self._canvas.update()
+
+    def set_trajectory_visible(self, visible: bool) -> None:
+        self._trajectory_visible = bool(visible)
+        self._trajectory_line.visible = self._trajectory_visible
+        if self._trajectory_visible:
+            self._refresh_trajectory_visual()
+        self._canvas.update()
+
+    def _refresh_trajectory_visual(self) -> None:
+        if not self._trajectory_positions:
+            self._trajectory_line.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
+            return
+        points = np.asarray(self._trajectory_positions, dtype=np.float32)
+        self._trajectory_line.set_data(pos=points, connect="strip")
+
+    def fit_scene(self) -> None:
+        if self._trajectory_positions:
+            points = np.asarray(self._trajectory_positions, dtype=np.float64)
+            center = points.mean(axis=0)
+            span = np.ptp(points, axis=0)
+            radius = max(float(np.linalg.norm(span)) * 0.6, 0.5)
+            self._camera.center = tuple(float(v) for v in center)
+            self._camera.distance = max(radius * 2.4, 1.5)
+        elif self._current_camera_position is not None:
+            self.focus_current_camera()
+        else:
+            self._camera.center = (0.0, 0.0, 0.0)
+            self._camera.distance = DEFAULT_CAMERA_DISTANCE
+        self._camera.view_changed()
+
+    def focus_current_camera(self) -> None:
+        if self._current_camera_position is None:
+            self.fit_scene()
+            return
+        self._camera.center = tuple(float(v) for v in self._current_camera_position)
+        self._camera.distance = 2.0
+        self._camera.view_changed()
+
+    def reset_view(self) -> None:
+        self._camera.center = (0.0, 0.0, 0.0)
+        self._camera.distance = DEFAULT_CAMERA_DISTANCE
+        self._camera.fov = DEFAULT_FOV
+        self._camera.azimuth = 32.0
+        self._camera.elevation = 24.0
+        self._camera.view_changed()
+
+    def set_interaction_mode(self, mode: str) -> None:
+        self._camera.set_interaction_mode(mode)
+        cursors = {
+            "select": Qt.CursorShape.ArrowCursor,
+            "orbit": Qt.CursorShape.OpenHandCursor,
+            "pan": Qt.CursorShape.SizeAllCursor,
+            "zoom": Qt.CursorShape.SizeVerCursor,
+        }
+        self.native.setCursor(cursors[mode])
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self._grid_visible = bool(visible)
+        self._grid.visible = self._grid_visible
+        self._canvas.update()
+
+    def set_axes_visible(self, visible: bool) -> None:
+        self._axes_visible = bool(visible)
+        self._axes.visible = self._axes_visible
+        self._canvas.update()
+
+    def _create_grid_visual(self):
+        grid = scene.visuals.GridLines(color=(1, 1, 1, 0.08), parent=self._view.scene)
+        grid.visible = self._grid_visible
+        return grid
+
+    def _on_mouse_press(self, _event) -> None:
+        if self.interaction_mode == "select":
+            return
+        self._is_interacting = True
+        self.interaction_started.emit()
+
+    def _on_mouse_release(self, _event) -> None:
+        if not self._is_interacting:
+            return
+        self._is_interacting = False
+        self.interaction_ended.emit()
+
+    @property
+    def interaction_mode(self) -> str:
+        return self._camera.interaction_mode
+
+    @property
+    def trajectory_count(self) -> int:
+        return len(self._trajectory_positions)
+
+    @property
+    def trajectory_visible(self) -> bool:
+        return self._trajectory_visible
+
+    @property
+    def current_camera_position(self) -> np.ndarray | None:
+        if self._current_camera_position is None:
+            return None
+        return np.array(self._current_camera_position, copy=True)
+
+    @property
+    def has_pose(self) -> bool:
+        return self._has_pose
+
+    @property
+    def grid_visible(self) -> bool:
+        return self._grid_visible
+
+    @property
+    def axes_visible(self) -> bool:
+        return self._axes_visible
+
+    @property
+    def is_interacting(self) -> bool:
+        return self._is_interacting
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._canvas.close()

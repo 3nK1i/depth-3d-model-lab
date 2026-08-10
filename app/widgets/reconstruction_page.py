@@ -1,7 +1,8 @@
-"""Dormant Reconstruction workspace through Phase 8.8B4.
+"""Reconstruction workspace through Phase 8.8C1.
 
-B4 adds truthful stage/progress/elapsed/telemetry presentation on top of the
-authoritative B3 live/offline runtime controls. Primary navigation remains locked.
+B5 enabled primary navigation. C1 replaces the placeholder with a real VisPy
+reconstruction viewport foundation while preserving the authoritative B3/B4
+runtime, status, scale, and calibration contracts.
 """
 
 from __future__ import annotations
@@ -9,10 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 from time import monotonic
 
+import numpy as np
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -44,6 +49,8 @@ from app.theme import (
     PAGE_SPACING,
     SPLITTER_HANDLE,
 )
+from app.widgets.icon_button import IconButton
+from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CameraIntrinsicsPolicy,
     LiveCaptureRuntimeState,
@@ -74,7 +81,16 @@ class ReconstructionPage(QWidget):
         self._live_keyframe_count = 0
         self._live_landmark_count: int | None = None
         self._last_runtime_error = ""
+        self._scene_availability = ReconstructionSceneAvailability.NONE
+        self._viewport_shutdown = False
+        self._pending_visual_pose: np.ndarray | None = None
+        self._visualizer_fitted_once = False
+        self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._build_ui()
+        self._visual_pose_timer = QTimer(self)
+        self._visual_pose_timer.setSingleShot(True)
+        self._visual_pose_timer.setInterval(33)
+        self._visual_pose_timer.timeout.connect(self._flush_pending_visual_pose)
         self._telemetry_timer = QTimer(self)
         self._telemetry_timer.setInterval(500)
         self._telemetry_timer.timeout.connect(self._refresh_runtime_telemetry)
@@ -246,7 +262,7 @@ class ReconstructionPage(QWidget):
         card = QFrame()
         card.setObjectName("reconstructionViewportCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
 
         header = QHBoxLayout()
@@ -259,7 +275,22 @@ class ReconstructionPage(QWidget):
         header.addWidget(self._viewport_state)
         layout.addLayout(header)
 
-        center = QVBoxLayout()
+        host = QFrame()
+        host.setObjectName("reconstructionViewportCanvasHost")
+        grid = QGridLayout(host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+
+        self._reconstruction_canvas = ReconstructionCanvas(self)
+        grid.addWidget(self._reconstruction_canvas.native, 0, 0)
+
+        self._viewport_placeholder = QWidget()
+        self._viewport_placeholder.setObjectName("reconstructionViewportPlaceholder")
+        self._viewport_placeholder.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        center = QVBoxLayout(self._viewport_placeholder)
+        center.setContentsMargins(24, 24, 24, 24)
         center.setSpacing(6)
         center.addStretch(1)
         glyph = QLabel("◇")
@@ -271,15 +302,73 @@ class ReconstructionPage(QWidget):
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(headline)
         detail = QLabel(
-            "Camera trajectory, sparse/canonical geometry, scene overlays, and neural appearance views will be introduced progressively from Phase 8.8C."
+            "World axes, grid, and current camera pose are active. Live trajectory, sparse/canonical geometry, and neural appearance are introduced progressively from Phase 8.8C2 onward."
         )
         detail.setObjectName("reconstructionViewportHint")
         detail.setWordWrap(True)
         detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(detail)
         center.addStretch(1)
-        layout.addLayout(center, stretch=1)
+        grid.addWidget(self._viewport_placeholder, 0, 0)
+
+        tools = QFrame()
+        tools.setObjectName("reconstructionViewportTools")
+        tool_row = QHBoxLayout(tools)
+        tool_row.setContentsMargins(5, 4, 5, 4)
+        tool_row.setSpacing(2)
+
+        group = QButtonGroup(tools)
+        group.setExclusive(True)
+        for icon, mode, tip in (
+            ("orbit", "orbit", "Orbit reconstruction view"),
+            ("pan", "pan", "Pan reconstruction view"),
+            ("zoom", "zoom", "Zoom reconstruction view"),
+        ):
+            button = IconButton(icon, size=28, icon_size=15, tooltip=tip, checkable=True)
+            button.clicked.connect(lambda _checked, value=mode: self._set_viewport_tool(value))
+            group.addButton(button)
+            self._viewport_tool_buttons[mode] = button
+            tool_row.addWidget(button)
+        self._viewport_tool_buttons["orbit"].setChecked(True)
+
+        fit_button = IconButton("fit", size=28, icon_size=15, tooltip="Fit known camera path to view")
+        fit_button.clicked.connect(self._reconstruction_canvas.fit_scene)
+        tool_row.addWidget(fit_button)
+        focus_button = IconButton("camera", size=28, icon_size=15, tooltip="Focus current camera")
+        focus_button.clicked.connect(self._reconstruction_canvas.focus_current_camera)
+        tool_row.addWidget(focus_button)
+        reset_button = IconButton("reset", size=28, icon_size=15, tooltip="Reset reconstruction view")
+        reset_button.clicked.connect(self._reconstruction_canvas.reset_view)
+        tool_row.addWidget(reset_button)
+        grid_button = IconButton("grid", size=28, icon_size=15, tooltip="Show or hide world grid", checkable=True)
+        grid_button.setChecked(True)
+        grid_button.toggled.connect(self._reconstruction_canvas.set_grid_visible)
+        self._viewport_tool_buttons["grid"] = grid_button
+        tool_row.addWidget(grid_button)
+
+        grid.addWidget(
+            tools,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+        )
+
+        safety = QLabel("VIEWER Z-UP • ARBITRARY GAUGE")
+        safety.setObjectName("reconstructionViewportSafety")
+        safety.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        grid.addWidget(
+            safety,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        )
+        grid.setRowStretch(0, 1)
+        grid.setColumnStretch(0, 1)
+        layout.addWidget(host, stretch=1)
         return card
+
+    def _set_viewport_tool(self, mode: str) -> None:
+        self._reconstruction_canvas.set_interaction_mode(mode)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -651,6 +740,7 @@ class ReconstructionPage(QWidget):
             if camera is None:
                 return None
             self._live_camera_mode = "calibrated"
+            self._configure_visualizer_camera(camera)
             self._refresh_live_camera_presentation()
             return camera, CameraIntrinsicsPolicy.CALIBRATED_ONLY
         if mode == "estimated":
@@ -660,9 +750,16 @@ class ReconstructionPage(QWidget):
             self._live_camera = camera
             self._live_calibration_path = None
             self._live_camera_mode = "estimated"
+            self._configure_visualizer_camera(camera)
             self._refresh_live_camera_presentation()
             return camera, CameraIntrinsicsPolicy.ALLOW_ESTIMATED
         raise RuntimeError(f"Unsupported live camera mode: {mode}")
+
+    def _configure_visualizer_camera(self, camera: ReconstructionCamera) -> None:
+        self._reconstruction_canvas.configure_camera_geometry(
+            intrinsics_matrix=camera.intrinsics.matrix,
+            image_size=(camera.image_size.width, camera.image_size.height),
+        )
 
     def _choose_live_camera_calibration(self) -> ReconstructionCamera | None:
         if self._live_camera is not None and self._live_calibration_path is not None:
@@ -685,6 +782,10 @@ class ReconstructionPage(QWidget):
         self._live_camera = None
         self._live_calibration_path = None
         self._live_camera_mode = None
+        if hasattr(self, "_reconstruction_canvas"):
+            self._reconstruction_canvas.configure_camera_geometry(
+                intrinsics_matrix=None, image_size=None
+            )
         self._refresh_camera_authority()
 
     def _refresh_live_camera_presentation(self) -> None:
@@ -891,8 +992,22 @@ class ReconstructionPage(QWidget):
             self._telemetry_value.setToolTip("Offline sparse-reconstruction result summary.")
 
     def set_live_observation(self, observation: object) -> None:
-        if getattr(observation, "pose", None) is not None:
+        if self._viewport_shutdown:
+            return
+        pose = getattr(observation, "pose", None)
+        if pose is not None:
             self._live_pose_count += 1
+            matrix = getattr(pose, "T_reconstruction_from_camera", None)
+            if matrix is not None:
+                value = np.asarray(matrix, dtype=np.float64)
+                if value.shape == (4, 4) and np.isfinite(value).all():
+                    # Worker-thread observations are already queued onto the Qt/UI
+                    # thread by the controller. C1 additionally coalesces visual
+                    # updates so a high-rate live stream cannot force one GL update
+                    # per observation.
+                    self._pending_visual_pose = np.array(value, copy=True)
+                    if not self._visual_pose_timer.isActive():
+                        self._visual_pose_timer.start()
         if bool(getattr(observation, "is_keyframe", False)):
             self._live_keyframe_count += 1
         snapshot = getattr(observation, "map_snapshot", None)
@@ -902,6 +1017,47 @@ class ReconstructionPage(QWidget):
                 int(getattr(snapshot, "keyframe_count", 0)),
             )
             self._live_landmark_count = int(getattr(snapshot, "landmark_count", 0))
+
+    def _flush_pending_visual_pose(self) -> None:
+        if self._viewport_shutdown:
+            self._pending_visual_pose = None
+            return
+        matrix = self._pending_visual_pose
+        self._pending_visual_pose = None
+        if matrix is None:
+            return
+        try:
+            self._reconstruction_canvas.update_live_pose(matrix)
+            self._viewport_placeholder.setVisible(False)
+            if not self._visualizer_fitted_once:
+                self._reconstruction_canvas.fit_scene()
+                self._visualizer_fitted_once = True
+            self._refresh_viewport_state()
+        except (TypeError, ValueError) as exc:
+            # Presentation errors must never terminate the authoritative live
+            # reconstruction runtime. Surface the issue as a UI warning only.
+            self.set_error(f"Reconstruction viewport update rejected: {exc}")
+
+    def _refresh_viewport_state(self) -> None:
+        if self._scene_availability is ReconstructionSceneAvailability.READY:
+            self._viewport_state.setText("Scene ready")
+            return
+        if self._reconstruction_canvas.has_pose:
+            suffix = " retained" if self._live_state in {
+                LiveCaptureRuntimeState.STOPPED,
+                LiveCaptureRuntimeState.FAILED,
+            } else ""
+            self._viewport_state.setText(f"Live camera pose{suffix}")
+            return
+        if self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+        }:
+            self._viewport_state.setText("Waiting for live pose")
+            return
+        self._viewport_state.setText("Awaiting scene")
 
     def _refresh_runtime_telemetry(self) -> None:
         self._refresh_elapsed_label()
@@ -1029,7 +1185,14 @@ class ReconstructionPage(QWidget):
         return labels[workflow]
 
     def set_live_state(self, state: LiveCaptureRuntimeState) -> None:
+        previous_state = self._live_state
         self._live_state = state
+        if state is LiveCaptureRuntimeState.STARTING and previous_state is not LiveCaptureRuntimeState.STARTING:
+            self._pending_visual_pose = None
+            self._visual_pose_timer.stop()
+            self._reconstruction_canvas.clear_live_state()
+            self._viewport_placeholder.setVisible(True)
+            self._visualizer_fitted_once = False
         self._live_value.setText(self._humanize(state))
         self._live_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._live_value)
@@ -1053,6 +1216,7 @@ class ReconstructionPage(QWidget):
             )
         self._apply_runtime_presentation(presentation)
         self._refresh_session_label()
+        self._refresh_viewport_state()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
 
@@ -1088,6 +1252,7 @@ class ReconstructionPage(QWidget):
         self._refresh_runtime_controls()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
+        self._scene_availability = availability
         self._scene_value.setText(self._humanize(availability))
         kind = {
             ReconstructionSceneAvailability.READY: "ready",
@@ -1097,9 +1262,7 @@ class ReconstructionPage(QWidget):
         }[availability]
         self._scene_value.setProperty("statusKind", kind)
         self._refresh_style(self._scene_value)
-        self._viewport_state.setText(
-            "Scene ready" if availability is ReconstructionSceneAvailability.READY else "Awaiting scene"
-        )
+        self._refresh_viewport_state()
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
         if scene is None:
@@ -1154,6 +1317,16 @@ class ReconstructionPage(QWidget):
         if output_dir is not None:
             self._runtime_output_value.setText(output_dir.name)
             self._runtime_output_value.setToolTip(str(output_dir))
+
+    def shutdown_viewport(self) -> None:
+        """Release the dedicated reconstruction GL canvas during app shutdown."""
+
+        if self._viewport_shutdown:
+            return
+        self._viewport_shutdown = True
+        self._visual_pose_timer.stop()
+        self._pending_visual_pose = None
+        self._reconstruction_canvas.close()
 
     @staticmethod
     def _humanize(value) -> str:
