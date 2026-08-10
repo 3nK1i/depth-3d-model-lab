@@ -4,8 +4,8 @@
 This worker accepts real image-sequence or recorded-video input from the
 application controller. It runs production ingestion in ``depth`` and launches
 PyCOLMAP only through the qualified isolated interpreter. It intentionally stops
-at sparse camera reconstruction in A3; persistent-scene/checkpoint integration
-belongs to A4 and the Reconstruction UI remains disabled until 8.8B.
+at sparse camera reconstruction. D1 additionally emits a bounded visualization
+companion artifact; sparse SfM still remains partial/non-canonical geometry.
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ from core.reconstruction import (
 from core.reconstruction.errors import ReconstructionValidationError
 
 PROTOCOL = "eia.reconstruction.offline.v1"
+OFFLINE_VISUALIZATION_SCHEMA = "eia.reconstruction.offline.visualization.v1"
+OFFLINE_VISUALIZATION_LANDMARK_CAP = 8_192
 _MIB = 1024**2
 
 
@@ -84,6 +86,71 @@ def _write_sparse_ply(result, path: Path) -> None:
         r, g, b = landmark.color_rgb or (180, 180, 180)
         lines.append(f"{x:.9g} {y:.9g} {z:.9g} {r} {g} {b}")
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+
+
+def _sample_indices(count: int, cap: int) -> tuple[int, ...]:
+    """Return deterministic first/last-preserving indices for a bounded artifact."""
+
+    count = int(count)
+    cap = int(cap)
+    if count <= 0:
+        return ()
+    if cap < 2:
+        raise ValueError("Visualization sample cap must be at least 2.")
+    if count <= cap:
+        return tuple(range(count))
+    scale = float(count - 1) / float(cap - 1)
+    indices = tuple(int(round(index * scale)) for index in range(cap))
+    # scale > 1 when decimating, so rounding remains strictly increasing.
+    if len(indices) != len(set(indices)) or indices[0] != 0 or indices[-1] != count - 1:
+        raise RuntimeError("Offline visualization sampling failed to preserve bounded endpoints.")
+    return indices
+
+
+def _write_offline_visualization(result, path: Path) -> None:
+    """Write a bounded, dependency-neutral companion artifact for the D1 UI."""
+
+    indices = _sample_indices(len(result.landmarks), OFFLINE_VISUALIZATION_LANDMARK_CAP)
+    points: list[list[float]] = []
+    colors: list[list[int]] = []
+    for index in indices:
+        landmark = result.landmarks[index]
+        points.append([float(value) for value in landmark.position_reconstruction])
+        color = landmark.color_rgb or (184, 199, 214)
+        colors.append([int(value) for value in color])
+
+    cameras = [
+        {
+            "estimate_id": camera.estimate_id,
+            "keyframe_id": camera.keyframe_id,
+            "frame_id": camera.frame_id,
+            "T_reconstruction_from_camera": camera.T_reconstruction_from_camera.tolist(),
+        }
+        for camera in result.cameras
+    ]
+    payload = {
+        "schema": OFFLINE_VISUALIZATION_SCHEMA,
+        "session_id": result.session_id,
+        "backend_id": result.backend_id,
+        "backend_version": result.backend_version,
+        "pose_convention": "T_reconstruction_from_camera",
+        "scale_status": result.gauge.scale_status.value,
+        "alignment_status": result.gauge.alignment_status.value,
+        "registered_camera_total": len(result.cameras),
+        "registered_cameras": cameras,
+        "landmark_total": len(result.landmarks),
+        "landmarks_reconstruction": points,
+        "landmark_colors_rgb": colors,
+        "mean_reprojection_error_px": result.statistics.mean_reprojection_error_px,
+        "certified_metrology": False,
+        "canonical_geometry_authoritative": False,
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -291,6 +358,8 @@ def main() -> int:
         )
         sparse_ply = output_dir / "sparse_reconstruction.ply"
         _write_sparse_ply(sfm_result, sparse_ply)
+        offline_visualization = output_dir / "offline_visualization.json"
+        _write_offline_visualization(sfm_result, offline_visualization)
         metadata = sfm_payload.get("metadata", {})
         quality = metadata.get("quality_assessment", {}) if isinstance(metadata, dict) else {}
         registration_ratio = sfm_result.statistics.registered_keyframes / len(workspace.images)
@@ -329,6 +398,7 @@ def main() -> int:
                 "ingestion_result_json": str(ingestion_path.resolve()),
                 "sfm_result_json": str(sfm_result_path.resolve()),
                 "sparse_reconstruction_ply": str(sparse_ply.resolve()),
+                "offline_visualization_json": str(offline_visualization.resolve()),
                 "sfm_workspace": str(Path(workspace.workspace_root).resolve()),
             },
             "execution_boundary": {

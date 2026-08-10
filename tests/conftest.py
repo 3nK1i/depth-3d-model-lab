@@ -176,6 +176,10 @@ def _install_fake_vispy_canvas() -> None:
             self._sparse_landmark_total_count = 0
             self._sparse_landmark_display_count = 0
             self._sparse_map_revision = None
+            self._sparse_landmark_colors = None
+            self._offline_visualization_loaded = False
+            self._offline_session_id = None
+            self._offline_scale_status = None
             self._keyframes_visible = True
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
             self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
@@ -229,6 +233,10 @@ def _install_fake_vispy_canvas() -> None:
             self._sparse_landmark_total_count = 0
             self._sparse_landmark_display_count = 0
             self._sparse_map_revision = None
+            self._sparse_landmark_colors = None
+            self._offline_visualization_loaded = False
+            self._offline_session_id = None
+            self._offline_scale_status = None
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
             self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
             self._keyframe_ids = ()
@@ -248,6 +256,7 @@ def _install_fake_vispy_canvas() -> None:
             self,
             points_reconstruction,
             *,
+            colors_rgb=None,
             total_count: int | None = None,
             revision: int | None = None,
         ) -> None:
@@ -268,6 +277,15 @@ def _install_fake_vispy_canvas() -> None:
             )
             display = np.ascontiguousarray(viewer[indices])
             self._sparse_landmark_positions = display
+            if colors_rgb is None:
+                self._sparse_landmark_colors = None
+            else:
+                colors = np.asarray(colors_rgb)
+                if colors.size == 0:
+                    colors = np.zeros((0, 3), dtype=np.uint8)
+                if colors.ndim != 2 or colors.shape != points.shape:
+                    raise ValueError("colors_rgb must match points_reconstruction shape.")
+                self._sparse_landmark_colors = np.asarray(colors[indices]).copy()
             self._sparse_landmark_total_count = max(
                 int(total_count) if total_count is not None else int(points.shape[0]),
                 int(points.shape[0]),
@@ -282,6 +300,37 @@ def _install_fake_vispy_canvas() -> None:
                 groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
             if groups:
                 self._world_axis_length = adaptive_world_axis_length(np.vstack(groups))
+
+        def show_offline_sparse_reconstruction(
+            self,
+            *,
+            session_id: str,
+            scale_status: str,
+            points_reconstruction,
+            camera_matrices_reconstruction,
+            camera_ids,
+            landmark_colors_rgb=None,
+            landmark_total: int | None = None,
+            registered_camera_total: int | None = None,
+        ) -> None:
+            self.clear_live_state()
+            self.update_sparse_landmarks(
+                points_reconstruction,
+                colors_rgb=landmark_colors_rgb,
+                total_count=landmark_total,
+                revision=None,
+            )
+            self.update_keyframe_poses(
+                camera_matrices_reconstruction,
+                keyframe_ids=camera_ids,
+                total_count=registered_camera_total,
+                revision=None,
+            )
+            self._offline_visualization_loaded = bool(self.has_sparse_map or self.has_keyframes)
+            self._offline_session_id = str(session_id)
+            self._offline_scale_status = str(scale_status)
+            self._has_pose = False
+            self._current_camera_position = None
 
         def set_sparse_landmarks_visible(self, visible: bool) -> None:
             self._sparse_landmarks_visible = bool(visible)
@@ -416,6 +465,18 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def has_keyframes(self) -> bool:
             return self._keyframe_display_count > 0
+
+        @property
+        def offline_visualization_loaded(self) -> bool:
+            return bool(self._offline_visualization_loaded)
+
+        @property
+        def offline_session_id(self):
+            return self._offline_session_id
+
+        @property
+        def offline_scale_status(self):
+            return self._offline_scale_status
 
         @property
         def world_axis_length(self) -> float:

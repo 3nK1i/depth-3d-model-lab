@@ -378,10 +378,9 @@ class PointCloudCanvas(QObject):
 class ReconstructionCanvas(QObject):
     """VisPy foundation for the Phase 8.8C Reconstruction viewport.
 
-    C2 promotes C1's bounded pose-history plumbing into a visible, decimated
-    live trajectory while keeping the current-camera frustum and arbitrary-gauge
-    geometry authority unchanged. World-origin axes are deliberately restrained
-    and scale-aware so they do not dominate small arbitrary-gauge scenes.
+    C1-C5 provide the live reconstruction viewer. D1 reuses the same bounded
+    scene primitives for completed offline sparse SfM results without mixing live
+    runtime state or promoting sparse geometry to canonical/metric authority.
     """
 
     interaction_started = pyqtSignal()
@@ -468,6 +467,10 @@ class ReconstructionCanvas(QObject):
         self._sparse_landmark_total_count = 0
         self._sparse_landmark_display_count = 0
         self._sparse_map_revision: int | None = None
+        self._sparse_landmark_colors = None
+        self._offline_visualization_loaded = False
+        self._offline_session_id: str | None = None
+        self._offline_scale_status: str | None = None
         self._keyframe_frustums = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
             connect="segments",
@@ -577,6 +580,10 @@ class ReconstructionCanvas(QObject):
         self._sparse_landmark_total_count = 0
         self._sparse_landmark_display_count = 0
         self._sparse_map_revision = None
+        self._sparse_landmark_colors = None
+        self._offline_visualization_loaded = False
+        self._offline_session_id = None
+        self._offline_scale_status = None
         self._keyframe_frustums.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="segments")
         self._keyframe_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
         self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
@@ -603,6 +610,7 @@ class ReconstructionCanvas(QObject):
         self,
         points_reconstruction: np.ndarray,
         *,
+        colors_rgb: np.ndarray | None = None,
         total_count: int | None = None,
         revision: int | None = None,
     ) -> None:
@@ -621,7 +629,21 @@ class ReconstructionCanvas(QObject):
             viewer.shape[0], max_points=self.MAX_SPARSE_LANDMARK_DISPLAY_POINTS
         )
         display = np.ascontiguousarray(viewer[indices])
+        display_colors = None
+        if colors_rgb is not None:
+            colors = np.asarray(colors_rgb)
+            if colors.size == 0:
+                colors = np.zeros((0, 3), dtype=np.uint8)
+            if colors.ndim != 2 or colors.shape != points.shape:
+                raise ValueError("colors_rgb must match points_reconstruction shape.")
+            colors_float = colors.astype(np.float64)
+            if not np.isfinite(colors_float).all() or np.any(colors_float < 0) or np.any(colors_float > 255):
+                raise ValueError("colors_rgb values must lie within [0, 255].")
+            display_colors = np.ascontiguousarray(colors_float[indices] / 255.0, dtype=np.float32)
+            alpha = np.full((display_colors.shape[0], 1), 0.88, dtype=np.float32)
+            display_colors = np.concatenate([display_colors, alpha], axis=1)
         self._sparse_landmark_positions = display
+        self._sparse_landmark_colors = display_colors
         self._sparse_landmark_total_count = max(
             int(total_count) if total_count is not None else int(points.shape[0]),
             int(points.shape[0]),
@@ -630,11 +652,52 @@ class ReconstructionCanvas(QObject):
         self._sparse_map_revision = None if revision is None else int(revision)
         self._sparse_landmarks.set_data(
             pos=display,
-            face_color=(0.72, 0.82, 0.90, 0.82),
+            face_color=(0.72, 0.82, 0.90, 0.82) if display_colors is None else display_colors,
             size=2.6,
             edge_width=0,
         )
         self._sparse_landmarks.visible = self._sparse_landmarks_visible
+        self._refresh_world_axis_scale()
+        self._canvas.update()
+
+    def show_offline_sparse_reconstruction(
+        self,
+        *,
+        session_id: str,
+        scale_status: str,
+        points_reconstruction: np.ndarray,
+        camera_matrices_reconstruction: np.ndarray,
+        camera_ids: tuple[str, ...] | list[str],
+        landmark_colors_rgb: np.ndarray | None = None,
+        landmark_total: int | None = None,
+        registered_camera_total: int | None = None,
+    ) -> None:
+        """Replace live visuals with one completed, bounded offline sparse SfM result."""
+
+        sid = str(session_id).strip()
+        status = str(scale_status).strip().lower()
+        if not sid:
+            raise ValueError("session_id must be non-empty.")
+        if status != "arbitrary":
+            raise ValueError("D1 offline sparse visualization requires arbitrary scale status.")
+        self.clear_live_state()
+        self.update_sparse_landmarks(
+            points_reconstruction,
+            colors_rgb=landmark_colors_rgb,
+            total_count=landmark_total,
+            revision=None,
+        )
+        self.update_keyframe_poses(
+            camera_matrices_reconstruction,
+            keyframe_ids=camera_ids,
+            total_count=registered_camera_total,
+            revision=None,
+        )
+        self._offline_visualization_loaded = bool(self.has_sparse_map or self.has_keyframes)
+        self._offline_session_id = sid
+        self._offline_scale_status = status
+        self._has_pose = False
+        self._current_camera_position = None
         self._refresh_world_axis_scale()
         self._canvas.update()
 
@@ -951,6 +1014,18 @@ class ReconstructionCanvas(QObject):
     @property
     def has_keyframes(self) -> bool:
         return self._keyframe_display_count > 0
+
+    @property
+    def offline_visualization_loaded(self) -> bool:
+        return bool(self._offline_visualization_loaded)
+
+    @property
+    def offline_session_id(self) -> str | None:
+        return self._offline_session_id
+
+    @property
+    def offline_scale_status(self) -> str | None:
+        return self._offline_scale_status
 
     @property
     def world_axis_length(self) -> float:

@@ -1,9 +1,8 @@
-"""Reconstruction workspace through Phase 8.8C5.
+"""Reconstruction workspace through Phase 8.8D1.
 
-B5 enabled primary navigation. C1 introduced the dedicated VisPy viewport, C2
-added live trajectory/orientation presentation, C3 added sparse SLAM landmarks,
-C4 added bounded historical keyframe/map structure, and C5 adds compact live
-tracking/map diagnostics derived only from authoritative observation telemetry.
+C1-C5 established the live viewer. D1 adds bounded visualization of the already
+qualified offline PyCOLMAP sparse-SfM result while preserving arbitrary-gauge,
+partial-scene, and non-certified-metrology semantics.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
+from app.offline_reconstruction_visualization import load_offline_sparse_visualization
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
@@ -90,6 +90,8 @@ class ReconstructionPage(QWidget):
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
         self._pending_keyframes: tuple[np.ndarray, tuple[str, ...], int, int] | None = None
+        self._offline_visualization_path: Path | None = None
+        self._offline_visualization_error = ""
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
@@ -989,6 +991,15 @@ class ReconstructionPage(QWidget):
                 )
             )
         else:
+            self._pending_visual_pose = None
+            self._pending_sparse_landmarks = None
+            self._pending_keyframes = None
+            self._visual_pose_timer.stop()
+            self._reconstruction_canvas.clear_live_state()
+            self._viewport_placeholder.setVisible(True)
+            self._visualizer_fitted_once = False
+            self._offline_visualization_path = None
+            self._offline_visualization_error = ""
             self._telemetry_value.setText("Waiting for offline telemetry")
             self._apply_runtime_presentation(
                 ReconstructionStatusPresentation(
@@ -1062,25 +1073,65 @@ class ReconstructionPage(QWidget):
         if not isinstance(payload, dict):
             return
         sfm = payload.get("sfm_summary", {})
-        if not isinstance(sfm, dict):
+        if isinstance(sfm, dict):
+            registered = sfm.get("registered_keyframes")
+            total = sfm.get("input_keyframes")
+            landmarks = sfm.get("landmarks")
+            error = sfm.get("mean_reprojection_error_px")
+            parts: list[str] = []
+            if isinstance(registered, int):
+                if isinstance(total, int) and total > 0:
+                    parts.append(f"{registered}/{total} keyframes")
+                else:
+                    parts.append(f"{registered} keyframes")
+            if isinstance(landmarks, int):
+                parts.append(f"{landmarks:,} landmarks")
+            if isinstance(error, (int, float)):
+                parts.append(f"{float(error):.2f} px")
+            if parts:
+                self._telemetry_value.setText(" • ".join(parts))
+                self._telemetry_value.setToolTip("Offline sparse-reconstruction result summary.")
+
+        if str(payload.get("status", "")).strip().lower() != "completed":
             return
-        registered = sfm.get("registered_keyframes")
-        total = sfm.get("input_keyframes")
-        landmarks = sfm.get("landmarks")
-        error = sfm.get("mean_reprojection_error_px")
-        parts: list[str] = []
-        if isinstance(registered, int):
-            if isinstance(total, int) and total > 0:
-                parts.append(f"{registered}/{total} keyframes")
-            else:
-                parts.append(f"{registered} keyframes")
-        if isinstance(landmarks, int):
-            parts.append(f"{landmarks:,} landmarks")
-        if isinstance(error, (int, float)):
-            parts.append(f"{float(error):.2f} px")
-        if parts:
-            self._telemetry_value.setText(" • ".join(parts))
-            self._telemetry_value.setToolTip("Offline sparse-reconstruction result summary.")
+        artifacts = payload.get("artifacts", {})
+        if not isinstance(artifacts, dict):
+            self._offline_visualization_error = "Offline result does not expose visualization artifacts."
+            return
+        visualization_path = str(artifacts.get("offline_visualization_json", "")).strip()
+        if not visualization_path:
+            # Older A3 results remain valid but simply cannot be visualized by D1.
+            self._offline_visualization_error = "Offline result predates the D1 visualization artifact."
+            return
+        try:
+            visual = load_offline_sparse_visualization(visualization_path)
+            expected_session = str(payload.get("session_id", "")).strip()
+            if expected_session and visual.session_id != expected_session:
+                raise ValueError("Offline visualization session identity does not match the worker result.")
+            self._reconstruction_canvas.show_offline_sparse_reconstruction(
+                session_id=visual.session_id,
+                scale_status=visual.scale_status,
+                points_reconstruction=visual.landmark_points_reconstruction,
+                camera_matrices_reconstruction=visual.camera_matrices_reconstruction,
+                camera_ids=visual.camera_ids,
+                landmark_colors_rgb=visual.landmark_colors_rgb,
+                landmark_total=visual.landmark_total,
+                registered_camera_total=visual.registered_camera_total,
+            )
+            self._offline_visualization_path = Path(visualization_path).expanduser().resolve()
+            self._offline_visualization_error = ""
+            self._viewport_state.setToolTip("")
+            if self._reconstruction_canvas.offline_visualization_loaded:
+                self._viewport_placeholder.setVisible(False)
+                self._reconstruction_canvas.fit_scene()
+                self._visualizer_fitted_once = True
+            self._refresh_viewport_state()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            # A visualization artifact is presentation-only. A completed authoritative
+            # offline worker result remains completed even if this optional view fails.
+            self._offline_visualization_error = str(exc)
+            self._viewport_state.setText("Offline visualization unavailable")
+            self._viewport_state.setToolTip(str(exc))
 
     def set_live_observation(self, observation: object) -> None:
         if self._viewport_shutdown:
@@ -1203,6 +1254,9 @@ class ReconstructionPage(QWidget):
     def _refresh_viewport_state(self) -> None:
         if self._scene_availability is ReconstructionSceneAvailability.READY:
             self._viewport_state.setText("Scene ready")
+            return
+        if self._reconstruction_canvas.offline_visualization_loaded:
+            self._viewport_state.setText("Offline sparse reconstruction")
             return
         if self._reconstruction_canvas.has_pose:
             suffix = " retained" if self._live_state in {
