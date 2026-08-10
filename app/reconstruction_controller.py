@@ -1,11 +1,10 @@
-"""Dormant Qt application coordinator for Phase 8 reconstruction.
+"""Qt application coordinator for Phase 8 reconstruction.
 
-Phase 8.8A1 establishes one application-facing ownership boundary without
-starting reconstruction work or enabling Reconstruction in the UI.  The
-controller owns the already-qualified :class:`LiveSlamCaptureController` and
-forwards its existing runtime contracts; later 8.8A substeps can add live and
-offline lifecycle entry points here without duplicating capture ownership or
-introducing a second reconstruction state machine.
+Phase 8.8A1 established one dormant application-facing ownership boundary.
+Phase 8.8A2 adds the public live-reconstruction lifecycle on top of the already
+qualified :class:`LiveSlamCaptureController` without duplicating capture,
+translating the authoritative live runtime state, or enabling Reconstruction in
+the UI. Offline reconstruction remains deferred to Phase 8.8A3.
 """
 
 from __future__ import annotations
@@ -13,12 +12,24 @@ from __future__ import annotations
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from app.application_controller import ApplicationController
-from app.live_slam_controller import LiveSlamCaptureController
-from core.reconstruction import LiveCaptureRuntimeState
+from app.live_slam_controller import LiveSlamCaptureController, LiveStellaLaunchSettings
+from core.reconstruction import (
+    LiveCaptureRuntimeState,
+    LiveCaptureRuntimeStats,
+    ReconstructionCamera,
+    ReconstructionQualityProfile,
+)
+from core.reconstruction.errors import ReconstructionValidationError
 
 
 class ReconstructionController(QObject):
-    """Application-level reconstruction coordinator, dormant until commanded."""
+    """Application-level reconstruction coordinator.
+
+    The controller owns the existing live-SLAM capture bridge. Public live
+    lifecycle methods are intentionally thin delegates so the established
+    runtime remains the only live state machine and ``ApplicationController``
+    remains the only capture owner.
+    """
 
     live_state_changed = pyqtSignal(object)  # LiveCaptureRuntimeState
     live_observation_ready = pyqtSignal(object)  # LiveSlamObservation
@@ -35,6 +46,7 @@ class ReconstructionController(QObject):
 
         self._application_controller = application_controller
         self._shutdown_started = False
+        self._live_session_id: str | None = None
         self._live_slam_controller = LiveSlamCaptureController(
             application_controller,
             self,
@@ -56,6 +68,17 @@ class ReconstructionController(QObject):
         return self._live_slam_controller.state
 
     @property
+    def live_stats(self) -> LiveCaptureRuntimeStats | None:
+        """Return current/last live runtime statistics while its runtime is retained."""
+        runtime = self._live_slam_controller.runtime
+        return runtime.stats if runtime is not None else None
+
+    @property
+    def live_session_id(self) -> str | None:
+        """Identity of the most recently started live reconstruction session."""
+        return self._live_session_id
+
+    @property
     def is_active(self) -> bool:
         """Whether any currently integrated reconstruction runtime is active."""
         return self._live_slam_controller.is_active
@@ -63,6 +86,56 @@ class ReconstructionController(QObject):
     @property
     def is_shutdown(self) -> bool:
         return self._shutdown_started
+
+    def start_live(
+        self,
+        *,
+        camera: ReconstructionCamera,
+        settings: LiveStellaLaunchSettings,
+        profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
+        session_id: str | None = None,
+    ) -> str:
+        """Start live reconstruction for the source already owned by the application.
+
+        Source validation, metadata construction, shared-memory publication and
+        isolated stella worker launch remain owned by ``LiveSlamCaptureController``.
+        This method intentionally adds no second capture or reconstruction state
+        machine.
+        """
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot start a live session."
+            )
+        sid = self._live_slam_controller.start_stella_for_active_source(
+            camera=camera,
+            settings=settings,
+            profile=profile,
+            session_id=session_id,
+        )
+        self._live_session_id = sid
+        return sid
+
+    def pause_live(self) -> bool:
+        """Pause live reconstruction without pausing or replacing capture ownership."""
+        if self._shutdown_started:
+            return False
+        return self._live_slam_controller.pause()
+
+    def resume_live(self) -> bool:
+        """Resume a paused live reconstruction runtime."""
+        if self._shutdown_started:
+            return False
+        return self._live_slam_controller.resume()
+
+    def request_stop_live(self) -> bool:
+        """Request non-blocking live stop for future UI actions."""
+        if self._shutdown_started:
+            return False
+        return self._live_slam_controller.request_stop()
+
+    def stop_live(self, *, timeout_s: float = 7.0) -> bool:
+        """Synchronously finish live teardown for controlled non-UI boundaries/tests."""
+        return self._live_slam_controller.stop(timeout_s=timeout_s)
 
     def shutdown(self) -> None:
         """Deterministically stop owned reconstruction resources once."""

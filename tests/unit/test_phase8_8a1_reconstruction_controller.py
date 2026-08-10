@@ -77,7 +77,7 @@ def test_shutdown_is_idempotent_and_delegates_to_owned_live_bridge(
     assert controller.is_shutdown is True
 
 
-def test_a1_controller_has_no_heavy_backend_imports_or_start_side_effects() -> None:
+def test_a1_controller_has_no_heavy_backend_imports_or_constructor_start_side_effects() -> None:
     text = (ROOT / "app" / "reconstruction_controller.py").read_text(encoding="utf-8")
     lowered = text.lower()
 
@@ -95,4 +95,5 @@ def test_a1_controller_has_no_heavy_backend_imports_or_start_side_effects() -> N
     ):
         assert forbidden not in lowered
 
-    assert "start_stella_for_active_source(" not in text
+    constructor = text.split("def __init__", 1)[1].split("@property", 1)[0]
+    assert "start_stella_for_active_source(" not in constructor

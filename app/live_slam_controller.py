@@ -1,8 +1,9 @@
 """Qt bridge from the existing capture signal to Phase 8 live SLAM.
 
-The bridge is intentionally UI-agnostic. Phase 8.4C wires it into MainWindow
-while Reconstruction remains disabled; Phase 8.8 can later drive the public
-start/pause/resume/stop methods without changing capture ownership.
+The bridge is intentionally UI-agnostic. Phase 8.4C wired it into the
+application while Reconstruction remained disabled; Phase 8.8A2 now drives
+its public lifecycle through ``ReconstructionController`` without changing
+capture ownership.
 """
 
 from __future__ import annotations
@@ -53,7 +54,9 @@ class LiveStellaLaunchSettings:
         object.__setattr__(
             self, "worker_executable", Path(self.worker_executable).expanduser().resolve()
         )
-        object.__setattr__(self, "vocabulary_path", Path(self.vocabulary_path).expanduser().resolve())
+        object.__setattr__(
+            self, "vocabulary_path", Path(self.vocabulary_path).expanduser().resolve()
+        )
         for name in ("startup_timeout_s", "frame_timeout_s", "shutdown_timeout_s"):
             value = float(getattr(self, name))
             if value <= 0.0:
@@ -181,6 +184,11 @@ class LiveSlamCaptureController(QObject):
     def pause(self) -> bool:
         runtime = self._runtime
         return bool(runtime is not None and runtime.pause())
+
+    def request_stop(self) -> bool:
+        """Request cooperative stop without blocking the caller/UI thread."""
+        runtime = self._runtime
+        return bool(runtime is not None and runtime.request_stop())
 
     def resume(self) -> bool:
         runtime = self._runtime
