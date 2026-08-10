@@ -20,9 +20,13 @@ def test_reconstruction_ui_stays_disabled_in_phase8_4c() -> None:
 
 def test_main_window_bridge_is_dormant_and_shutdown_order_is_safe() -> None:
     text = (ROOT / "app" / "main_window.py").read_text(encoding="utf-8")
-    assert "LiveSlamCaptureController(self._controller, self)" in text
+    assert "ReconstructionController(self._controller, self)" in text
+    assert (
+        "self._live_slam_controller = self._reconstruction_controller.live_slam_controller"
+        in text
+    )
     assert "start_stella_for_active_source" not in text
-    assert text.index("self._live_slam_controller.shutdown()") < text.index(
+    assert text.index("self._reconstruction_controller.shutdown()") < text.index(
         "self._controller.shutdown()"
     )
 

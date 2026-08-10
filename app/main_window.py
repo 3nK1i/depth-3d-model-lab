@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.application_controller import ApplicationController
-from app.live_slam_controller import LiveSlamCaptureController
+from app.reconstruction_controller import ReconstructionController
 from app.benchmark_controller import (
     BenchmarkController,
     BenchmarkRunConfiguration,
@@ -113,10 +113,13 @@ class MainWindow(QMainWindow):
         )
         self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
 
-        # Phase 8.4C: attach a dormant, non-blocking live-SLAM bridge to the
-        # same raw capture signal. Reconstruction UI remains disabled until
-        # Phase 8.8, so this controller does no work until explicitly started.
-        self._live_slam_controller = LiveSlamCaptureController(self._controller, self)
+        # Phase 8.8A1: establish one dormant application-facing reconstruction
+        # coordinator around the existing Phase 8.4 live-SLAM bridge. It owns
+        # no heavy backend until a later substep explicitly starts one, and the
+        # Reconstruction UI remains disabled. Keep the live-SLAM attribute as a
+        # compatibility alias for the already-qualified Phase 8.4 boundary.
+        self._reconstruction_controller = ReconstructionController(self._controller, self)
+        self._live_slam_controller = self._reconstruction_controller.live_slam_controller
 
         self._benchmark_controller = BenchmarkController(self)
         self._benchmark_page.run_requested.connect(self._on_benchmark_run_requested)
@@ -810,7 +813,7 @@ class MainWindow(QMainWindow):
         self._inspection_controller.shutdown()
         self._inspection_export_controller.shutdown()
         self._inspection_page.close()
-        self._live_slam_controller.shutdown()
+        self._reconstruction_controller.shutdown()
         self._inference_controller.shutdown()
         self._controller.shutdown()
         self._save_layout()
