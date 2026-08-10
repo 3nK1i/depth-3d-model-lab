@@ -5,13 +5,16 @@ Phase 8.8A2 exposed the existing live-SLAM lifecycle. Phase 8.8A3 composes an
 offline process bridge for real image-sequence/recorded-video ingestion and
 isolated PyCOLMAP execution. Phase 8.8A4 exposes the existing F5 persistent
 scene and G2 checkpoint/resume contracts. Phase 8.8A5 hardens resource
-interlocks, result admission, cancellation/restart, and shutdown while the
-Reconstruction UI remains disabled.
+interlocks, result admission, cancellation/restart, and shutdown. Phase 8.8B2
+adds dependency-light source/workflow selection while Reconstruction navigation
+and runtime actions remain disabled.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Collection, Mapping, Sequence
 
@@ -32,6 +35,11 @@ from app.reconstruction_persistence_controller import (
     ReconstructionResumePreparation,
     ReconstructionSceneAvailability,
 )
+from core.capture.base_source import SourceStatus
+from core.capture.camera_source import CameraSource
+from core.capture.image_source import ImageSource
+from core.capture.rtsp_source import RtspSource
+from core.capture.video_source import VideoSource
 from core.reconstruction import (
     LiveCaptureRuntimeState,
     LiveCaptureRuntimeStats,
@@ -46,9 +54,51 @@ from core.reconstruction import (
     ReconstructionStageRunResult,
 )
 from core.reconstruction.errors import ReconstructionValidationError
+from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
 
 
 ReconstructionStartGuard = Callable[[], str | None]
+
+
+class ReconstructionWorkflow(str, Enum):
+    """User-facing Reconstruction input workflow selected in Phase 8.8B2."""
+
+    NONE = "none"
+    LIVE_SOURCE = "live_source"
+    IMAGE_SEQUENCE = "image_sequence"
+    RECORDED_VIDEO = "recorded_video"
+
+
+SUPPORTED_RECONSTRUCTION_VIDEO_EXTENSIONS = (
+    ".avi",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".webm",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReconstructionSourceSelection:
+    """Validated, dependency-light source selection prepared for B3 runtime controls."""
+
+    workflow: ReconstructionWorkflow
+    ready: bool
+    display_name: str
+    detail: str
+    path: Path | None = None
+    item_count: int | None = None
+    live_source_kind: str | None = None
+
+    @classmethod
+    def none(cls) -> "ReconstructionSourceSelection":
+        return cls(
+            workflow=ReconstructionWorkflow.NONE,
+            ready=False,
+            display_name="No reconstruction source selected",
+            detail="Choose Live source, Image sequence, or Recorded video.",
+        )
 
 
 class ReconstructionController(QObject):
@@ -65,6 +115,7 @@ class ReconstructionController(QObject):
     persistent_scene_changed = pyqtSignal(object, str)
     checkpoint_changed = pyqtSignal(object, str)
     resume_compatibility_changed = pyqtSignal(object)
+    source_selection_changed = pyqtSignal(object)  # ReconstructionSourceSelection
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -83,6 +134,7 @@ class ReconstructionController(QObject):
         self._live_start_guard: ReconstructionStartGuard | None = None
         self._offline_start_guard: ReconstructionStartGuard | None = None
         self._live_session_id: str | None = None
+        self._source_selection = ReconstructionSourceSelection.none()
         self._live_slam_controller = LiveSlamCaptureController(
             application_controller,
             self,
@@ -90,6 +142,8 @@ class ReconstructionController(QObject):
         self._live_slam_controller.state_changed.connect(self.live_state_changed.emit)
         self._live_slam_controller.observation_ready.connect(self.live_observation_ready.emit)
         self._live_slam_controller.error_occurred.connect(self.error_occurred.emit)
+        application_controller.source_type_changed.connect(self._on_application_source_changed)
+        application_controller.source_status_changed.connect(self._on_application_source_changed)
 
         self._persistence_controller = ReconstructionPersistenceController(self)
         self._persistence_controller.scene_availability_changed.connect(
@@ -157,6 +211,10 @@ class ReconstructionController(QObject):
         return self._offline_controller.is_running
 
     @property
+    def source_selection(self) -> ReconstructionSourceSelection:
+        return self._source_selection
+
+    @property
     def scene_availability(self) -> ReconstructionSceneAvailability:
         return self._persistence_controller.scene_availability
 
@@ -187,6 +245,156 @@ class ReconstructionController(QObject):
     @property
     def is_shutdown(self) -> bool:
         return self._shutdown_started
+
+    def select_live_source(self) -> ReconstructionSourceSelection:
+        """Select the existing Live 3D capture source without taking capture ownership."""
+
+        self._require_idle_for_source_selection()
+        selection = self._snapshot_live_source_selection()
+        self._set_source_selection(selection)
+        return selection
+
+    def select_image_sequence(self, directory: str | Path) -> ReconstructionSourceSelection:
+        """Validate and select one top-level overlapping image directory."""
+
+        self._require_idle_for_source_selection()
+        path = Path(directory).expanduser().resolve()
+        if not path.is_dir():
+            raise ReconstructionValidationError(
+                f"Image-sequence directory does not exist: {path}"
+            )
+        images = tuple(
+            item
+            for item in sorted(path.iterdir())
+            if item.is_file() and item.suffix.casefold() in SUPPORTED_IMAGE_EXTENSIONS
+        )
+        if len(images) < 3:
+            raise ReconstructionValidationError(
+                "Image-sequence reconstruction requires at least 3 supported images "
+                "in the selected directory."
+            )
+        selection = ReconstructionSourceSelection(
+            workflow=ReconstructionWorkflow.IMAGE_SEQUENCE,
+            ready=True,
+            display_name=path.name or str(path),
+            detail=f"{len(images)} supported images • top-level directory",
+            path=path,
+            item_count=len(images),
+        )
+        self._set_source_selection(selection)
+        return selection
+
+    def select_recorded_video(self, video_path: str | Path) -> ReconstructionSourceSelection:
+        """Validate and select one recorded video without opening a reconstruction backend."""
+
+        self._require_idle_for_source_selection()
+        path = Path(video_path).expanduser().resolve()
+        if not path.is_file():
+            raise ReconstructionValidationError(f"Recorded video does not exist: {path}")
+        if path.suffix.casefold() not in SUPPORTED_RECONSTRUCTION_VIDEO_EXTENSIONS:
+            supported = ", ".join(SUPPORTED_RECONSTRUCTION_VIDEO_EXTENSIONS)
+            raise ReconstructionValidationError(
+                f"Unsupported recorded-video extension '{path.suffix or '<none>'}'. "
+                f"Supported: {supported}."
+            )
+        selection = ReconstructionSourceSelection(
+            workflow=ReconstructionWorkflow.RECORDED_VIDEO,
+            ready=True,
+            display_name=path.name,
+            detail="Recorded video • validated file selection",
+            path=path,
+            item_count=1,
+        )
+        self._set_source_selection(selection)
+        return selection
+
+    def clear_source_selection(self) -> None:
+        self._require_idle_for_source_selection()
+        self._set_source_selection(ReconstructionSourceSelection.none())
+
+    def _require_idle_for_source_selection(self) -> None:
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot change source selection."
+            )
+        if self.is_active:
+            raise ReconstructionValidationError(
+                "Reconstruction source cannot change while a reconstruction job is active."
+            )
+
+    def _set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
+        if not isinstance(selection, ReconstructionSourceSelection):
+            raise TypeError("selection must be ReconstructionSourceSelection.")
+        if selection == self._source_selection:
+            return
+        self._source_selection = selection
+        self.source_selection_changed.emit(selection)
+
+    def _snapshot_live_source_selection(self) -> ReconstructionSourceSelection:
+        source = self._application_controller.active_source
+        if source is None:
+            return ReconstructionSourceSelection(
+                workflow=ReconstructionWorkflow.LIVE_SOURCE,
+                ready=False,
+                display_name="No compatible Live 3D source",
+                detail="Connect a Camera, RTSP stream, or Video in Live 3D first.",
+                live_source_kind="none",
+            )
+
+        status = source.status
+        ready = status is SourceStatus.CONNECTED
+        status_text = status.value.replace("_", " ").title()
+        if isinstance(source, CameraSource):
+            return ReconstructionSourceSelection(
+                workflow=ReconstructionWorkflow.LIVE_SOURCE,
+                ready=ready,
+                display_name=f"Camera {source.device_index}",
+                detail=f"USB camera • {status_text}",
+                live_source_kind="camera",
+            )
+        if isinstance(source, RtspSource):
+            return ReconstructionSourceSelection(
+                workflow=ReconstructionWorkflow.LIVE_SOURCE,
+                ready=ready,
+                display_name=source.sanitized_url,
+                detail=f"RTSP stream • {status_text}",
+                live_source_kind="rtsp",
+            )
+        if isinstance(source, VideoSource):
+            path = Path(source.path).expanduser().resolve()
+            return ReconstructionSourceSelection(
+                workflow=ReconstructionWorkflow.LIVE_SOURCE,
+                ready=ready,
+                display_name=path.name,
+                detail=f"Recorded video as simulated live • {status_text}",
+                path=path,
+                item_count=1,
+                live_source_kind="recorded_video",
+            )
+        if isinstance(source, ImageSource):
+            return ReconstructionSourceSelection(
+                workflow=ReconstructionWorkflow.LIVE_SOURCE,
+                ready=False,
+                display_name="Static image is not a live source",
+                detail="Choose Image sequence for offline reconstruction, or connect Camera/RTSP/Video.",
+                live_source_kind="unsupported_image",
+            )
+        return ReconstructionSourceSelection(
+            workflow=ReconstructionWorkflow.LIVE_SOURCE,
+            ready=False,
+            display_name=type(source).__name__,
+            detail="The active Live 3D source is not supported by live reconstruction.",
+            live_source_kind="unsupported",
+        )
+
+    def _on_application_source_changed(self, _value: object) -> None:
+        if self._shutdown_started:
+            return
+        if self._source_selection.workflow is not ReconstructionWorkflow.LIVE_SOURCE:
+            return
+        # Source lifecycle changes are observational; they do not take or replace
+        # capture ownership and may legitimately happen during a live SLAM session.
+        self._set_source_selection(self._snapshot_live_source_selection())
 
     def configure_start_guards(
         self,

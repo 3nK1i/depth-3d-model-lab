@@ -1,8 +1,8 @@
-"""Dormant Reconstruction page foundation for Phase 8.8B1.
+"""Dormant Reconstruction workspace through Phase 8.8B2.
 
-The page intentionally exposes no start/stop actions yet.  It establishes the
-visual hierarchy and passively mirrors the already-qualified Phase 8.8A
-controller state while primary navigation remains disabled.
+B2 activates source/workflow selection only. Runtime actions remain disabled,
+primary navigation remains locked, and selecting a source never starts a heavy
+reconstruction backend.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -21,6 +22,10 @@ from PyQt6.QtWidgets import (
 )
 
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
+from app.reconstruction_controller import (
+    ReconstructionSourceSelection,
+    ReconstructionWorkflow,
+)
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.theme import (
     PAGE_MARGIN_BOTTOM,
@@ -39,6 +44,7 @@ class ReconstructionPage(QWidget):
         super().__init__(parent)
         self.setObjectName("reconstructionPage")
         self._controller = None
+        self._source_buttons: dict[ReconstructionWorkflow, QPushButton] = {}
         self._build_ui()
         self.set_live_state(LiveCaptureRuntimeState.IDLE)
         self.set_offline_state(OfflineReconstructionRunState.IDLE)
@@ -112,17 +118,27 @@ class ReconstructionPage(QWidget):
         layout = card.layout()
 
         self._source_value = self._value_label("No reconstruction source selected")
-        self._workflow_value = self._value_label("Workflow controls unlock in Phase 8.8B2")
+        self._workflow_value = self._value_label("Choose a workflow")
+        self._source_readiness_value = self._status_value()
         self._add_status_row(layout, "Source", self._source_value)
         self._add_status_row(layout, "Workflow", self._workflow_value)
+        self._add_status_row(layout, "Readiness", self._source_readiness_value)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
-        for text in ("Live source", "Image sequence", "Recorded video"):
+        button_specs = (
+            (ReconstructionWorkflow.LIVE_SOURCE, "Live source", self._select_live_source),
+            (ReconstructionWorkflow.IMAGE_SEQUENCE, "Image sequence", self._choose_image_sequence),
+            (ReconstructionWorkflow.RECORDED_VIDEO, "Recorded video", self._choose_recorded_video),
+        )
+        for workflow, text, callback in button_specs:
             button = QPushButton(text)
-            button.setObjectName("reconstructionDisabledAction")
+            button.setObjectName("reconstructionWorkflowButton")
+            button.setCheckable(True)
             button.setEnabled(False)
-            button.setToolTip("Source selection is introduced in Phase 8.8B2.")
+            button.setToolTip("Select this Reconstruction input workflow.")
+            button.clicked.connect(callback)
+            self._source_buttons[workflow] = button
             buttons.addWidget(button)
         layout.addLayout(buttons)
         return card
@@ -203,6 +219,8 @@ class ReconstructionPage(QWidget):
 
         workflow = self._settings_group("WORKFLOW")
         workflow_layout = workflow.layout()
+        self._workflow_input_value = self._settings_value("No source selected")
+        self._add_status_row(workflow_layout, "Input", self._workflow_input_value)
         self._add_settings_row(workflow_layout, "Profile", "Efficient")
         self._add_settings_row(workflow_layout, "Geometry", "Canonical authority")
         self._add_settings_row(workflow_layout, "Appearance", "Deferred")
@@ -294,6 +312,8 @@ class ReconstructionPage(QWidget):
 
         controller.live_state_changed.connect(self.set_live_state)
         controller.offline_state_changed.connect(self.set_offline_state)
+        controller.offline_run_finished.connect(lambda _result: self._refresh_source_controls())
+        controller.source_selection_changed.connect(self.set_source_selection)
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
         controller.checkpoint_changed.connect(self.set_checkpoint)
@@ -301,22 +321,128 @@ class ReconstructionPage(QWidget):
 
         self.set_live_state(controller.live_state)
         self.set_offline_state(controller.offline_state)
+        self.set_source_selection(controller.source_selection)
         self.set_scene_availability(controller.scene_availability)
+        self._refresh_source_controls()
         scene = controller.persistent_scene
         self.set_persistent_scene(scene, str(controller.persistent_scene_manifest or ""))
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
+
+    def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
+        if not isinstance(selection, ReconstructionSourceSelection):
+            raise TypeError("selection must be ReconstructionSourceSelection.")
+        workflow = selection.workflow
+        self._source_value.setText(selection.display_name)
+        self._source_value.setToolTip(str(selection.path or selection.detail))
+        self._workflow_value.setText(self._workflow_label(workflow))
+        self._workflow_value.setToolTip(selection.detail)
+        if workflow is ReconstructionWorkflow.NONE:
+            readiness_text = "Not selected"
+            readiness_kind = "neutral"
+        elif selection.ready:
+            readiness_text = "Ready"
+            readiness_kind = "ready"
+        else:
+            readiness_text = "Needs attention"
+            readiness_kind = "warning"
+        self._source_readiness_value.setText(readiness_text)
+        self._source_readiness_value.setProperty("statusKind", readiness_kind)
+        self._refresh_style(self._source_readiness_value)
+        for candidate, button in self._source_buttons.items():
+            button.setChecked(candidate is workflow)
+        if workflow is ReconstructionWorkflow.IMAGE_SEQUENCE and selection.item_count is not None:
+            self._workflow_input_value.setText(f"{selection.item_count} images")
+        elif workflow is ReconstructionWorkflow.RECORDED_VIDEO:
+            self._workflow_input_value.setText(selection.display_name)
+        elif workflow is ReconstructionWorkflow.LIVE_SOURCE:
+            self._workflow_input_value.setText(selection.display_name)
+        else:
+            self._workflow_input_value.setText("No source selected")
+        self._workflow_input_value.setToolTip(selection.detail)
+
+    def _select_live_source(self) -> None:
+        if self._controller is None:
+            return
+        try:
+            self._controller.select_live_source()
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+
+    def _choose_image_sequence(self) -> None:
+        if self._controller is None:
+            return
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select Reconstruction Image Sequence",
+            str(Path.home()),
+        )
+        if not selected:
+            self.set_source_selection(self._controller.source_selection)
+            return
+        try:
+            self._controller.select_image_sequence(selected)
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_source_selection(self._controller.source_selection)
+            self.set_error(str(exc))
+
+    def _choose_recorded_video(self) -> None:
+        if self._controller is None:
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Reconstruction Video",
+            str(Path.home()),
+            "Video files (*.mp4 *.mov *.avi *.mkv *.m4v *.webm);;All files (*)",
+        )
+        if not selected:
+            self.set_source_selection(self._controller.source_selection)
+            return
+        try:
+            self._controller.select_recorded_video(selected)
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_source_selection(self._controller.source_selection)
+            self.set_error(str(exc))
+
+    def _refresh_source_controls(self) -> None:
+        controller = self._controller
+        enabled = controller is not None and not controller.is_active and not controller.is_shutdown
+        for button in self._source_buttons.values():
+            button.setEnabled(enabled)
+
+    def _clear_warning_if_possible(self) -> None:
+        if self._controller is None or self._controller.is_shutdown:
+            return
+        self._readiness_badge.setText("CONTROLLER READY")
+        self._readiness_badge.setProperty("statusKind", "")
+        self._readiness_badge.setToolTip("")
+        self._refresh_style(self._readiness_badge)
+
+    @staticmethod
+    def _workflow_label(workflow: ReconstructionWorkflow) -> str:
+        labels = {
+            ReconstructionWorkflow.NONE: "Choose a workflow",
+            ReconstructionWorkflow.LIVE_SOURCE: "Live source",
+            ReconstructionWorkflow.IMAGE_SEQUENCE: "Image sequence",
+            ReconstructionWorkflow.RECORDED_VIDEO: "Recorded video",
+        }
+        return labels[workflow]
 
     def set_live_state(self, state: LiveCaptureRuntimeState) -> None:
         self._live_value.setText(self._humanize(state))
         self._live_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._live_value)
         self._refresh_session_label()
+        self._refresh_source_controls()
 
     def set_offline_state(self, state: OfflineReconstructionRunState) -> None:
         self._offline_value.setText(self._humanize(state))
         self._offline_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._offline_value)
         self._refresh_session_label()
+        self._refresh_source_controls()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
         self._scene_value.setText(self._humanize(availability))

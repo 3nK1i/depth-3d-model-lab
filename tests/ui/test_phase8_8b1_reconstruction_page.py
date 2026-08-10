@@ -45,7 +45,12 @@ def test_b1_page_binding_is_passive_and_starts_no_backend(window) -> None:
 
     actions = page.findChildren(QPushButton)
     assert actions
-    assert all(not button.isEnabled() for button in actions)
+    runtime_actions = [
+        button for button in actions if button.objectName() == "reconstructionDisabledAction"
+    ]
+    assert len(runtime_actions) == 3
+    assert all(not button.isEnabled() for button in runtime_actions)
+    assert controller.is_active is False
 
 
 def test_b1_page_passively_tracks_qualified_controller_signals(window, qtbot) -> None:
