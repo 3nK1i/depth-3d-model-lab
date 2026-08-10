@@ -1384,6 +1384,53 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         letter-spacing: 0.35px;
     }}
 
+    QFrame#reconstructionDiagnosticsHud {{
+        background-color: rgba(13, 16, 20, 218);
+        border: 1px solid {p.viewport_border};
+        border-radius: 6px;
+        margin: 8px;
+    }}
+    QLabel#reconstructionDiagnosticsTitle {{
+        color: {p.viewport_text};
+        font-size: 8px;
+        font-weight: 800;
+        letter-spacing: 0.35px;
+    }}
+    QLabel#reconstructionDiagnosticsBadge {{
+        color: {p.footer_status_neutral_fg};
+        background-color: {p.footer_status_neutral_bg};
+        border: 1px solid {p.footer_status_neutral_border};
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 8px;
+        font-weight: 800;
+    }}
+    QLabel#reconstructionDiagnosticsBadge[statusKind="ready"] {{
+        color: {p.footer_status_green_fg};
+        background-color: {p.footer_status_green_bg};
+        border-color: {p.footer_status_green_border};
+    }}
+    QLabel#reconstructionDiagnosticsBadge[statusKind="warning"] {{
+        color: {p.footer_status_amber_fg};
+        background-color: {p.footer_status_amber_bg};
+        border-color: {p.footer_status_amber_border};
+    }}
+    QLabel#reconstructionDiagnosticsBadge[statusKind="error"] {{
+        color: {p.footer_status_red_fg};
+        background-color: {p.footer_status_red_bg};
+        border-color: {p.footer_status_red_border};
+    }}
+    QLabel#reconstructionDiagnosticsLabel {{
+        color: {p.viewport_text_dim};
+        font-size: 8px;
+        font-weight: 650;
+    }}
+    QLabel#reconstructionDiagnosticsValue {{
+        color: {p.viewport_text};
+        font-size: 8px;
+        font-weight: 650;
+    }}
+
     QLabel#reconstructionViewportState {{
         color: {p.viewport_text_dim};
         font-size: 10px;

@@ -1,9 +1,9 @@
-"""Reconstruction workspace through Phase 8.8C4.
+"""Reconstruction workspace through Phase 8.8C5.
 
 B5 enabled primary navigation. C1 introduced the dedicated VisPy viewport, C2
 added live trajectory/orientation presentation, C3 added sparse SLAM landmarks,
-and C4 adds bounded historical keyframe/map-structure visualization while
-preserving authoritative runtime, scale, and calibration contracts.
+C4 added bounded historical keyframe/map structure, and C5 adds compact live
+tracking/map diagnostics derived only from authoritative observation telemetry.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
+from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -51,6 +52,7 @@ from app.theme import (
     SPLITTER_HANDLE,
 )
 from app.widgets.icon_button import IconButton
+from app.widgets.reconstruction_diagnostics_hud import ReconstructionDiagnosticsHud
 from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientationGizmo
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
@@ -90,6 +92,7 @@ class ReconstructionPage(QWidget):
         self._pending_keyframes: tuple[np.ndarray, tuple[str, ...], int, int] | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
+        self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
         self._build_ui()
         self._visual_pose_timer = QTimer(self)
         self._visual_pose_timer.setSingleShot(True)
@@ -382,12 +385,32 @@ class ReconstructionPage(QWidget):
         keyframes_button.toggled.connect(self._reconstruction_canvas.set_keyframes_visible)
         self._viewport_tool_buttons["keyframes"] = keyframes_button
         tool_row.addWidget(keyframes_button)
+        diagnostics_button = IconButton(
+            "diagnostics",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide live tracking diagnostics",
+            checkable=True,
+        )
+        diagnostics_button.setChecked(True)
+        self._viewport_tool_buttons["diagnostics"] = diagnostics_button
+        tool_row.addWidget(diagnostics_button)
 
         grid.addWidget(
             tools,
             0,
             0,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+        )
+
+        self._diagnostics_hud = ReconstructionDiagnosticsHud(host)
+        diagnostics_button.toggled.connect(self._sync_diagnostics_visibility)
+        self._sync_diagnostics_visibility()
+        grid.addWidget(
+            self._diagnostics_hud,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
         )
 
         safety = QLabel("VIEWER Z-UP • ARBITRARY GAUGE")
@@ -417,6 +440,25 @@ class ReconstructionPage(QWidget):
 
     def _set_viewport_tool(self, mode: str) -> None:
         self._reconstruction_canvas.set_interaction_mode(mode)
+
+    def _sync_diagnostics_visibility(self, _checked: bool | None = None) -> None:
+        if not hasattr(self, "_diagnostics_hud"):
+            return
+        button = self._viewport_tool_buttons.get("diagnostics")
+        requested = bool(button is not None and button.isChecked())
+        live_context = (
+            self._last_workflow is ReconstructionWorkflow.LIVE_SOURCE
+            or self._live_state in {
+                LiveCaptureRuntimeState.STARTING,
+                LiveCaptureRuntimeState.RUNNING,
+                LiveCaptureRuntimeState.PAUSED,
+                LiveCaptureRuntimeState.RECOVERING,
+                LiveCaptureRuntimeState.STOPPING,
+                LiveCaptureRuntimeState.STOPPED,
+                LiveCaptureRuntimeState.FAILED,
+            }
+        )
+        self._diagnostics_hud.setVisible(requested and live_context)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -596,6 +638,7 @@ class ReconstructionPage(QWidget):
             self._reset_live_camera_selection()
             self._last_live_source_identity = None
         self._last_workflow = workflow
+        self._sync_diagnostics_visibility()
         if workflow is ReconstructionWorkflow.IMAGE_SEQUENCE and selection.item_count is not None:
             self._workflow_input_value.setText(f"{selection.item_count} images")
         elif workflow is ReconstructionWorkflow.RECORDED_VIDEO:
@@ -1042,6 +1085,8 @@ class ReconstructionPage(QWidget):
     def set_live_observation(self, observation: object) -> None:
         if self._viewport_shutdown:
             return
+        diagnostics = self._live_diagnostics.update(observation)
+        self._diagnostics_hud.set_presentation(diagnostics)
         visual_update_pending = False
         pose = getattr(observation, "pose", None)
         if pose is not None:
@@ -1312,6 +1357,16 @@ class ReconstructionPage(QWidget):
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
             self._visualizer_fitted_once = False
+            self._diagnostics_hud.set_presentation(self._live_diagnostics.reset_session())
+        elif state in {LiveCaptureRuntimeState.STOPPED, LiveCaptureRuntimeState.FAILED}:
+            self._diagnostics_hud.set_presentation(self._live_diagnostics.mark_terminal(True))
+        elif state in {
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+        }:
+            self._diagnostics_hud.set_presentation(self._live_diagnostics.mark_terminal(False))
+        self._sync_diagnostics_visibility()
         self._live_value.setText(self._humanize(state))
         self._live_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._live_value)
