@@ -26,7 +26,7 @@ def test_b2_source_controls_enable_but_runtime_and_navigation_remain_locked(wind
     runtime = [
         button
         for button in page.findChildren(QPushButton)
-        if button.objectName() == "reconstructionDisabledAction"
+        if button.objectName() == "reconstructionRuntimeAction"
     ]
     assert len(runtime) == 3
     assert all(not button.isEnabled() for button in runtime)

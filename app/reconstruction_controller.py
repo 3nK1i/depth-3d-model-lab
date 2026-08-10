@@ -6,12 +6,15 @@ offline process bridge for real image-sequence/recorded-video ingestion and
 isolated PyCOLMAP execution. Phase 8.8A4 exposes the existing F5 persistent
 scene and G2 checkpoint/resume contracts. Phase 8.8A5 hardens resource
 interlocks, result admission, cancellation/restart, and shutdown. Phase 8.8B2
-adds dependency-light source/workflow selection while Reconstruction navigation
-and runtime actions remain disabled.
+adds dependency-light source/workflow selection. Phase 8.8B3 adds state-driven
+runtime launch/pause/resume/stop helpers while Reconstruction navigation remains
+disabled.
 """
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -40,7 +43,9 @@ from core.capture.camera_source import CameraSource
 from core.capture.image_source import ImageSource
 from core.capture.rtsp_source import RtspSource
 from core.capture.video_source import VideoSource
+from core.contracts import ImageSize
 from core.reconstruction import (
+    CameraIntrinsicsPolicy,
     LiveCaptureRuntimeState,
     LiveCaptureRuntimeStats,
     PersistentReconstructionScene,
@@ -52,6 +57,8 @@ from core.reconstruction import (
     ReconstructionQualityProfile,
     ReconstructionResumeCompatibilityResult,
     ReconstructionStageRunResult,
+    estimate_camera_geometry_from_horizontal_fov,
+    new_reconstruction_session_id,
 )
 from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
@@ -77,6 +84,81 @@ SUPPORTED_RECONSTRUCTION_VIDEO_EXTENSIONS = (
     ".mp4",
     ".webm",
 )
+
+DEFAULT_RECONSTRUCTION_OUTPUT_ROOT = Path(tempfile.gettempdir()) / "eia_depth_reconstruction"
+DEFAULT_PYCOLMAP_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
+DEFAULT_STELLA_INSTALL_PREFIX = Path.home() / "Desktop/eia-stella-vslam-probe"
+DEFAULT_STELLA_WORKER = (
+    Path.home() / "Desktop/eia-stella-live-worker/bin/eia_stella_live_worker"
+)
+DEFAULT_STELLA_VOCABULARY = (
+    Path.home() / "Desktop/phase8_4_stella_probe_data/orb_vocab.fbow"
+)
+DEFAULT_TEST_HORIZONTAL_FOV_DEGREES = 70.0
+DEFAULT_TEST_FOCAL_LENGTH_RELATIVE_UNCERTAINTY = 0.15
+
+
+def _runtime_path_from_environment(name: str, fallback: Path) -> Path:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser().resolve() if raw else fallback.expanduser().resolve()
+
+
+def default_pycolmap_python_path() -> Path:
+    """Return the isolated PyCOLMAP interpreter used by B3 offline starts."""
+
+    path = _runtime_path_from_environment(
+        "EIA_RECONSTRUCTION_PYCOLMAP_PYTHON",
+        DEFAULT_PYCOLMAP_PYTHON,
+    )
+    if not path.is_file():
+        raise ReconstructionValidationError(
+            "Offline reconstruction requires the isolated PyCOLMAP interpreter. "
+            f"Expected: {path}. Set EIA_RECONSTRUCTION_PYCOLMAP_PYTHON to override it."
+        )
+    return path
+
+
+def default_reconstruction_output_root() -> Path:
+    """Return the transient B3 runtime-output root without creating it."""
+
+    return _runtime_path_from_environment(
+        "EIA_RECONSTRUCTION_OUTPUT_ROOT",
+        DEFAULT_RECONSTRUCTION_OUTPUT_ROOT,
+    )
+
+
+def default_live_stella_launch_settings() -> LiveStellaLaunchSettings:
+    """Resolve and validate the already-qualified external Stella runtime paths."""
+
+    install_prefix = _runtime_path_from_environment(
+        "EIA_RECONSTRUCTION_STELLA_PREFIX",
+        DEFAULT_STELLA_INSTALL_PREFIX,
+    )
+    worker = _runtime_path_from_environment(
+        "EIA_RECONSTRUCTION_STELLA_WORKER",
+        DEFAULT_STELLA_WORKER,
+    )
+    vocabulary = _runtime_path_from_environment(
+        "EIA_RECONSTRUCTION_STELLA_VOCAB",
+        DEFAULT_STELLA_VOCABULARY,
+    )
+    if not install_prefix.is_dir():
+        raise ReconstructionValidationError(
+            f"Qualified Stella install prefix is missing: {install_prefix}"
+        )
+    if not worker.is_file():
+        raise ReconstructionValidationError(
+            f"Qualified Stella live worker is missing: {worker}"
+        )
+    if not vocabulary.is_file():
+        raise ReconstructionValidationError(
+            f"Stella ORB vocabulary is missing: {vocabulary}"
+        )
+    return LiveStellaLaunchSettings(
+        install_prefix=install_prefix,
+        worker_executable=worker,
+        vocabulary_path=vocabulary,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,6 +506,159 @@ class ReconstructionController(QObject):
         self._live_start_guard = live
         self._offline_start_guard = offline
 
+    def start_selected_live(
+        self,
+        *,
+        camera: ReconstructionCamera,
+        settings: LiveStellaLaunchSettings | None = None,
+        profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
+        session_id: str | None = None,
+        camera_intrinsics_policy: CameraIntrinsicsPolicy = CameraIntrinsicsPolicy.CALIBRATED_ONLY,
+    ) -> str:
+        """Start the currently selected live workflow after B2 readiness validation."""
+
+        selection = self._source_selection
+        if selection.workflow is not ReconstructionWorkflow.LIVE_SOURCE:
+            raise ReconstructionValidationError(
+                "Select the Live source workflow before starting live reconstruction."
+            )
+        if not selection.ready:
+            raise ReconstructionValidationError(
+                selection.detail or "The selected live source is not ready."
+            )
+        if not isinstance(camera_intrinsics_policy, CameraIntrinsicsPolicy):
+            raise TypeError("camera_intrinsics_policy must be CameraIntrinsicsPolicy.")
+        resolved_settings = settings or default_live_stella_launch_settings()
+        if camera_intrinsics_policy is CameraIntrinsicsPolicy.CALIBRATED_ONLY:
+            return self.start_live(
+                camera=camera,
+                settings=resolved_settings,
+                profile=profile,
+                session_id=session_id,
+            )
+        return self.start_live(
+            camera=camera,
+            settings=resolved_settings,
+            profile=profile,
+            session_id=session_id,
+            camera_intrinsics_policy=camera_intrinsics_policy,
+        )
+
+    def build_estimated_live_camera(
+        self,
+        *,
+        horizontal_fov_degrees: float = DEFAULT_TEST_HORIZONTAL_FOV_DEGREES,
+        focal_length_relative_uncertainty: float = (
+            DEFAULT_TEST_FOCAL_LENGTH_RELATIVE_UNCERTAINTY
+        ),
+    ) -> ReconstructionCamera:
+        """Build explicit provisional intrinsics for live test/reconstruction mode.
+
+        This is intentionally application-side glue over the Phase 8.6 camera-geometry
+        contract. It never labels the estimate as calibrated and never establishes metric
+        scale. The current capture resolution comes from the latest frame when available;
+        a configured USB-camera resolution is accepted as a pre-frame fallback.
+        """
+
+        selection = self._source_selection
+        if selection.workflow is not ReconstructionWorkflow.LIVE_SOURCE:
+            raise ReconstructionValidationError(
+                "Select the Live source workflow before estimating test intrinsics."
+            )
+        if not selection.ready:
+            raise ReconstructionValidationError(
+                selection.detail or "The selected live source is not ready."
+            )
+
+        latest = self._application_controller.latest_source_frame
+        if latest is not None:
+            image_size = ImageSize(latest.width, latest.height)
+        else:
+            source = self._application_controller.active_source
+            if (
+                isinstance(source, CameraSource)
+                and source.requested_width is not None
+                and source.requested_height is not None
+            ):
+                image_size = ImageSize(source.requested_width, source.requested_height)
+            else:
+                raise ReconstructionValidationError(
+                    "Estimated live intrinsics need the current capture resolution. "
+                    "Wait for the first Camera/RTSP/Video frame, then try Start again."
+                )
+
+        kind = selection.live_source_kind or "source"
+        profile = estimate_camera_geometry_from_horizontal_fov(
+            profile_id=f"phase8-8b3-test-{kind}-{image_size.width}x{image_size.height}",
+            camera_id=f"phase8-8b3-{kind}",
+            image_size=image_size,
+            horizontal_fov_degrees=horizontal_fov_degrees,
+            focal_length_relative_uncertainty=focal_length_relative_uncertainty,
+            notes=(
+                "Phase 8.8B3 explicit Test Mode: assumed horizontal FOV, centered principal "
+                "point, square pixels, zero distortion. Provisional relative reconstruction "
+                "only; metric/metrology authority is not established."
+            ),
+        )
+        return profile.camera
+
+    def start_selected_offline(
+        self,
+        *,
+        sfm_python: str | Path | None = None,
+        output_root: str | Path | None = None,
+        profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
+        max_keyframes: int = 80,
+        session_id: str | None = None,
+    ) -> str:
+        """Start the selected image-sequence/video workflow in an isolated worker."""
+
+        selection = self._source_selection
+        if selection.workflow not in {
+            ReconstructionWorkflow.IMAGE_SEQUENCE,
+            ReconstructionWorkflow.RECORDED_VIDEO,
+        }:
+            raise ReconstructionValidationError(
+                "Select Image sequence or Recorded video before starting offline reconstruction."
+            )
+        if not selection.ready or selection.path is None:
+            raise ReconstructionValidationError(
+                selection.detail or "The selected offline source is not ready."
+            )
+        if not isinstance(profile, ReconstructionQualityProfile):
+            raise TypeError("profile must be ReconstructionQualityProfile.")
+
+        sid = session_id or new_reconstruction_session_id()
+        python_path = (
+            Path(sfm_python).expanduser().resolve()
+            if sfm_python is not None
+            else default_pycolmap_python_path()
+        )
+        if not python_path.is_file():
+            raise ReconstructionValidationError(
+                f"External PyCOLMAP Python executable does not exist: {python_path}"
+            )
+        root = (
+            Path(output_root).expanduser().resolve()
+            if output_root is not None
+            else default_reconstruction_output_root()
+        )
+        output_dir = root / sid
+        source_kind = (
+            OfflineReconstructionSourceKind.IMAGE_DIRECTORY
+            if selection.workflow is ReconstructionWorkflow.IMAGE_SEQUENCE
+            else OfflineReconstructionSourceKind.RECORDED_VIDEO
+        )
+        configuration = OfflineReconstructionConfiguration(
+            source_kind=source_kind,
+            inputs=(selection.path,),
+            output_dir=output_dir,
+            sfm_python=python_path,
+            profile=profile,
+            max_keyframes=max_keyframes,
+        )
+        return self.start_offline(configuration, session_id=sid)
+
     def start_live(
         self,
         *,
@@ -431,6 +666,7 @@ class ReconstructionController(QObject):
         settings: LiveStellaLaunchSettings,
         profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
         session_id: str | None = None,
+        camera_intrinsics_policy: CameraIntrinsicsPolicy = CameraIntrinsicsPolicy.CALIBRATED_ONLY,
     ) -> str:
         if self._shutdown_started:
             raise ReconstructionValidationError(
@@ -441,12 +677,23 @@ class ReconstructionController(QObject):
                 "Offline reconstruction is active or finalizing; wait for it before starting live reconstruction."
             )
         self._run_start_guard(self._live_start_guard, operation="live reconstruction")
-        sid = self._live_slam_controller.start_stella_for_active_source(
-            camera=camera,
-            settings=settings,
-            profile=profile,
-            session_id=session_id,
-        )
+        if not isinstance(camera_intrinsics_policy, CameraIntrinsicsPolicy):
+            raise TypeError("camera_intrinsics_policy must be CameraIntrinsicsPolicy.")
+        if camera_intrinsics_policy is CameraIntrinsicsPolicy.CALIBRATED_ONLY:
+            sid = self._live_slam_controller.start_stella_for_active_source(
+                camera=camera,
+                settings=settings,
+                profile=profile,
+                session_id=session_id,
+            )
+        else:
+            sid = self._live_slam_controller.start_stella_for_active_source(
+                camera=camera,
+                settings=settings,
+                profile=profile,
+                session_id=session_id,
+                camera_intrinsics_policy=camera_intrinsics_policy,
+            )
         self._live_session_id = sid
         return sid
 

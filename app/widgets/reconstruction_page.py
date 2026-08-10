@@ -1,8 +1,8 @@
-"""Dormant Reconstruction workspace through Phase 8.8B2.
+"""Dormant Reconstruction workspace through Phase 8.8B3.
 
-B2 activates source/workflow selection only. Runtime actions remain disabled,
-primary navigation remains locked, and selecting a source never starts a heavy
-reconstruction backend.
+B3 activates state-driven runtime controls over the already-hardened live/offline
+controller bridges. Primary navigation remains locked; selecting a source still
+never starts a backend.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -34,7 +35,12 @@ from app.theme import (
     PAGE_SPACING,
     SPLITTER_HANDLE,
 )
-from core.reconstruction import LiveCaptureRuntimeState
+from core.reconstruction import (
+    CameraIntrinsicsPolicy,
+    LiveCaptureRuntimeState,
+    ReconstructionCamera,
+    load_live_camera_calibration,
+)
 
 
 class ReconstructionPage(QWidget):
@@ -45,6 +51,13 @@ class ReconstructionPage(QWidget):
         self.setObjectName("reconstructionPage")
         self._controller = None
         self._source_buttons: dict[ReconstructionWorkflow, QPushButton] = {}
+        self._live_state = LiveCaptureRuntimeState.IDLE
+        self._offline_state = OfflineReconstructionRunState.IDLE
+        self._live_camera: ReconstructionCamera | None = None
+        self._live_calibration_path: Path | None = None
+        self._live_camera_mode: str | None = None
+        self._last_live_source_identity: tuple[str, str, str] | None = None
+        self._last_workflow = ReconstructionWorkflow.NONE
         self._build_ui()
         self.set_live_state(LiveCaptureRuntimeState.IDLE)
         self.set_offline_state(OfflineReconstructionRunState.IDLE)
@@ -156,12 +169,24 @@ class ReconstructionPage(QWidget):
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
-        for text in ("Start", "Pause", "Stop"):
-            button = QPushButton(text)
-            button.setObjectName("reconstructionDisabledAction")
-            button.setEnabled(False)
-            button.setToolTip("Runtime actions are introduced in Phase 8.8B3.")
-            controls.addWidget(button)
+        self._start_button = QPushButton("Start")
+        self._start_button.setObjectName("reconstructionRuntimeAction")
+        self._start_button.setProperty("actionRole", "primary")
+        self._start_button.setToolTip("Start the selected Reconstruction workflow.")
+        self._start_button.clicked.connect(self._start_runtime)
+        controls.addWidget(self._start_button)
+
+        self._pause_button = QPushButton("Pause")
+        self._pause_button.setObjectName("reconstructionRuntimeAction")
+        self._pause_button.setToolTip("Pause or resume a running live reconstruction session.")
+        self._pause_button.clicked.connect(self._pause_or_resume_runtime)
+        controls.addWidget(self._pause_button)
+
+        self._stop_button = QPushButton("Stop")
+        self._stop_button.setObjectName("reconstructionRuntimeAction")
+        self._stop_button.setToolTip("Stop live reconstruction or cancel an offline run.")
+        self._stop_button.clicked.connect(self._stop_runtime)
+        controls.addWidget(self._stop_button)
         layout.addLayout(controls)
         return card
 
@@ -220,7 +245,11 @@ class ReconstructionPage(QWidget):
         workflow = self._settings_group("WORKFLOW")
         workflow_layout = workflow.layout()
         self._workflow_input_value = self._settings_value("No source selected")
+        self._runtime_prerequisite_value = self._settings_value("Choose a workflow")
+        self._runtime_output_value = self._settings_value("Not started")
         self._add_status_row(workflow_layout, "Input", self._workflow_input_value)
+        self._add_status_row(workflow_layout, "Runtime", self._runtime_prerequisite_value)
+        self._add_status_row(workflow_layout, "Output", self._runtime_output_value)
         self._add_settings_row(workflow_layout, "Profile", "Efficient")
         self._add_settings_row(workflow_layout, "Geometry", "Canonical authority")
         self._add_settings_row(workflow_layout, "Appearance", "Deferred")
@@ -238,8 +267,12 @@ class ReconstructionPage(QWidget):
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
-        self._add_settings_row(authority_layout, "Metric scale", "Evidence-driven")
-        self._add_settings_row(authority_layout, "Metrology", "Not certified")
+        self._metric_scale_value = self._settings_value("Evidence-driven")
+        self._camera_geometry_value = self._settings_value("Not selected")
+        self._metrology_value = self._settings_value("Not certified")
+        self._add_status_row(authority_layout, "Metric scale", self._metric_scale_value)
+        self._add_status_row(authority_layout, "Calibration", self._camera_geometry_value)
+        self._add_status_row(authority_layout, "Metrology", self._metrology_value)
         self._add_settings_row(authority_layout, "Heavy backends", "Isolated workers")
         layout.addWidget(authority)
         layout.addStretch(1)
@@ -312,7 +345,7 @@ class ReconstructionPage(QWidget):
 
         controller.live_state_changed.connect(self.set_live_state)
         controller.offline_state_changed.connect(self.set_offline_state)
-        controller.offline_run_finished.connect(lambda _result: self._refresh_source_controls())
+        controller.offline_run_finished.connect(self._on_offline_run_finished)
         controller.source_selection_changed.connect(self.set_source_selection)
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
@@ -324,6 +357,7 @@ class ReconstructionPage(QWidget):
         self.set_source_selection(controller.source_selection)
         self.set_scene_availability(controller.scene_availability)
         self._refresh_source_controls()
+        self._refresh_runtime_controls()
         scene = controller.persistent_scene
         self.set_persistent_scene(scene, str(controller.persistent_scene_manifest or ""))
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
@@ -350,6 +384,22 @@ class ReconstructionPage(QWidget):
         self._refresh_style(self._source_readiness_value)
         for candidate, button in self._source_buttons.items():
             button.setChecked(candidate is workflow)
+        if workflow is ReconstructionWorkflow.LIVE_SOURCE:
+            identity = (
+                selection.live_source_kind or "",
+                selection.display_name,
+                str(selection.path or ""),
+            )
+            if (
+                self._last_live_source_identity is not None
+                and identity != self._last_live_source_identity
+            ):
+                self._reset_live_camera_selection()
+            self._last_live_source_identity = identity
+        elif workflow is not self._last_workflow:
+            self._reset_live_camera_selection()
+            self._last_live_source_identity = None
+        self._last_workflow = workflow
         if workflow is ReconstructionWorkflow.IMAGE_SEQUENCE and selection.item_count is not None:
             self._workflow_input_value.setText(f"{selection.item_count} images")
         elif workflow is ReconstructionWorkflow.RECORDED_VIDEO:
@@ -359,6 +409,18 @@ class ReconstructionPage(QWidget):
         else:
             self._workflow_input_value.setText("No source selected")
         self._workflow_input_value.setToolTip(selection.detail)
+        if workflow is ReconstructionWorkflow.LIVE_SOURCE:
+            self._refresh_live_camera_presentation()
+        elif workflow in {ReconstructionWorkflow.IMAGE_SEQUENCE, ReconstructionWorkflow.RECORDED_VIDEO}:
+            self._runtime_prerequisite_value.setText("Isolated PyCOLMAP worker")
+            self._runtime_prerequisite_value.setToolTip(
+                "The production depth environment launches PyCOLMAP in its isolated interpreter."
+            )
+        else:
+            self._runtime_prerequisite_value.setText("Choose a workflow")
+            self._runtime_prerequisite_value.setToolTip("")
+            self._refresh_camera_authority()
+        self._refresh_runtime_controls()
 
     def _select_live_source(self) -> None:
         if self._controller is None:
@@ -406,14 +468,304 @@ class ReconstructionPage(QWidget):
             self.set_source_selection(self._controller.source_selection)
             self.set_error(str(exc))
 
+    def _start_runtime(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        selection = controller.source_selection
+        if not selection.ready:
+            self.set_error(selection.detail or "Select a ready reconstruction source first.")
+            self._refresh_runtime_controls()
+            return
+        try:
+            if selection.workflow is ReconstructionWorkflow.LIVE_SOURCE:
+                prepared = self._prepare_live_camera_for_start()
+                if prepared is None:
+                    self._refresh_runtime_controls()
+                    return
+                camera, policy = prepared
+                if policy is CameraIntrinsicsPolicy.CALIBRATED_ONLY:
+                    session_id = controller.start_selected_live(camera=camera)
+                else:
+                    session_id = controller.start_selected_live(
+                        camera=camera,
+                        camera_intrinsics_policy=policy,
+                    )
+            elif selection.workflow in {
+                ReconstructionWorkflow.IMAGE_SEQUENCE,
+                ReconstructionWorkflow.RECORDED_VIDEO,
+            }:
+                session_id = controller.start_selected_offline()
+            else:
+                raise RuntimeError("Choose a Reconstruction workflow before starting.")
+            self._session_value.setText(session_id)
+            output_dir = controller.offline_output_dir
+            if output_dir is not None:
+                self._runtime_output_value.setText(output_dir.name)
+                self._runtime_output_value.setToolTip(str(output_dir))
+            elif selection.workflow is ReconstructionWorkflow.LIVE_SOURCE:
+                self._runtime_output_value.setText("Live session")
+                self._runtime_output_value.setToolTip(
+                    "Live reconstruction has no offline output directory yet."
+                )
+            else:
+                self._runtime_output_value.setText("Preparing output")
+                self._runtime_output_value.setToolTip("")
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        finally:
+            self._refresh_source_controls()
+            self._refresh_runtime_controls()
+
+    def _choose_live_camera_mode(self) -> str | None:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Live Reconstruction Camera Geometry")
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setText("Choose how to provide camera intrinsics for live reconstruction.")
+        dialog.setInformativeText(
+            "Use a calibration file for calibrated ray geometry. Test Mode uses explicit "
+            "estimated intrinsics from the live resolution and an assumed 70° horizontal "
+            "field of view. Test Mode is suitable for functional/visual testing only: "
+            "geometry remains provisional, scale stays arbitrary, and metrology is not certified."
+        )
+        calibrated = dialog.addButton(
+            "Use calibration file",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        estimated = dialog.addButton(
+            "Run Test Mode",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is calibrated:
+            return "calibrated"
+        if clicked is estimated:
+            return "estimated"
+        return None
+
+    def _prepare_live_camera_for_start(
+        self,
+    ) -> tuple[ReconstructionCamera, CameraIntrinsicsPolicy] | None:
+        mode = self._choose_live_camera_mode()
+        if mode is None:
+            return None
+        if mode == "calibrated":
+            camera = self._choose_live_camera_calibration()
+            if camera is None:
+                return None
+            self._live_camera_mode = "calibrated"
+            self._refresh_live_camera_presentation()
+            return camera, CameraIntrinsicsPolicy.CALIBRATED_ONLY
+        if mode == "estimated":
+            if self._controller is None:
+                return None
+            camera = self._controller.build_estimated_live_camera()
+            self._live_camera = camera
+            self._live_calibration_path = None
+            self._live_camera_mode = "estimated"
+            self._refresh_live_camera_presentation()
+            return camera, CameraIntrinsicsPolicy.ALLOW_ESTIMATED
+        raise RuntimeError(f"Unsupported live camera mode: {mode}")
+
+    def _choose_live_camera_calibration(self) -> ReconstructionCamera | None:
+        if self._live_camera is not None and self._live_calibration_path is not None:
+            return self._live_camera
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Live Reconstruction Camera Calibration",
+            str(Path.home()),
+            "Camera calibration (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not selected:
+            return None
+        path = Path(selected).expanduser().resolve()
+        camera = load_live_camera_calibration(path)
+        self._live_camera = camera
+        self._live_calibration_path = path
+        return camera
+
+    def _reset_live_camera_selection(self) -> None:
+        self._live_camera = None
+        self._live_calibration_path = None
+        self._live_camera_mode = None
+        self._refresh_camera_authority()
+
+    def _refresh_live_camera_presentation(self) -> None:
+        if self._live_camera_mode == "estimated":
+            self._runtime_prerequisite_value.setText("Estimated intrinsics • Test mode")
+            self._runtime_prerequisite_value.setToolTip(
+                "Explicit provisional mode: 70° assumed horizontal FOV, centered principal "
+                "point, square pixels, zero distortion. Non-metric; metrology is not certified."
+            )
+        elif self._live_calibration_path is not None:
+            self._runtime_prerequisite_value.setText(self._live_calibration_path.name)
+            self._runtime_prerequisite_value.setToolTip(str(self._live_calibration_path))
+        else:
+            self._runtime_prerequisite_value.setText("Choose calibration or Test mode on Start")
+            self._runtime_prerequisite_value.setToolTip(
+                "Live Start explicitly offers a calibrated JSON profile or provisional Test Mode."
+            )
+        self._refresh_camera_authority()
+
+    def _refresh_camera_authority(self) -> None:
+        if not hasattr(self, "_camera_geometry_value"):
+            return
+        if self._live_camera_mode == "estimated":
+            self._camera_geometry_value.setText("Estimated / test")
+            self._camera_geometry_value.setToolTip(
+                "Provisional intrinsics only; camera calibration has not been established."
+            )
+            self._metric_scale_value.setText("Unavailable (test)")
+            self._metric_scale_value.setToolTip(
+                "Test Mode does not establish metric scale or calibrated ray geometry."
+            )
+        elif self._live_camera_mode == "calibrated":
+            self._camera_geometry_value.setText("Calibrated")
+            self._camera_geometry_value.setToolTip(
+                str(self._live_calibration_path or "Explicit calibrated camera profile")
+            )
+            self._metric_scale_value.setText("Evidence-driven")
+            self._metric_scale_value.setToolTip(
+                "Calibrated intrinsics do not by themselves establish monocular metric scale."
+            )
+        else:
+            self._camera_geometry_value.setText("Not selected")
+            self._camera_geometry_value.setToolTip("")
+            self._metric_scale_value.setText("Evidence-driven")
+            self._metric_scale_value.setToolTip("")
+        self._metrology_value.setText("Not certified")
+
+    def _pause_or_resume_runtime(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        try:
+            if self._live_state is LiveCaptureRuntimeState.PAUSED:
+                if not controller.resume_live():
+                    raise RuntimeError("Live reconstruction could not resume from its current state.")
+            elif self._live_state is LiveCaptureRuntimeState.RUNNING:
+                if not controller.pause_live():
+                    raise RuntimeError("Live reconstruction could not pause from its current state.")
+            else:
+                return
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        finally:
+            self._refresh_runtime_controls()
+
+    def _stop_runtime(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        try:
+            if self._offline_state in {
+                OfflineReconstructionRunState.STARTING,
+                OfflineReconstructionRunState.RUNNING,
+            }:
+                if not controller.cancel_offline():
+                    raise RuntimeError("Offline reconstruction could not be cancelled.")
+            elif self._live_state in {
+                LiveCaptureRuntimeState.STARTING,
+                LiveCaptureRuntimeState.RUNNING,
+                LiveCaptureRuntimeState.PAUSED,
+                LiveCaptureRuntimeState.RECOVERING,
+            }:
+                if not controller.request_stop_live():
+                    raise RuntimeError("Live reconstruction could not be stopped.")
+            else:
+                return
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        finally:
+            self._refresh_runtime_controls()
+
+    def _on_offline_run_finished(self, _result: object) -> None:
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
+
     def _refresh_source_controls(self) -> None:
         controller = self._controller
         enabled = controller is not None and not controller.is_active and not controller.is_shutdown
         for button in self._source_buttons.values():
             button.setEnabled(enabled)
 
+    def _refresh_runtime_controls(self) -> None:
+        controller = self._controller
+        if controller is None:
+            self._start_button.setEnabled(False)
+            self._pause_button.setEnabled(False)
+            self._stop_button.setEnabled(False)
+            return
+
+        selection = controller.source_selection
+        live_busy = self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+            LiveCaptureRuntimeState.STOPPING,
+        }
+        offline_busy = self._offline_state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        }
+        busy = live_busy or offline_busy or controller.is_active
+        can_start = (
+            not controller.is_shutdown
+            and selection.ready
+            and selection.workflow is not ReconstructionWorkflow.NONE
+            and not busy
+        )
+        self._start_button.setEnabled(can_start)
+
+        can_pause = (
+            not controller.is_shutdown
+            and not offline_busy
+            and self._live_state in {
+                LiveCaptureRuntimeState.RUNNING,
+                LiveCaptureRuntimeState.PAUSED,
+            }
+        )
+        self._pause_button.setEnabled(can_pause)
+        self._pause_button.setText(
+            "Resume" if self._live_state is LiveCaptureRuntimeState.PAUSED else "Pause"
+        )
+
+        can_stop_live = self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+        }
+        can_stop_offline = self._offline_state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+        }
+        self._stop_button.setEnabled(
+            not controller.is_shutdown and (can_stop_live or can_stop_offline)
+        )
+        self._stop_button.setText("Cancel" if offline_busy else "Stop")
+
     def _clear_warning_if_possible(self) -> None:
         if self._controller is None or self._controller.is_shutdown:
+            return
+        if (
+            self._controller.source_selection.workflow is ReconstructionWorkflow.LIVE_SOURCE
+            and self._live_camera_mode == "estimated"
+        ):
+            self._readiness_badge.setText("TEST MODE • NON-METRIC")
+            self._readiness_badge.setProperty("statusKind", "warning")
+            self._readiness_badge.setToolTip(
+                "Live reconstruction is using estimated intrinsics. Visual/relative testing is "
+                "allowed; metric geometry and metrology are not certified."
+            )
+            self._refresh_style(self._readiness_badge)
             return
         self._readiness_badge.setText("CONTROLLER READY")
         self._readiness_badge.setProperty("statusKind", "")
@@ -431,18 +783,22 @@ class ReconstructionPage(QWidget):
         return labels[workflow]
 
     def set_live_state(self, state: LiveCaptureRuntimeState) -> None:
+        self._live_state = state
         self._live_value.setText(self._humanize(state))
         self._live_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._live_value)
         self._refresh_session_label()
         self._refresh_source_controls()
+        self._refresh_runtime_controls()
 
     def set_offline_state(self, state: OfflineReconstructionRunState) -> None:
+        self._offline_state = state
         self._offline_value.setText(self._humanize(state))
         self._offline_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._offline_value)
         self._refresh_session_label()
         self._refresh_source_controls()
+        self._refresh_runtime_controls()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
         self._scene_value.setText(self._humanize(availability))
@@ -485,11 +841,28 @@ class ReconstructionPage(QWidget):
         controller = self._controller
         if controller is None:
             return
-        session_id = controller.live_session_id or controller.offline_session_id
-        if session_id:
-            self._session_value.setText(session_id)
+        workflow = controller.source_selection.workflow
+        if self._offline_state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        } or workflow in {ReconstructionWorkflow.IMAGE_SEQUENCE, ReconstructionWorkflow.RECORDED_VIDEO}:
+            session_id = controller.offline_session_id
+        elif self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+            LiveCaptureRuntimeState.STOPPING,
+        } or workflow is ReconstructionWorkflow.LIVE_SOURCE:
+            session_id = controller.live_session_id
         else:
-            self._session_value.setText("No active session")
+            session_id = controller.offline_session_id or controller.live_session_id
+        self._session_value.setText(session_id or "No active session")
+        output_dir = controller.offline_output_dir
+        if output_dir is not None:
+            self._runtime_output_value.setText(output_dir.name)
+            self._runtime_output_value.setToolTip(str(output_dir))
 
     @staticmethod
     def _humanize(value) -> str:

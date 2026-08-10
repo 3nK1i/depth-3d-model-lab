@@ -46,7 +46,7 @@ def test_b1_page_binding_is_passive_and_starts_no_backend(window) -> None:
     actions = page.findChildren(QPushButton)
     assert actions
     runtime_actions = [
-        button for button in actions if button.objectName() == "reconstructionDisabledAction"
+        button for button in actions if button.objectName() == "reconstructionRuntimeAction"
     ]
     assert len(runtime_actions) == 3
     assert all(not button.isEnabled() for button in runtime_actions)

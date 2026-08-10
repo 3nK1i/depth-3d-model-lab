@@ -23,8 +23,16 @@ def test_b1_page_has_no_heavy_backend_or_test_fixture_imports() -> None:
 
 def test_b1_page_binding_contains_no_reconstruction_start_calls() -> None:
     source = (ROOT / "app/widgets/reconstruction_page.py").read_text(encoding="utf-8")
-    forbidden_calls = ("start_live(", "start_offline(", "pause_live(", "resume_live(", "stop_live(")
-    assert not any(call in source for call in forbidden_calls)
+    tree = ast.parse(source)
+    page = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ReconstructionPage"
+    )
+    binding = next(
+        node for node in page.body if isinstance(node, ast.FunctionDef) and node.name == "bind_controller"
+    )
+    binding_source = ast.get_source_segment(source, binding) or ""
+    forbidden_calls = ("start_live(", "start_offline(", "start_selected_", "pause_live(", "resume_live(")
+    assert not any(call in binding_source for call in forbidden_calls)
 
 
 def test_b1_keeps_reconstruction_out_of_enabled_modes() -> None:

@@ -20,6 +20,7 @@ from core.capture.rtsp_source import RtspSource
 from core.capture.video_source import VideoSource
 from core.reconstruction import (
     STELLA_LIVE_BACKEND_ID,
+    CameraIntrinsicsPolicy,
     ExternalStellaLiveSlamBackend,
     LiveCaptureRuntimeState,
     LiveCaptureSlamRuntime,
@@ -118,6 +119,7 @@ class LiveSlamCaptureController(QObject):
         settings: LiveStellaLaunchSettings,
         profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
         session_id: str | None = None,
+        camera_intrinsics_policy: CameraIntrinsicsPolicy = CameraIntrinsicsPolicy.CALIBRATED_ONLY,
     ) -> str:
         if self.is_active:
             raise ReconstructionValidationError("A live SLAM capture session is already active.")
@@ -127,6 +129,8 @@ class LiveSlamCaptureController(QObject):
             raise TypeError("settings must be LiveStellaLaunchSettings.")
         if not isinstance(profile, ReconstructionQualityProfile):
             raise TypeError("profile must be ReconstructionQualityProfile.")
+        if not isinstance(camera_intrinsics_policy, CameraIntrinsicsPolicy):
+            raise TypeError("camera_intrinsics_policy must be CameraIntrinsicsPolicy.")
 
         source, simulated_live = self._build_active_source_metadata(camera)
         sid = session_id or new_reconstruction_session_id()
@@ -141,6 +145,7 @@ class LiveSlamCaptureController(QObject):
             enable_loop_closure=False,
             enable_global_optimization=False,
             metadata={"capture_owner": "ApplicationController", "phase": "8.4D"},
+            camera_intrinsics_policy=camera_intrinsics_policy,
         )
 
         def backend_factory(ring_spec):

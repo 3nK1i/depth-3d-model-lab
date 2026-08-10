@@ -1279,14 +1279,29 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.text_muted};
     }}
 
-    QPushButton#reconstructionDisabledAction {{
-        background-color: transparent;
+    QPushButton#reconstructionRuntimeAction {{
+        background-color: {p.bg_input};
         border: 1px solid {p.toolbar_card_border};
         border-radius: 5px;
-        color: {p.text_muted};
+        color: {p.text_secondary};
         padding: 5px 9px;
         font-size: 10px;
-        font-weight: 650;
+        font-weight: 700;
+    }}
+    QPushButton#reconstructionRuntimeAction:hover {{
+        background-color: {p.bg_panel_alt};
+        border-color: {p.border_light};
+        color: {p.text_primary};
+    }}
+    QPushButton#reconstructionRuntimeAction[actionRole="primary"] {{
+        background-color: #2a1417;
+        border-color: {p.accent};
+        color: {p.accent};
+    }}
+    QPushButton#reconstructionRuntimeAction:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.text_muted};
     }}
 
     QFrame#reconstructionViewportCard {{
