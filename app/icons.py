@@ -53,6 +53,7 @@ _ICON_PATHS: dict[str, str] = {
     "pan": '<path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/>',
     "zoom": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/>',
     "reset": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    "trajectory": '<path d="M4 18c2-6 4-9 8-9s3 6 6 6 2-3 2-5"/><circle cx="4" cy="18" r="1.5"/><circle cx="20" cy="10" r="1.5"/>',
 }
 
 

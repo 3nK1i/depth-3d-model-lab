@@ -150,3 +150,115 @@ def _validate_pose(value: np.ndarray) -> np.ndarray:
     if not np.isclose(np.linalg.det(rotation), 1.0, atol=1e-5):
         raise ValueError("T_reconstruction_from_camera rotation must have determinant +1.")
     return pose
+
+
+def orientation_gizmo_projection(azimuth_deg: float, elevation_deg: float) -> np.ndarray:
+    """Project viewer X/Y/Z basis vectors into 2-D gizmo screen directions.
+
+    The result has shape ``(3, 2)`` in X/Y/Z order.  Coordinates are normalized
+    screen deltas where +x points right and +y points down (Qt convention).
+    This is display-only orientation feedback for the turntable camera; it does
+    not alter or reinterpret reconstruction geometry.
+    """
+
+    azimuth = np.deg2rad(float(azimuth_deg))
+    elevation = np.deg2rad(float(elevation_deg))
+    if not np.isfinite([azimuth, elevation]).all():
+        raise ValueError("azimuth_deg and elevation_deg must be finite.")
+
+    # Approximate the VisPy Z-up turntable camera position around its target.
+    camera_offset = np.asarray(
+        [
+            np.cos(elevation) * np.sin(azimuth),
+            np.cos(elevation) * np.cos(azimuth),
+            np.sin(elevation),
+        ],
+        dtype=np.float64,
+    )
+    view_forward = -camera_offset
+    view_forward /= max(float(np.linalg.norm(view_forward)), 1e-12)
+
+    world_up = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+    screen_right = np.cross(world_up, view_forward)
+    norm = float(np.linalg.norm(screen_right))
+    if norm < 1e-8:
+        # Near a top/bottom pole, choose a stable horizontal reference.
+        screen_right = np.asarray([1.0, 0.0, 0.0], dtype=np.float64)
+    else:
+        screen_right /= norm
+    screen_up = np.cross(view_forward, screen_right)
+    screen_up /= max(float(np.linalg.norm(screen_up)), 1e-12)
+
+    basis = np.eye(3, dtype=np.float64)
+    projected = np.column_stack(
+        [
+            basis @ screen_right,
+            -(basis @ screen_up),  # Qt screen Y grows downward.
+        ]
+    )
+    return projected.astype(np.float32)
+
+
+def adaptive_world_axis_length(
+    trajectory_points: np.ndarray | None,
+    *,
+    idle_length: float = 0.28,
+    minimum: float = 0.08,
+    maximum: float = 0.34,
+) -> float:
+    """Return a restrained world-origin axis length for the current live path.
+
+    C1's generic ``XYZAxis`` was intentionally simple but visually dominant in
+    arbitrary-gauge scenes.  C2 sizes the world-origin axes from the observed
+    trajectory extent while keeping conservative bounds.  The value is purely a
+    display scale and therefore never establishes metric authority.
+    """
+
+    idle_length = float(idle_length)
+    minimum = float(minimum)
+    maximum = float(maximum)
+    if not np.isfinite([idle_length, minimum, maximum]).all():
+        raise ValueError("axis length bounds must be finite.")
+    if minimum <= 0.0 or maximum < minimum or not (minimum <= idle_length <= maximum):
+        raise ValueError("axis length bounds are inconsistent.")
+    if trajectory_points is None:
+        return idle_length
+
+    points = np.asarray(trajectory_points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+        raise ValueError("trajectory_points must be a finite (N, 3) array.")
+    if points.shape[0] < 2:
+        return idle_length
+    span = np.ptp(points, axis=0)
+    diagonal = float(np.linalg.norm(span))
+    if diagonal <= 1e-6:
+        return idle_length
+    return float(np.clip(diagonal * 0.30, minimum, maximum))
+
+
+def trajectory_display_indices(count: int, *, max_points: int = 4096) -> np.ndarray:
+    """Return ordered indices for bounded trajectory rendering.
+
+    The authoritative UI-side trajectory history may contain many more samples;
+    only the visual line is decimated.  Endpoints are always preserved.
+    """
+
+    count = int(count)
+    max_points = int(max_points)
+    if count < 0 or max_points < 2:
+        raise ValueError("count must be non-negative and max_points must be >= 2.")
+    if count == 0:
+        return np.zeros((0,), dtype=np.int64)
+    if count <= max_points:
+        return np.arange(count, dtype=np.int64)
+    step = int(np.ceil((count - 1) / float(max_points - 1)))
+    indices = np.arange(0, count, step, dtype=np.int64)
+    if indices[-1] != count - 1:
+        indices = np.concatenate([indices, np.asarray([count - 1], dtype=np.int64)])
+    if indices.size > max_points:
+        # Evenly reselect while preserving both endpoints.
+        positions = np.linspace(0, indices.size - 1, max_points).round().astype(np.int64)
+        indices = indices[positions]
+        indices[0] = 0
+        indices[-1] = count - 1
+    return indices

@@ -378,9 +378,10 @@ class PointCloudCanvas(QObject):
 class ReconstructionCanvas(QObject):
     """VisPy foundation for the Phase 8.8C Reconstruction viewport.
 
-    C1 renders only world context and the *current* live camera pose.  A bounded
-    trajectory history is retained for C2, but its trail is intentionally hidden
-    by default so C1 does not jump ahead into live trajectory visualization.
+    C2 promotes C1's bounded pose-history plumbing into a visible, decimated
+    live trajectory while keeping the current-camera frustum and arbitrary-gauge
+    geometry authority unchanged. World-origin axes are deliberately restrained
+    and scale-aware so they do not dominate small arbitrary-gauge scenes.
     """
 
     interaction_started = pyqtSignal()
@@ -388,6 +389,7 @@ class ReconstructionCanvas(QObject):
     escape_pressed = pyqtSignal()
 
     MAX_TRAJECTORY_POSES = 20_000
+    MAX_TRAJECTORY_DISPLAY_POINTS = 4_096
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -417,8 +419,8 @@ class ReconstructionCanvas(QObject):
         self._grid_visible = True
         self._axes_visible = True
         self._grid = self._create_grid_visual()
-        self._axes = scene.visuals.XYZAxis(parent=self._view.scene)
-        self._axes.visible = True
+        self._world_axis_length = 0.28
+        self._axis_x, self._axis_y, self._axis_z, self._axis_origin = self._create_world_axes_visuals()
 
         self._camera_frustum = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
@@ -441,9 +443,18 @@ class ReconstructionCanvas(QObject):
             width=1.5,
             parent=self._view.scene,
         )
-        self._trajectory_visible = False
-        self._trajectory_line.visible = False
+        self._trajectory_visible = True
+        self._trajectory_line.visible = True
+        self._trajectory_start = scene.visuals.Markers(parent=self._view.scene)
+        self._trajectory_start.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.28, 0.72, 0.95, 0.90),
+            size=5.0,
+            edge_width=0,
+        )
+        self._trajectory_start.visible = True
         self._trajectory_positions: list[np.ndarray] = []
+        self._trajectory_display_count = 0
         self._current_camera_position: np.ndarray | None = None
         self._has_pose = False
         self._is_interacting = False
@@ -511,6 +522,7 @@ class ReconstructionCanvas(QObject):
         self._trajectory_positions.append(np.array(position, copy=True))
         if len(self._trajectory_positions) > self.MAX_TRAJECTORY_POSES:
             del self._trajectory_positions[: len(self._trajectory_positions) - self.MAX_TRAJECTORY_POSES]
+        self._refresh_world_axis_scale()
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
         self._canvas.update()
@@ -520,6 +532,10 @@ class ReconstructionCanvas(QObject):
         self._camera_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
         self._trajectory_positions.clear()
         self._trajectory_line.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
+        self._trajectory_start.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._trajectory_display_count = 0
+        self._world_axis_length = 0.28
+        self._update_world_axes_visuals()
         self._current_camera_position = None
         self._has_pose = False
         self._canvas.update()
@@ -527,16 +543,82 @@ class ReconstructionCanvas(QObject):
     def set_trajectory_visible(self, visible: bool) -> None:
         self._trajectory_visible = bool(visible)
         self._trajectory_line.visible = self._trajectory_visible
+        self._trajectory_start.visible = self._trajectory_visible
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
         self._canvas.update()
 
     def _refresh_trajectory_visual(self) -> None:
+        from app.reconstruction_visualization import trajectory_display_indices
+
         if not self._trajectory_positions:
             self._trajectory_line.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
+            self._trajectory_start.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+            self._trajectory_display_count = 0
             return
         points = np.asarray(self._trajectory_positions, dtype=np.float32)
-        self._trajectory_line.set_data(pos=points, connect="strip")
+        indices = trajectory_display_indices(
+            points.shape[0], max_points=self.MAX_TRAJECTORY_DISPLAY_POINTS
+        )
+        display = np.ascontiguousarray(points[indices])
+        self._trajectory_line.set_data(pos=display, connect="strip")
+        self._trajectory_start.set_data(
+            pos=points[:1],
+            face_color=(0.28, 0.72, 0.95, 0.90),
+            size=5.0,
+            edge_width=0,
+        )
+        self._trajectory_display_count = int(display.shape[0])
+
+    def _refresh_world_axis_scale(self) -> None:
+        from app.reconstruction_visualization import adaptive_world_axis_length
+
+        points = (
+            np.asarray(self._trajectory_positions, dtype=np.float64)
+            if self._trajectory_positions
+            else None
+        )
+        target = adaptive_world_axis_length(points)
+        if abs(target - self._world_axis_length) <= max(0.01, self._world_axis_length * 0.12):
+            return
+        self._world_axis_length = float(target)
+        self._update_world_axes_visuals()
+
+    def _create_world_axes_visuals(self):
+        axis_x = scene.visuals.Line(
+            connect="segments", color=(0.84, 0.28, 0.34, 0.72), width=1.25, parent=self._view.scene
+        )
+        axis_y = scene.visuals.Line(
+            connect="segments", color=(0.30, 0.72, 0.48, 0.72), width=1.25, parent=self._view.scene
+        )
+        axis_z = scene.visuals.Line(
+            connect="segments", color=(0.34, 0.52, 0.90, 0.72), width=1.25, parent=self._view.scene
+        )
+        origin = scene.visuals.Markers(parent=self._view.scene)
+        origin.set_data(
+            pos=np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32),
+            face_color=(0.70, 0.72, 0.76, 0.78),
+            size=4.0,
+            edge_width=0,
+        )
+        self._axis_x, self._axis_y, self._axis_z, self._axis_origin = axis_x, axis_y, axis_z, origin
+        self._update_world_axes_visuals()
+        return axis_x, axis_y, axis_z, origin
+
+    def _update_world_axes_visuals(self) -> None:
+        length = float(self._world_axis_length)
+        origin = np.zeros(3, dtype=np.float32)
+        self._axis_x.set_data(
+            pos=np.asarray([origin, [length, 0.0, 0.0]], dtype=np.float32), connect="segments"
+        )
+        self._axis_y.set_data(
+            pos=np.asarray([origin, [0.0, length, 0.0]], dtype=np.float32), connect="segments"
+        )
+        self._axis_z.set_data(
+            pos=np.asarray([origin, [0.0, 0.0, length]], dtype=np.float32), connect="segments"
+        )
+        for visual in (self._axis_x, self._axis_y, self._axis_z, self._axis_origin):
+            visual.visible = self._axes_visible
 
     def fit_scene(self) -> None:
         if self._trajectory_positions:
@@ -586,8 +668,14 @@ class ReconstructionCanvas(QObject):
 
     def set_axes_visible(self, visible: bool) -> None:
         self._axes_visible = bool(visible)
-        self._axes.visible = self._axes_visible
+        for visual in (self._axis_x, self._axis_y, self._axis_z, self._axis_origin):
+            visual.visible = self._axes_visible
         self._canvas.update()
+
+    def orientation_gizmo_axes(self) -> np.ndarray:
+        from app.reconstruction_visualization import orientation_gizmo_projection
+
+        return orientation_gizmo_projection(self._camera.azimuth, self._camera.elevation)
 
     def _create_grid_visual(self):
         grid = scene.visuals.GridLines(color=(1, 1, 1, 0.08), parent=self._view.scene)
@@ -617,6 +705,14 @@ class ReconstructionCanvas(QObject):
     @property
     def trajectory_visible(self) -> bool:
         return self._trajectory_visible
+
+    @property
+    def trajectory_display_count(self) -> int:
+        return self._trajectory_display_count
+
+    @property
+    def world_axis_length(self) -> float:
+        return float(self._world_axis_length)
 
     @property
     def current_camera_position(self) -> np.ndarray | None:

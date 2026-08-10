@@ -1,8 +1,8 @@
-"""Reconstruction workspace through Phase 8.8C1.
+"""Reconstruction workspace through Phase 8.8C2.
 
-B5 enabled primary navigation. C1 replaces the placeholder with a real VisPy
-reconstruction viewport foundation while preserving the authoritative B3/B4
-runtime, status, scale, and calibration contracts.
+B5 enabled primary navigation. C1 introduced the dedicated VisPy viewport; C2
+adds live camera trajectory presentation and a screen-space orientation gizmo
+while preserving the authoritative runtime, scale, and calibration contracts.
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ from app.theme import (
     SPLITTER_HANDLE,
 )
 from app.widgets.icon_button import IconButton
+from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientationGizmo
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CameraIntrinsicsPolicy,
@@ -302,7 +303,7 @@ class ReconstructionPage(QWidget):
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(headline)
         detail = QLabel(
-            "World axes, grid, and current camera pose are active. Live trajectory, sparse/canonical geometry, and neural appearance are introduced progressively from Phase 8.8C2 onward."
+            "World origin, grid, current camera pose, and live trajectory are active. Sparse/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
         )
         detail.setObjectName("reconstructionViewportHint")
         detail.setWordWrap(True)
@@ -345,6 +346,17 @@ class ReconstructionPage(QWidget):
         grid_button.toggled.connect(self._reconstruction_canvas.set_grid_visible)
         self._viewport_tool_buttons["grid"] = grid_button
         tool_row.addWidget(grid_button)
+        trajectory_button = IconButton(
+            "trajectory",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide live camera trajectory",
+            checkable=True,
+        )
+        trajectory_button.setChecked(True)
+        trajectory_button.toggled.connect(self._reconstruction_canvas.set_trajectory_visible)
+        self._viewport_tool_buttons["trajectory"] = trajectory_button
+        tool_row.addWidget(trajectory_button)
 
         grid.addWidget(
             tools,
@@ -361,6 +373,17 @@ class ReconstructionPage(QWidget):
             0,
             0,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+        )
+
+        self._orientation_gizmo = ReconstructionOrientationGizmo(
+            self._reconstruction_canvas.orientation_gizmo_axes,
+            host,
+        )
+        grid.addWidget(
+            self._orientation_gizmo,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
         )
         grid.setRowStretch(0, 1)
         grid.setColumnStretch(0, 1)
@@ -1326,6 +1349,8 @@ class ReconstructionPage(QWidget):
         self._viewport_shutdown = True
         self._visual_pose_timer.stop()
         self._pending_visual_pose = None
+        if hasattr(self, "_orientation_gizmo"):
+            self._orientation_gizmo.shutdown()
         self._reconstruction_canvas.close()
 
     @staticmethod

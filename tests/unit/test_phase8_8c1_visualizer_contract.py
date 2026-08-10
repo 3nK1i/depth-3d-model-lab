@@ -47,13 +47,11 @@ def test_c1_page_coalesces_high_rate_pose_updates_before_gl_rendering() -> None:
     assert "self._reconstruction_canvas.update_live_pose(matrix)" in flush
 
 
-def test_c1_keeps_trajectory_plumbing_hidden_until_c2() -> None:
+def test_c1_trajectory_buffer_contract_remains_bounded_after_c2_promotion() -> None:
     canvas = (ROOT / "app/widgets/viewport/vispy_canvas.py").read_text(encoding="utf-8")
-    page = (ROOT / "app/widgets/reconstruction_page.py").read_text(encoding="utf-8")
-    assert "self._trajectory_visible = False" in canvas
-    assert "self._trajectory_line.visible = False" in canvas
     assert "MAX_TRAJECTORY_POSES = 20_000" in canvas
-    assert "set_trajectory_visible(True)" not in page
+    assert "self._trajectory_positions" in canvas
+    assert "def set_trajectory_visible" in canvas
 
 
 def test_c1_navigation_and_backend_execution_contracts_remain_unchanged() -> None:

@@ -165,8 +165,10 @@ def _install_fake_vispy_canvas() -> None:
             self._interaction_mode = "orbit"
             self._grid_visible = True
             self._axes_visible = True
-            self._trajectory_visible = False
+            self._trajectory_visible = True
             self._trajectory_positions = []
+            self._trajectory_display_count = 0
+            self._world_axis_length = 0.28
             self._current_camera_position = None
             self._has_pose = False
             self._is_interacting = False
@@ -191,10 +193,18 @@ def _install_fake_vispy_canvas() -> None:
             position = camera_position_in_viewer(T_reconstruction_from_camera).astype(np.float32)
             self._current_camera_position = position
             self._trajectory_positions.append(position.copy())
+            self._trajectory_display_count = len(self._trajectory_positions)
+            if len(self._trajectory_positions) >= 2:
+                from app.reconstruction_visualization import adaptive_world_axis_length
+                self._world_axis_length = adaptive_world_axis_length(
+                    np.asarray(self._trajectory_positions, dtype=np.float64)
+                )
             self._has_pose = True
 
         def clear_live_state(self) -> None:
             self._trajectory_positions.clear()
+            self._trajectory_display_count = 0
+            self._world_axis_length = 0.28
             self._current_camera_position = None
             self._has_pose = False
 
@@ -233,6 +243,18 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def trajectory_visible(self) -> bool:
             return self._trajectory_visible
+
+        @property
+        def trajectory_display_count(self) -> int:
+            return self._trajectory_display_count
+
+        @property
+        def world_axis_length(self) -> float:
+            return float(self._world_axis_length)
+
+        def orientation_gizmo_axes(self):
+            from app.reconstruction_visualization import orientation_gizmo_projection
+            return orientation_gizmo_projection(32.0, 24.0)
 
         @property
         def current_camera_position(self):

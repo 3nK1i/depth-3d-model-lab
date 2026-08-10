@@ -184,7 +184,6 @@ def main() -> int:
             and cleanup_ok
             and canvas.has_pose
             and canvas.trajectory_count > 0
-            and canvas.trajectory_visible is False
             and canvas.grid_visible
             and canvas.axes_visible
             and position is not None
@@ -216,7 +215,7 @@ def main() -> int:
             "pose_convention": "T_reconstruction_from_camera",
             "scale_status": "arbitrary",
             "certified_metrology": False,
-            "trajectory_rendering_enabled": False,
+            "trajectory_rendering_enabled": canvas.trajectory_visible,
             "backend_autostart_from_navigation": False,
             "screenshot": str(screenshot_path),
             "errors": errors,

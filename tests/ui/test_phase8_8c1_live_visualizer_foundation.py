@@ -36,7 +36,7 @@ def test_c1_reconstruction_page_owns_real_viewer_foundation(window) -> None:
     canvas = page._reconstruction_canvas
     assert canvas.grid_visible is True
     assert canvas.axes_visible is True
-    assert canvas.trajectory_visible is False
+    assert canvas.trajectory_visible is True
     assert canvas.has_pose is False
     assert page._viewport_placeholder.isHidden() is False
     assert page._viewport_state.text() == "Awaiting scene"
@@ -57,7 +57,7 @@ def test_c1_live_observation_updates_current_camera_via_coalesced_ui_timer(windo
     assert canvas.has_pose is True
     assert canvas.trajectory_count == 1
     assert np.allclose(canvas.current_camera_position, [4.0, 6.0, -5.0])
-    assert canvas.trajectory_visible is False
+    assert canvas.trajectory_visible is True
     assert page._viewport_placeholder.isHidden() is True
     assert page._viewport_state.text() == "Live camera pose"
     assert canvas.fit_calls == 1
