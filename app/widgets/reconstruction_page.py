@@ -1,8 +1,8 @@
-"""Reconstruction workspace through Phase 8.8D1.
+"""Reconstruction workspace through Phase 8.8D2.
 
-C1-C5 established the live viewer. D1 adds bounded visualization of the already
-qualified offline PyCOLMAP sparse-SfM result while preserving arbitrary-gauge,
-partial-scene, and non-certified-metrology semantics.
+C1-C5 established the live viewer. D1 added bounded visualization of completed
+offline PyCOLMAP sparse SfM. D2 adds camera-structure inspection and selection
+without changing arbitrary-gauge, partial-scene, or metrology-authority semantics.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -29,7 +30,14 @@ from PyQt6.QtWidgets import (
 )
 
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
-from app.offline_reconstruction_visualization import load_offline_sparse_visualization
+from app.offline_reconstruction_visualization import (
+    OfflineSparseVisualization,
+    load_offline_sparse_visualization,
+)
+from app.offline_reconstruction_inspection import (
+    build_offline_camera_inspection,
+    format_offline_structure_summary,
+)
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
@@ -92,6 +100,8 @@ class ReconstructionPage(QWidget):
         self._pending_keyframes: tuple[np.ndarray, tuple[str, ...], int, int] | None = None
         self._offline_visualization_path: Path | None = None
         self._offline_visualization_error = ""
+        self._offline_visualization: OfflineSparseVisualization | None = None
+        self._offline_camera_selection_index: int | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
@@ -462,6 +472,120 @@ class ReconstructionPage(QWidget):
         )
         self._diagnostics_hud.setVisible(requested and live_context)
 
+    def _activate_offline_inspection(self, visual: OfflineSparseVisualization) -> None:
+        self._offline_visualization = visual
+        self._offline_camera_selection_index = None
+        self._offline_camera_combo.blockSignals(True)
+        self._offline_camera_combo.clear()
+        self._offline_camera_combo.addItem("Select camera…", -1)
+        for index, camera_id in enumerate(visual.camera_ids):
+            self._offline_camera_combo.addItem(f"{index + 1:02d} • {camera_id}", index)
+        self._offline_camera_combo.setCurrentIndex(0)
+        self._offline_camera_combo.blockSignals(False)
+        self._offline_camera_combo.setEnabled(bool(visual.camera_ids))
+        self._offline_structure_value.setText(format_offline_structure_summary(visual))
+        self._offline_structure_value.setToolTip(
+            "Bounded D1 visualization sample versus authoritative full sparse-SfM counts."
+        )
+        self._offline_camera_position_value.setText("—")
+        self._offline_camera_delta_value.setText("—")
+        self._offline_inspection_group.setVisible(True)
+        self._refresh_offline_camera_navigation()
+
+    def _reset_offline_inspection(self, *, hide: bool = True) -> None:
+        self._offline_visualization = None
+        self._offline_camera_selection_index = None
+        if hasattr(self, "_offline_camera_combo"):
+            self._offline_camera_combo.blockSignals(True)
+            self._offline_camera_combo.clear()
+            self._offline_camera_combo.addItem("Select camera…", -1)
+            self._offline_camera_combo.setCurrentIndex(0)
+            self._offline_camera_combo.setEnabled(False)
+            self._offline_camera_combo.blockSignals(False)
+            self._offline_camera_position_value.setText("—")
+            self._offline_camera_delta_value.setText("—")
+            self._offline_structure_value.setText("No offline sparse SfM")
+            self._offline_inspection_group.setVisible(not hide)
+            self._refresh_offline_camera_navigation()
+        if hasattr(self, "_reconstruction_canvas"):
+            self._reconstruction_canvas.clear_offline_camera_selection()
+
+    def _on_offline_camera_selected(self, combo_index: int) -> None:
+        visual = self._offline_visualization
+        if visual is None:
+            return
+        item_data = self._offline_camera_combo.itemData(combo_index)
+        camera_index = -1 if item_data is None else int(item_data)
+        if camera_index < 0:
+            self._offline_camera_selection_index = None
+            self._reconstruction_canvas.clear_offline_camera_selection()
+            self._offline_camera_position_value.setText("—")
+            self._offline_camera_delta_value.setText("—")
+            self._refresh_offline_camera_navigation()
+            return
+        try:
+            inspection = build_offline_camera_inspection(visual, camera_index)
+            self._reconstruction_canvas.select_offline_camera(camera_index)
+        except (IndexError, TypeError, ValueError) as exc:
+            self._offline_camera_selection_index = None
+            self._reconstruction_canvas.clear_offline_camera_selection()
+            self._offline_camera_position_value.setText("Unavailable")
+            self._offline_camera_delta_value.setText("Unavailable")
+            self._offline_camera_position_value.setToolTip(str(exc))
+            self._refresh_offline_camera_navigation()
+            return
+        self._offline_camera_selection_index = camera_index
+        self._offline_camera_position_value.setText(inspection.position_text)
+        self._offline_camera_position_value.setToolTip(
+            "Camera translation in the arbitrary reconstruction gauge; values are not metres."
+        )
+        self._offline_camera_delta_value.setText(inspection.delta_previous_text)
+        self._offline_camera_delta_value.setToolTip(
+            "Euclidean displacement from the previous registered camera in arbitrary SfM gauge units."
+        )
+        self._viewport_state.setToolTip(
+            f"Selected registered camera {inspection.ordinal_text}: {inspection.camera_id}"
+        )
+        self._refresh_offline_camera_navigation()
+
+    def _refresh_offline_camera_navigation(self) -> None:
+        visual = self._offline_visualization
+        selected = self._offline_camera_selection_index
+        count = 0 if visual is None else len(visual.camera_ids)
+        has_selection = selected is not None and 0 <= selected < count
+        self._offline_focus_camera_button.setEnabled(has_selection)
+        self._offline_clear_camera_button.setEnabled(has_selection)
+        self._offline_prev_camera_button.setEnabled(has_selection and selected > 0)
+        self._offline_next_camera_button.setEnabled(has_selection and selected + 1 < count)
+
+    def _select_previous_offline_camera(self) -> None:
+        if self._offline_camera_selection_index is None:
+            return
+        target = self._offline_camera_selection_index - 1
+        if target >= 0:
+            self._offline_camera_combo.setCurrentIndex(target + 1)
+
+    def _select_next_offline_camera(self) -> None:
+        visual = self._offline_visualization
+        if visual is None or self._offline_camera_selection_index is None:
+            return
+        target = self._offline_camera_selection_index + 1
+        if target < len(visual.camera_ids):
+            self._offline_camera_combo.setCurrentIndex(target + 1)
+
+    def _focus_selected_offline_camera(self) -> None:
+        if self._offline_camera_selection_index is None:
+            return
+        self._reconstruction_canvas.focus_selected_offline_camera()
+
+    def _clear_offline_camera_selection(self) -> None:
+        if self._offline_camera_combo.count():
+            self._offline_camera_combo.setCurrentIndex(0)
+        else:
+            self._offline_camera_selection_index = None
+            self._reconstruction_canvas.clear_offline_camera_selection()
+            self._refresh_offline_camera_navigation()
+
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("reconstructionSettingsPanel")
@@ -499,6 +623,52 @@ class ReconstructionPage(QWidget):
         self._add_status_row(session_layout, "Checkpoint", self._checkpoint_value)
         self._add_status_row(session_layout, "Telemetry", self._telemetry_value)
         layout.addWidget(session)
+
+        self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
+        inspection_layout = self._offline_inspection_group.layout()
+        selector_row = QHBoxLayout()
+        selector_row.setSpacing(6)
+        selector_label = QLabel("Camera")
+        selector_label.setObjectName("reconstructionRowLabel")
+        selector_row.addWidget(selector_label)
+        self._offline_camera_combo = QComboBox()
+        self._offline_camera_combo.setObjectName("reconstructionOfflineCameraCombo")
+        self._offline_camera_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._offline_camera_combo.setMinimumContentsLength(12)
+        self._offline_camera_combo.addItem("Select camera…", -1)
+        self._offline_camera_combo.setEnabled(False)
+        selector_row.addWidget(self._offline_camera_combo, stretch=1)
+        inspection_layout.addLayout(selector_row)
+
+        self._offline_camera_position_value = self._settings_value("—")
+        self._offline_camera_delta_value = self._settings_value("—")
+        self._offline_structure_value = self._settings_value("No offline sparse SfM")
+        self._add_status_row(inspection_layout, "Position", self._offline_camera_position_value)
+        self._add_status_row(inspection_layout, "Δ previous", self._offline_camera_delta_value)
+        self._add_status_row(inspection_layout, "Structure", self._offline_structure_value)
+
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(6)
+        self._offline_prev_camera_button = QPushButton("Prev")
+        self._offline_focus_camera_button = QPushButton("Focus")
+        self._offline_next_camera_button = QPushButton("Next")
+        self._offline_clear_camera_button = QPushButton("Clear")
+        for button in (
+            self._offline_prev_camera_button,
+            self._offline_focus_camera_button,
+            self._offline_next_camera_button,
+            self._offline_clear_camera_button,
+        ):
+            button.setEnabled(False)
+            nav_row.addWidget(button)
+        inspection_layout.addLayout(nav_row)
+        self._offline_camera_combo.currentIndexChanged.connect(self._on_offline_camera_selected)
+        self._offline_prev_camera_button.clicked.connect(self._select_previous_offline_camera)
+        self._offline_focus_camera_button.clicked.connect(self._focus_selected_offline_camera)
+        self._offline_next_camera_button.clicked.connect(self._select_next_offline_camera)
+        self._offline_clear_camera_button.clicked.connect(self._clear_offline_camera_selection)
+        self._offline_inspection_group.setVisible(False)
+        layout.addWidget(self._offline_inspection_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -995,6 +1165,7 @@ class ReconstructionPage(QWidget):
             self._pending_sparse_landmarks = None
             self._pending_keyframes = None
             self._visual_pose_timer.stop()
+            self._reset_offline_inspection()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
             self._visualizer_fitted_once = False
@@ -1100,8 +1271,9 @@ class ReconstructionPage(QWidget):
             return
         visualization_path = str(artifacts.get("offline_visualization_json", "")).strip()
         if not visualization_path:
-            # Older A3 results remain valid but simply cannot be visualized by D1.
+            # Older A3 results remain valid but simply cannot be visualized by D1/D2.
             self._offline_visualization_error = "Offline result predates the D1 visualization artifact."
+            self._reset_offline_inspection()
             return
         try:
             visual = load_offline_sparse_visualization(visualization_path)
@@ -1120,6 +1292,7 @@ class ReconstructionPage(QWidget):
             )
             self._offline_visualization_path = Path(visualization_path).expanduser().resolve()
             self._offline_visualization_error = ""
+            self._activate_offline_inspection(visual)
             self._viewport_state.setToolTip("")
             if self._reconstruction_canvas.offline_visualization_loaded:
                 self._viewport_placeholder.setVisible(False)
@@ -1130,6 +1303,7 @@ class ReconstructionPage(QWidget):
             # A visualization artifact is presentation-only. A completed authoritative
             # offline worker result remains completed even if this optional view fails.
             self._offline_visualization_error = str(exc)
+            self._reset_offline_inspection()
             self._viewport_state.setText("Offline visualization unavailable")
             self._viewport_state.setToolTip(str(exc))
 
@@ -1408,6 +1582,7 @@ class ReconstructionPage(QWidget):
             self._pending_sparse_landmarks = None
             self._pending_keyframes = None
             self._visual_pose_timer.stop()
+            self._reset_offline_inspection()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
             self._visualizer_fitted_once = False

@@ -161,6 +161,7 @@ def _install_fake_vispy_canvas() -> None:
 
         MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
         MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
+        MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
 
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
@@ -180,6 +181,13 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_visualization_loaded = False
             self._offline_session_id = None
             self._offline_scale_status = None
+            self._offline_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._offline_camera_positions = np.zeros((0, 3), dtype=np.float32)
+            self._offline_camera_ids = ()
+            self._offline_camera_path_visible = False
+            self._offline_camera_path_display_count = 0
+            self._selected_offline_camera_index = None
+            self._selected_offline_camera_visible = False
             self._keyframes_visible = True
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
             self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
@@ -237,6 +245,13 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_visualization_loaded = False
             self._offline_session_id = None
             self._offline_scale_status = None
+            self._offline_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._offline_camera_positions = np.zeros((0, 3), dtype=np.float32)
+            self._offline_camera_ids = ()
+            self._offline_camera_path_visible = False
+            self._offline_camera_path_display_count = 0
+            self._selected_offline_camera_index = None
+            self._selected_offline_camera_visible = False
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
             self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
             self._keyframe_ids = ()
@@ -320,17 +335,49 @@ def _install_fake_vispy_canvas() -> None:
                 total_count=landmark_total,
                 revision=None,
             )
+            matrices = np.asarray(camera_matrices_reconstruction, dtype=np.float64)
+            ids = tuple(str(value) for value in camera_ids)
+            from app.reconstruction_visualization import keyframe_centers_in_viewer
+            self._offline_camera_matrices = np.asarray(matrices).copy()
+            self._offline_camera_positions = keyframe_centers_in_viewer(self._offline_camera_matrices)
+            self._offline_camera_ids = ids
             self.update_keyframe_poses(
-                camera_matrices_reconstruction,
-                keyframe_ids=camera_ids,
+                matrices,
+                keyframe_ids=ids,
                 total_count=registered_camera_total,
                 revision=None,
             )
             self._offline_visualization_loaded = bool(self.has_sparse_map or self.has_keyframes)
+            self._offline_camera_path_display_count = min(
+                int(self._offline_camera_positions.shape[0]), self.MAX_OFFLINE_CAMERA_PATH_POINTS
+            )
+            self._offline_camera_path_visible = bool(
+                self._offline_visualization_loaded and self._keyframes_visible
+                and self._offline_camera_positions.shape[0] >= 2
+            )
             self._offline_session_id = str(session_id)
             self._offline_scale_status = str(scale_status)
             self._has_pose = False
             self._current_camera_position = None
+
+        def select_offline_camera(self, camera_index: int) -> None:
+            index = int(camera_index)
+            if not self._offline_visualization_loaded:
+                raise ValueError("No offline sparse reconstruction is loaded.")
+            if index < 0 or index >= self._offline_camera_matrices.shape[0]:
+                raise IndexError("Offline registered camera index is out of range.")
+            self._selected_offline_camera_index = index
+            self._selected_offline_camera_visible = self._keyframes_visible
+
+        def clear_offline_camera_selection(self) -> None:
+            self._selected_offline_camera_index = None
+            self._selected_offline_camera_visible = False
+
+        def focus_selected_offline_camera(self) -> None:
+            if self._selected_offline_camera_index is None:
+                self.focus_current_camera()
+                return
+            self.focus_calls += 1
 
         def set_sparse_landmarks_visible(self, visible: bool) -> None:
             self._sparse_landmarks_visible = bool(visible)
@@ -381,6 +428,13 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_keyframes_visible(self, visible: bool) -> None:
             self._keyframes_visible = bool(visible)
+            self._offline_camera_path_visible = bool(
+                self._keyframes_visible and self._offline_visualization_loaded
+                and self._offline_camera_positions.shape[0] >= 2
+            )
+            self._selected_offline_camera_visible = bool(
+                self._keyframes_visible and self._selected_offline_camera_index is not None
+            )
 
         def fit_scene(self) -> None:
             self.fit_calls += 1
@@ -465,6 +519,37 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def has_keyframes(self) -> bool:
             return self._keyframe_display_count > 0
+
+        @property
+        def offline_registered_camera_count(self) -> int:
+            return int(self._offline_camera_matrices.shape[0])
+
+        @property
+        def offline_camera_ids(self):
+            return self._offline_camera_ids
+
+        @property
+        def offline_camera_path_visible(self) -> bool:
+            return bool(self._offline_camera_path_visible)
+
+        @property
+        def offline_camera_path_display_count(self) -> int:
+            return int(self._offline_camera_path_display_count)
+
+        @property
+        def selected_offline_camera_index(self):
+            return self._selected_offline_camera_index
+
+        @property
+        def selected_offline_camera_id(self):
+            index = self._selected_offline_camera_index
+            if index is None or index < 0 or index >= len(self._offline_camera_ids):
+                return None
+            return self._offline_camera_ids[index]
+
+        @property
+        def selected_offline_camera_visible(self) -> bool:
+            return bool(self._selected_offline_camera_visible)
 
         @property
         def offline_visualization_loaded(self) -> bool:

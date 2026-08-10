@@ -379,7 +379,8 @@ class ReconstructionCanvas(QObject):
     """VisPy foundation for the Phase 8.8C Reconstruction viewport.
 
     C1-C5 provide the live reconstruction viewer. D1 reuses the same bounded
-    scene primitives for completed offline sparse SfM results without mixing live
+    scene primitives for completed offline sparse SfM results. D2 adds bounded
+    registered-camera structure inspection and selection without mixing live
     runtime state or promoting sparse geometry to canonical/metric authority.
     """
 
@@ -391,6 +392,7 @@ class ReconstructionCanvas(QObject):
     MAX_TRAJECTORY_DISPLAY_POINTS = 4_096
     MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
     MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
+    MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -488,6 +490,35 @@ class ReconstructionCanvas(QObject):
         self._keyframes_visible = True
         self._keyframe_frustums.visible = True
         self._keyframe_centers.visible = True
+        self._offline_camera_path = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="strip",
+            color=(0.94, 0.66, 0.24, 0.30),
+            width=1.0,
+            parent=self._view.scene,
+        )
+        self._offline_camera_path.visible = False
+        self._selected_offline_camera_frustum = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(1.0, 0.84, 0.30, 0.98),
+            width=2.4,
+            parent=self._view.scene,
+        )
+        self._selected_offline_camera_center = scene.visuals.Markers(parent=self._view.scene)
+        self._selected_offline_camera_center.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(1.0, 0.84, 0.30, 1.0),
+            size=7.0,
+            edge_width=0,
+        )
+        self._selected_offline_camera_frustum.visible = False
+        self._selected_offline_camera_center.visible = False
+        self._offline_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._offline_camera_positions = np.zeros((0, 3), dtype=np.float32)
+        self._offline_camera_ids: tuple[str, ...] = ()
+        self._offline_camera_path_display_count = 0
+        self._selected_offline_camera_index: int | None = None
         self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
         self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
         self._keyframe_ids: tuple[str, ...] = ()
@@ -584,6 +615,19 @@ class ReconstructionCanvas(QObject):
         self._offline_visualization_loaded = False
         self._offline_session_id = None
         self._offline_scale_status = None
+        self._offline_camera_path.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
+        self._offline_camera_path.visible = False
+        self._selected_offline_camera_frustum.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._selected_offline_camera_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._selected_offline_camera_frustum.visible = False
+        self._selected_offline_camera_center.visible = False
+        self._offline_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._offline_camera_positions = np.zeros((0, 3), dtype=np.float32)
+        self._offline_camera_ids = ()
+        self._offline_camera_path_display_count = 0
+        self._selected_offline_camera_index = None
         self._keyframe_frustums.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="segments")
         self._keyframe_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
         self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
@@ -687,19 +731,118 @@ class ReconstructionCanvas(QObject):
             total_count=landmark_total,
             revision=None,
         )
+        matrices = np.asarray(camera_matrices_reconstruction, dtype=np.float64)
+        ids = tuple(str(value).strip() for value in camera_ids)
+        if matrices.size == 0:
+            matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or not np.isfinite(matrices).all():
+            raise ValueError("camera_matrices_reconstruction must be a finite (N, 4, 4) array.")
+        if len(ids) != matrices.shape[0] or any(not value for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("camera_ids must match the offline camera samples and remain unique.")
+        from app.reconstruction_visualization import keyframe_centers_in_viewer
+
+        self._offline_camera_matrices = np.ascontiguousarray(matrices)
+        self._offline_camera_positions = keyframe_centers_in_viewer(self._offline_camera_matrices)
+        self._offline_camera_ids = ids
+        self._selected_offline_camera_index = None
         self.update_keyframe_poses(
-            camera_matrices_reconstruction,
-            keyframe_ids=camera_ids,
+            matrices,
+            keyframe_ids=ids,
             total_count=registered_camera_total,
             revision=None,
         )
         self._offline_visualization_loaded = bool(self.has_sparse_map or self.has_keyframes)
+        self._refresh_offline_camera_path()
         self._offline_session_id = sid
         self._offline_scale_status = status
         self._has_pose = False
         self._current_camera_position = None
         self._refresh_world_axis_scale()
         self._canvas.update()
+
+    def _refresh_offline_camera_path(self) -> None:
+        if self._offline_camera_positions.shape[0] < 2:
+            self._offline_camera_path.set_data(
+                pos=np.zeros((0, 3), dtype=np.float32), connect="strip"
+            )
+            self._offline_camera_path_display_count = int(self._offline_camera_positions.shape[0])
+            self._offline_camera_path.visible = False
+            return
+        from app.reconstruction_visualization import keyframe_display_indices
+
+        indices = keyframe_display_indices(
+            self._offline_camera_positions.shape[0],
+            max_keyframes=self.MAX_OFFLINE_CAMERA_PATH_POINTS,
+        )
+        display = np.ascontiguousarray(self._offline_camera_positions[indices])
+        self._offline_camera_path.set_data(pos=display, connect="strip")
+        self._offline_camera_path_display_count = int(display.shape[0])
+        self._offline_camera_path.visible = bool(
+            self._offline_visualization_loaded and self._keyframes_visible
+        )
+
+    def select_offline_camera(self, camera_index: int) -> None:
+        """Highlight one registered offline camera without changing reconstruction state."""
+
+        index = int(camera_index)
+        if not self._offline_visualization_loaded:
+            raise ValueError("No offline sparse reconstruction is loaded.")
+        if index < 0 or index >= self._offline_camera_matrices.shape[0]:
+            raise IndexError("Offline registered camera index is out of range.")
+        self._selected_offline_camera_index = index
+        self._refresh_selected_offline_camera()
+        self._canvas.update()
+
+    def clear_offline_camera_selection(self) -> None:
+        self._selected_offline_camera_index = None
+        self._selected_offline_camera_frustum.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._selected_offline_camera_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._selected_offline_camera_frustum.visible = False
+        self._selected_offline_camera_center.visible = False
+        self._canvas.update()
+
+    def _refresh_selected_offline_camera(self) -> None:
+        index = self._selected_offline_camera_index
+        if index is None:
+            return
+        if index < 0 or index >= self._offline_camera_matrices.shape[0]:
+            self.clear_offline_camera_selection()
+            return
+        from app.reconstruction_visualization import keyframe_frustum_segments_in_viewer
+
+        matrix = self._offline_camera_matrices[index : index + 1]
+        depth = float(np.clip(self._world_axis_length * 0.34, 0.05, 0.15))
+        frustum = keyframe_frustum_segments_in_viewer(matrix, depth=depth)
+        center = self._offline_camera_positions[index : index + 1]
+        self._selected_offline_camera_frustum.set_data(pos=frustum, connect="segments")
+        self._selected_offline_camera_center.set_data(
+            pos=center,
+            face_color=(1.0, 0.84, 0.30, 1.0),
+            size=7.0,
+            edge_width=0,
+        )
+        visible = bool(self._keyframes_visible and self._offline_visualization_loaded)
+        self._selected_offline_camera_frustum.visible = visible
+        self._selected_offline_camera_center.visible = visible
+
+    def focus_selected_offline_camera(self) -> None:
+        index = self._selected_offline_camera_index
+        if index is None or index < 0 or index >= self._offline_camera_positions.shape[0]:
+            if index is not None:
+                self.clear_offline_camera_selection()
+            if self._current_camera_position is None:
+                self.fit_scene()
+            else:
+                self._camera.center = tuple(float(value) for value in self._current_camera_position)
+                self._camera.distance = 2.0
+                self._camera.view_changed()
+            return
+        position = self._offline_camera_positions[index]
+        self._camera.center = tuple(float(value) for value in position)
+        self._camera.distance = max(float(self._world_axis_length) * 5.0, 0.8)
+        self._camera.view_changed()
 
     def set_sparse_landmarks_visible(self, visible: bool) -> None:
         self._sparse_landmarks_visible = bool(visible)
@@ -750,8 +893,20 @@ class ReconstructionCanvas(QObject):
         self._keyframes_visible = bool(visible)
         self._keyframe_frustums.visible = self._keyframes_visible
         self._keyframe_centers.visible = self._keyframes_visible
+        self._offline_camera_path.visible = bool(
+            self._keyframes_visible and self._offline_visualization_loaded
+            and self._offline_camera_positions.shape[0] >= 2
+        )
+        selected_visible = bool(
+            self._keyframes_visible and self._offline_visualization_loaded
+            and self._selected_offline_camera_index is not None
+        )
+        self._selected_offline_camera_frustum.visible = selected_visible
+        self._selected_offline_camera_center.visible = selected_visible
         if self._keyframes_visible:
             self._refresh_keyframe_visual()
+            if self._selected_offline_camera_index is not None:
+                self._refresh_selected_offline_camera()
         self._canvas.update()
 
     def _refresh_keyframe_visual(self) -> None:
@@ -815,6 +970,8 @@ class ReconstructionCanvas(QObject):
         self._update_world_axes_visuals()
         if self._keyframe_matrices.shape[0]:
             self._refresh_keyframe_visual()
+        if self._selected_offline_camera_index is not None:
+            self._refresh_selected_offline_camera()
 
     def _create_world_axes_visuals(self):
         axis_x = scene.visuals.Line(
@@ -893,6 +1050,9 @@ class ReconstructionCanvas(QObject):
         self._camera.view_changed()
 
     def focus_current_camera(self) -> None:
+        if self._selected_offline_camera_index is not None and self._offline_visualization_loaded:
+            self.focus_selected_offline_camera()
+            return
         if self._current_camera_position is None:
             self.fit_scene()
             return
@@ -1014,6 +1174,40 @@ class ReconstructionCanvas(QObject):
     @property
     def has_keyframes(self) -> bool:
         return self._keyframe_display_count > 0
+
+    @property
+    def offline_registered_camera_count(self) -> int:
+        return int(self._offline_camera_matrices.shape[0])
+
+    @property
+    def offline_camera_ids(self) -> tuple[str, ...]:
+        return self._offline_camera_ids
+
+    @property
+    def offline_camera_path_visible(self) -> bool:
+        return bool(self._offline_camera_path.visible)
+
+    @property
+    def offline_camera_path_display_count(self) -> int:
+        return int(self._offline_camera_path_display_count)
+
+    @property
+    def selected_offline_camera_index(self) -> int | None:
+        return self._selected_offline_camera_index
+
+    @property
+    def selected_offline_camera_id(self) -> str | None:
+        index = self._selected_offline_camera_index
+        if index is None or index < 0 or index >= len(self._offline_camera_ids):
+            return None
+        return self._offline_camera_ids[index]
+
+    @property
+    def selected_offline_camera_visible(self) -> bool:
+        return bool(
+            self._selected_offline_camera_index is not None
+            and self._selected_offline_camera_frustum.visible
+        )
 
     @property
     def offline_visualization_loaded(self) -> bool:
