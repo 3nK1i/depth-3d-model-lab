@@ -1,8 +1,9 @@
-"""Reconstruction workspace through Phase 8.8D2.
+"""Reconstruction workspace through Phase 8.8D3.
 
 C1-C5 established the live viewer. D1 added bounded visualization of completed
-offline PyCOLMAP sparse SfM. D2 adds camera-structure inspection and selection
-without changing arbitrary-gauge, partial-scene, or metrology-authority semantics.
+offline PyCOLMAP sparse SfM, D2 added camera-structure inspection, and D3
+surfaces the backend sparse-SfM health gate without turning operational quality
+telemetry into metric accuracy or metrology authority.
 """
 
 from __future__ import annotations
@@ -37,6 +38,11 @@ from app.offline_reconstruction_visualization import (
 from app.offline_reconstruction_inspection import (
     build_offline_camera_inspection,
     format_offline_structure_summary,
+)
+from app.offline_reconstruction_quality import (
+    OfflineSfmHealthPresentation,
+    build_offline_sfm_health_presentation,
+    unavailable_offline_sfm_health,
 )
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
@@ -102,6 +108,7 @@ class ReconstructionPage(QWidget):
         self._offline_visualization_error = ""
         self._offline_visualization: OfflineSparseVisualization | None = None
         self._offline_camera_selection_index: int | None = None
+        self._offline_sfm_health: OfflineSfmHealthPresentation | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
@@ -472,6 +479,44 @@ class ReconstructionPage(QWidget):
         )
         self._diagnostics_hud.setVisible(requested and live_context)
 
+    def _apply_offline_sfm_health(self, presentation: OfflineSfmHealthPresentation) -> None:
+        self._offline_sfm_health = presentation
+        self._offline_quality_status_value.setText(presentation.status_label)
+        self._offline_quality_status_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._offline_quality_status_value)
+        self._offline_quality_status_value.setToolTip(presentation.gate_tooltip)
+        self._offline_quality_registration_value.setText(presentation.registration_text)
+        self._offline_quality_reprojection_value.setText(presentation.reprojection_text)
+        self._offline_quality_support_value.setText(presentation.support_text)
+        self._offline_quality_gate_value.setText(presentation.gate_text)
+        self._offline_quality_gate_value.setToolTip(presentation.gate_tooltip)
+        self._offline_quality_registration_value.setToolTip(
+            "Registered sparse-SfM cameras versus input keyframes. This is coverage, not metric accuracy."
+        )
+        self._offline_quality_reprojection_value.setToolTip(
+            "Mean sparse feature reprojection residual in image pixels, as reported by the qualified SfM backend."
+        )
+        self._offline_quality_support_value.setToolTip(
+            "Mean landmark track support and sparse landmark density. Values are operational SfM health telemetry."
+        )
+        self._offline_inspection_group.setVisible(True)
+
+    def _reset_offline_sfm_health(self) -> None:
+        self._offline_sfm_health = None
+        if not hasattr(self, "_offline_quality_status_value"):
+            return
+        self._offline_quality_status_value.setText("—")
+        self._offline_quality_status_value.setProperty("statusKind", "")
+        self._refresh_style(self._offline_quality_status_value)
+        self._offline_quality_status_value.setToolTip("")
+        self._offline_quality_registration_value.setText("—")
+        self._offline_quality_reprojection_value.setText("—")
+        self._offline_quality_support_value.setText("—")
+        self._offline_quality_gate_value.setText("Operational SfM health only • not metrology")
+        self._offline_quality_gate_value.setToolTip(
+            "D3 never promotes sparse-SfM health to metric accuracy or certified metrology."
+        )
+
     def _activate_offline_inspection(self, visual: OfflineSparseVisualization) -> None:
         self._offline_visualization = visual
         self._offline_camera_selection_index = None
@@ -505,7 +550,9 @@ class ReconstructionPage(QWidget):
             self._offline_camera_position_value.setText("—")
             self._offline_camera_delta_value.setText("—")
             self._offline_structure_value.setText("No offline sparse SfM")
-            self._offline_inspection_group.setVisible(not hide)
+            self._offline_inspection_group.setVisible(
+                (not hide) or self._offline_sfm_health is not None
+            )
             self._refresh_offline_camera_navigation()
         if hasattr(self, "_reconstruction_canvas"):
             self._reconstruction_canvas.clear_offline_camera_selection()
@@ -647,6 +694,25 @@ class ReconstructionPage(QWidget):
         self._add_status_row(inspection_layout, "Δ previous", self._offline_camera_delta_value)
         self._add_status_row(inspection_layout, "Structure", self._offline_structure_value)
 
+        quality_title = QLabel("SPARSE SFM HEALTH")
+        quality_title.setObjectName("reconstructionRowLabel")
+        quality_title.setToolTip(
+            "Operational reconstruction-health telemetry from the qualified SfM backend; not a metrology score."
+        )
+        inspection_layout.addWidget(quality_title)
+        self._offline_quality_status_value = self._status_value()
+        self._offline_quality_registration_value = self._settings_value("—")
+        self._offline_quality_reprojection_value = self._settings_value("—")
+        self._offline_quality_support_value = self._settings_value("—")
+        self._offline_quality_gate_value = self._settings_value(
+            "Operational SfM health only • not metrology"
+        )
+        self._add_status_row(inspection_layout, "Health", self._offline_quality_status_value)
+        self._add_status_row(inspection_layout, "Registration", self._offline_quality_registration_value)
+        self._add_status_row(inspection_layout, "Reprojection", self._offline_quality_reprojection_value)
+        self._add_status_row(inspection_layout, "Support", self._offline_quality_support_value)
+        self._add_status_row(inspection_layout, "Gate", self._offline_quality_gate_value)
+
         nav_row = QHBoxLayout()
         nav_row.setSpacing(6)
         self._offline_prev_camera_button = QPushButton("Prev")
@@ -667,6 +733,7 @@ class ReconstructionPage(QWidget):
         self._offline_focus_camera_button.clicked.connect(self._focus_selected_offline_camera)
         self._offline_next_camera_button.clicked.connect(self._select_next_offline_camera)
         self._offline_clear_camera_button.clicked.connect(self._clear_offline_camera_selection)
+        self._reset_offline_sfm_health()
         self._offline_inspection_group.setVisible(False)
         layout.addWidget(self._offline_inspection_group)
 
@@ -1165,6 +1232,7 @@ class ReconstructionPage(QWidget):
             self._pending_sparse_landmarks = None
             self._pending_keyframes = None
             self._visual_pose_timer.stop()
+            self._reset_offline_sfm_health()
             self._reset_offline_inspection()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
@@ -1262,6 +1330,14 @@ class ReconstructionPage(QWidget):
             if parts:
                 self._telemetry_value.setText(" • ".join(parts))
                 self._telemetry_value.setToolTip("Offline sparse-reconstruction result summary.")
+            try:
+                self._apply_offline_sfm_health(build_offline_sfm_health_presentation(sfm))
+            except (TypeError, ValueError) as exc:
+                self._apply_offline_sfm_health(unavailable_offline_sfm_health(str(exc)))
+        else:
+            self._apply_offline_sfm_health(
+                unavailable_offline_sfm_health("Offline result does not contain an SfM summary.")
+            )
 
         if str(payload.get("status", "")).strip().lower() != "completed":
             return
@@ -1582,6 +1658,7 @@ class ReconstructionPage(QWidget):
             self._pending_sparse_landmarks = None
             self._pending_keyframes = None
             self._visual_pose_timer.stop()
+            self._reset_offline_sfm_health()
             self._reset_offline_inspection()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
