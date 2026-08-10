@@ -12,7 +12,7 @@ def test_step8_keeps_version_depth_registry_and_reconstruction_contract():
     assert "development-mock" in ids
     source = Path("app/widgets/mode_tabs.py").read_text(encoding="utf-8")
     assert "AppMode.INSPECTION" in source
-    enabled_section = source.split("_ENABLED_MODES", 1)[1].split("class ModeTabs", 1)[0]
+    enabled_section = source.split("_ENABLED_MODES =", 1)[1].split("}", 1)[0]
     assert "AppMode.RECONSTRUCTION" not in enabled_section
 
 

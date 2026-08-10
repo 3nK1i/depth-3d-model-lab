@@ -74,6 +74,8 @@ def main() -> int:
     CameraEnumerator.start = lambda self: None  # type: ignore[method-assign]
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
+    window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)
+    app.processEvents()
     page = window._reconstruction_page
     controller = window._reconstruction_controller
     application_controller = window._controller
@@ -173,7 +175,7 @@ def main() -> int:
             and running_camera_geometry == "Estimated / test"
             and running_metric_scale == "Unavailable (test)"
             and running_metrology == "Not certified"
-            and not window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
+            and window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
         )
         summary = {
             "phase": "8.8B4-live-status",

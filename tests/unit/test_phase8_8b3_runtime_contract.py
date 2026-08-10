@@ -16,12 +16,12 @@ def _method_source(path: Path, class_name: str, method_name: str) -> str:
     return ast.get_source_segment(source, method) or ""
 
 
-def test_b3_navigation_remains_disabled_and_unrouted() -> None:
+def test_b3_runtime_contract_survives_b5_navigation_enablement() -> None:
     tabs = (ROOT / "app/widgets/mode_tabs.py").read_text(encoding="utf-8")
     enabled = tabs.split("_ENABLED_MODES =", 1)[1].split("}", 1)[0]
     assert "AppMode.RECONSTRUCTION" not in enabled
     handler = _method_source(ROOT / "app/main_window.py", "MainWindow", "_on_mode_changed")
-    assert "AppMode.RECONSTRUCTION" not in handler
+    assert "AppMode.RECONSTRUCTION" in handler
 
 
 def test_b3_source_selection_handlers_still_do_not_start_backends() -> None:

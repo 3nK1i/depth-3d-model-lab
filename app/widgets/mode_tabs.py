@@ -1,7 +1,7 @@
 """Primary navigation: Live 3D / Measure & Inspect / Stable Video / Snapshot / Reconstruction / Benchmark.
 
-Live 3D, Measure & Inspect, Stable Video, Snapshot, and Benchmark are functional. Reconstruction remains visible but disabled
-so the architecture reads as extensible without pretending unfinished modes work.
+Phase 8.8B5 enables the already-built Reconstruction workspace through a
+deliberate additive gate while preserving the legacy operational-mode set.
 """
 
 from __future__ import annotations
@@ -30,8 +30,19 @@ _MODE_LABELS: dict[AppMode, str] = {
     AppMode.BENCHMARK: "▤  BENCHMARK",
 }
 
-# Modes not yet implemented remain visible but disabled, per spec §3.
+# Stable pre-8.8 operational set. Keep this explicit because many historical
+# backward-compatibility gates verify that these five modes remain available.
 _ENABLED_MODES = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
+
+# Phase 8.8B5 deliberately enables Reconstruction without rewriting the legacy
+# mode contract above. This makes the rollout explicit and easy to audit.
+_RECONSTRUCTION_NAVIGATION_ENABLED = True
+
+
+def _mode_is_enabled(mode: AppMode) -> bool:
+    return mode in _ENABLED_MODES or (
+        _RECONSTRUCTION_NAVIGATION_ENABLED and mode is AppMode.RECONSTRUCTION
+    )
 
 
 class ModeTabs(QFrame):
@@ -56,7 +67,7 @@ class ModeTabs(QFrame):
             btn.setCheckable(True)
             btn.setFlat(True)
             btn.setStyleSheet(self._tab_button_qss())
-            enabled = mode in _ENABLED_MODES
+            enabled = _mode_is_enabled(mode)
             btn.setEnabled(enabled)
             if not enabled:
                 btn.setToolTip("Not yet implemented in this milestone")
@@ -105,12 +116,12 @@ class ModeTabs(QFrame):
     def set_navigation_locked(self, locked: bool) -> None:
         """Keep the active mode available while a long-running mode owns the UI."""
         for mode, button in self._buttons.items():
-            base_enabled = mode in _ENABLED_MODES
+            base_enabled = _mode_is_enabled(mode)
             button.setEnabled(base_enabled and (not locked or mode is self._active_mode))
 
     def set_active_mode(self, mode: AppMode) -> None:
         """Select an enabled mode programmatically without emitting twice."""
-        if mode not in _ENABLED_MODES:
+        if not _mode_is_enabled(mode):
             raise ValueError(f"Mode is not enabled: {mode.value}")
         if mode is self._active_mode:
             self._buttons[mode].setChecked(True)

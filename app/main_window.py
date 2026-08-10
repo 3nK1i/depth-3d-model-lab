@@ -114,15 +114,16 @@ class MainWindow(QMainWindow):
         )
         self._controller.frame_captured.connect(self._inference_controller.on_source_frame)
 
-        # Phase 8.8A1: establish one dormant application-facing reconstruction
-        # coordinator around the existing Phase 8.4 live-SLAM bridge. It owns
-        # no heavy backend until a later substep explicitly starts one, and the
-        # Reconstruction UI remains disabled. Keep the live-SLAM attribute as a
+        # Phase 8.8A1 established the application-facing reconstruction
+        # coordinator around the existing Phase 8.4 live-SLAM bridge. Phase
+        # 8.8B5 enables navigation to its UI, while backend startup remains
+        # explicit and controller-guarded. Keep the live-SLAM attribute as a
         # compatibility alias for the already-qualified Phase 8.4 boundary.
         self._reconstruction_controller = ReconstructionController(self._controller, self)
         self._live_slam_controller = self._reconstruction_controller.live_slam_controller
-        # Passive-only binding: B1 mirrors qualified controller state but starts
-        # no reconstruction job and leaves the navigation gate locked.
+        # The page remains passive on construction: navigation alone never starts
+        # a backend. Runtime actions continue to flow through the hardened
+        # ReconstructionController boundary.
         self._reconstruction_page.bind_controller(self._reconstruction_controller)
 
         self._benchmark_controller = BenchmarkController(self)
@@ -143,6 +144,15 @@ class MainWindow(QMainWindow):
         self._reconstruction_controller.configure_start_guards(
             live=self._reconstruction_live_start_guard,
             offline=self._reconstruction_offline_start_guard,
+        )
+        self._reconstruction_controller.live_state_changed.connect(
+            self._on_reconstruction_activity_changed
+        )
+        self._reconstruction_controller.offline_state_changed.connect(
+            self._on_reconstruction_activity_changed
+        )
+        self._reconstruction_controller.offline_run_finished.connect(
+            self._on_reconstruction_activity_changed
         )
         self._inspection_frame: np.ndarray | None = None
         self._snapshot_frame: np.ndarray | None = None
@@ -228,9 +238,8 @@ class MainWindow(QMainWindow):
         self._benchmark_page = BenchmarkPage()
         self._snapshot_page = SnapshotPage()
         self._stable_video_page = StableVideoPage()
-        # Phase 8.8B1: construct the Reconstruction workspace shell now that
-        # the 8.8A controller boundary is hardened. Navigation remains disabled
-        # in ModeTabs until a later B-step deliberately enables it.
+        # Phase 8.8B1 constructed the Reconstruction workspace shell; Phase
+        # 8.8B5 now exposes it through normal application navigation.
         self._reconstruction_page = ReconstructionPage()
         self._mode_stack = QStackedWidget()
         self._mode_stack.addWidget(self._page)
@@ -390,6 +399,24 @@ class MainWindow(QMainWindow):
             return "Live 3D model resources could not be released for offline Reconstruction."
         return None
 
+    def _on_reconstruction_activity_changed(self, *_args: object) -> None:
+        """Lock primary navigation while any long-running owner is active.
+
+        Reconstruction is now a normal application mode, so starting it from the
+        page must preserve the same leave-no-job-behind navigation discipline as
+        Benchmark, Snapshot, Stable Video, and inspection jobs.
+        """
+
+        locked = (
+            self._reconstruction_controller.is_active
+            or self._benchmark_controller.is_running
+            or self._snapshot_controller.is_running
+            or self._stable_video_controller.is_active
+            or self._inspection_controller.is_running
+            or self._inspection_export_controller.is_running
+        )
+        self._mode_tabs.set_navigation_locked(locked)
+
     # -- Primary application modes ---------------------------------------
 
     def _on_mode_changed(self, mode: AppMode) -> None:
@@ -410,6 +437,10 @@ class MainWindow(QMainWindow):
             self._exit_focus_mode()
             self._snapshot_page.set_model(self._settings_panel.selected_model_label)
             self._mode_stack.setCurrentWidget(self._snapshot_page)
+            return
+        if mode is AppMode.RECONSTRUCTION:
+            self._exit_focus_mode()
+            self._mode_stack.setCurrentWidget(self._reconstruction_page)
             return
         if mode is AppMode.BENCHMARK:
             self._exit_focus_mode()

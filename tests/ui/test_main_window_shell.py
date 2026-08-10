@@ -92,8 +92,8 @@ def test_minimum_resolution_supported(window):
     assert window.size().height() >= 768
 
 
-def test_live_3d_inspection_stable_video_snapshot_and_benchmark_modes_are_enabled(window):
-    enabled = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
+def test_all_primary_modes_are_enabled_after_reconstruction_b5(window):
+    enabled = set(AppMode)
     for mode, btn in window._mode_tabs._buttons.items():
         assert btn.isEnabled() is (mode in enabled)
 
@@ -107,7 +107,7 @@ def test_measure_inspect_mode_switches_to_dedicated_page(window, qtbot):
     qtbot.mouseClick(button, _left_button())
     assert window._mode_tabs.active_mode is AppMode.INSPECTION
     assert window._mode_stack.currentWidget() is window._inspection_page
-    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is False
+    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
 
 def test_stable_video_mode_switches_to_operational_page(window, qtbot):
     button = window._mode_tabs._buttons[AppMode.STABLE_VIDEO]

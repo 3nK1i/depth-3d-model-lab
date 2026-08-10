@@ -18,8 +18,8 @@ def window(qtbot, monkeypatch):
     return win
 
 
-def test_phase7_modes_remain_enabled_and_reconstruction_disabled(window) -> None:
-    enabled = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}
+def test_phase7_modes_remain_enabled_after_b5_reconstruction_activation(window) -> None:
+    enabled = set(AppMode)
     for mode, button in window._mode_tabs._buttons.items():
         assert button.isEnabled() is (mode in enabled)
 

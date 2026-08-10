@@ -14,16 +14,10 @@ def test_phase7_header_uses_central_version(qtbot) -> None:
     assert RELEASE_NAME == "Phase 7.5 Stable"
 
 
-def test_phase7_operational_modes_enabled_and_reconstruction_deferred(qtbot) -> None:
+def test_phase7_operational_modes_remain_enabled_with_b5_reconstruction(qtbot) -> None:
     tabs = ModeTabs()
     qtbot.addWidget(tabs)
-    expected = {
-        AppMode.LIVE_3D,
-        AppMode.INSPECTION,
-        AppMode.STABLE_VIDEO,
-        AppMode.SNAPSHOT,
-        AppMode.BENCHMARK,
-    }
+    expected = set(AppMode)
     for mode, button in tabs._buttons.items():
         assert button.isEnabled() is (mode in expected)
 
@@ -37,6 +31,7 @@ def test_repeated_mode_navigation_remains_consistent(qtbot) -> None:
         AppMode.BENCHMARK,
         AppMode.SNAPSHOT,
         AppMode.STABLE_VIDEO,
+        AppMode.RECONSTRUCTION,
     )
     for _ in range(25):
         for mode in sequence:

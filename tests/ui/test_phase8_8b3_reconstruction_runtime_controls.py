@@ -36,7 +36,7 @@ def _images(tmp_path: Path) -> Path:
     return root
 
 
-def test_b3_ready_source_enables_start_but_navigation_stays_locked(window, tmp_path: Path) -> None:
+def test_b3_ready_source_enables_start_with_b5_navigation_available(window, tmp_path: Path) -> None:
     page = window._reconstruction_page
     controller = window._reconstruction_controller
     controller.select_image_sequence(_images(tmp_path))
@@ -44,7 +44,7 @@ def test_b3_ready_source_enables_start_but_navigation_stays_locked(window, tmp_p
     assert page._start_button.isEnabled() is True
     assert page._pause_button.isEnabled() is False
     assert page._stop_button.isEnabled() is False
-    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is False
+    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
     assert controller.is_active is False
 
 

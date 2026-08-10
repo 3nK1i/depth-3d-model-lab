@@ -62,6 +62,8 @@ def main() -> int:
     CameraEnumerator.start = lambda self: None  # type: ignore[method-assign]
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = MainWindow()
+    window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)
+    app.processEvents()
     page = window._reconstruction_page
     controller = window._reconstruction_controller
     errors: list[str] = []
@@ -88,8 +90,8 @@ def main() -> int:
             raise RuntimeError("B4 image-sequence source did not reach Ready state.")
         if not page._start_button.isEnabled():
             raise RuntimeError("B4 Start button did not enable for a ready image sequence.")
-        if window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled():
-            raise RuntimeError("Reconstruction navigation became enabled during B4.")
+        if not window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled():
+            raise RuntimeError("Reconstruction navigation is not enabled after B5.")
 
         page._start_button.click()
         app.processEvents()
@@ -130,7 +132,7 @@ def main() -> int:
             and page._start_button.isEnabled()
             and not page._pause_button.isEnabled()
             and not page._stop_button.isEnabled()
-            and not window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
+            and window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
             and saw_ingestion
             and saw_camera_pose
             and page._stage_value.text() == "Completed"

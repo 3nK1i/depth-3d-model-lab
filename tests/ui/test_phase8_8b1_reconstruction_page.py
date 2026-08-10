@@ -19,16 +19,17 @@ def window(qtbot, monkeypatch):
     return win
 
 
-def test_b1_adds_reconstruction_page_but_keeps_navigation_disabled(window) -> None:
+def test_b1_page_is_routable_after_b5_navigation_enablement(window) -> None:
     assert isinstance(window._reconstruction_page, ReconstructionPage)
     assert window._mode_stack.count() == 6
     assert window._mode_stack.indexOf(window._reconstruction_page) >= 0
     assert window._mode_stack.currentWidget() is window._page
 
     button = window._mode_tabs._buttons[AppMode.RECONSTRUCTION]
-    assert button.isEnabled() is False
-    with pytest.raises(ValueError, match="Mode is not enabled"):
-        window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)
+    assert button.isEnabled() is True
+    window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)
+    assert window._mode_stack.currentWidget() is window._reconstruction_page
+    assert window._reconstruction_controller.is_active is False
 
 
 def test_b1_page_binding_is_passive_and_starts_no_backend(window) -> None:

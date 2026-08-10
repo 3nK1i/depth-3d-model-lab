@@ -18,7 +18,7 @@ def window(qtbot, monkeypatch):
     return win
 
 
-def test_b2_source_controls_enable_but_runtime_and_navigation_remain_locked(window) -> None:
+def test_b2_source_controls_remain_safe_after_b5_navigation_enablement(window) -> None:
     page = window._reconstruction_page
 
     assert len(page._source_buttons) == 3
@@ -30,7 +30,7 @@ def test_b2_source_controls_enable_but_runtime_and_navigation_remain_locked(wind
     ]
     assert len(runtime) == 3
     assert all(not button.isEnabled() for button in runtime)
-    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is False
+    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
     assert window._reconstruction_controller.is_active is False
 
 

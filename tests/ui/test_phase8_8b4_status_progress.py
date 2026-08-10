@@ -135,20 +135,20 @@ def test_b4_live_runtime_uses_indeterminate_progress_and_compact_telemetry(windo
     controller.live_slam_controller._runtime = None
 
 
-def test_b4_controller_error_is_user_facing_without_enabling_navigation(window) -> None:
+def test_b4_controller_error_is_user_facing_after_b5_navigation_enablement(window) -> None:
     page = window._reconstruction_page
     window._reconstruction_controller.error_occurred.emit("External worker failed safely.")
 
     assert page._runtime_message.text() == "External worker failed safely."
     assert page._runtime_message.property("statusKind") == "error"
-    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is False
+    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
 
 
-def test_b4_status_timer_is_ui_only_and_navigation_remains_locked(window) -> None:
+def test_b4_status_timer_is_ui_only_with_b5_navigation_available(window) -> None:
     page = window._reconstruction_page
     assert page._telemetry_timer.isActive() is True
     assert page._telemetry_timer.interval() == 500
-    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is False
+    assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
 
 
 def test_b4_terminal_failure_preserves_specific_controller_error(window) -> None:

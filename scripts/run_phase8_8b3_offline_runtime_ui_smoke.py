@@ -62,6 +62,8 @@ def main() -> int:
     CameraEnumerator.start = lambda self: None  # type: ignore[method-assign]
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = MainWindow()
+    window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)
+    app.processEvents()
     page = window._reconstruction_page
     controller = window._reconstruction_controller
     errors: list[str] = []
@@ -111,7 +113,7 @@ def main() -> int:
             and page._start_button.isEnabled()
             and not page._pause_button.isEnabled()
             and not page._stop_button.isEnabled()
-            and not window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
+            and window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled()
             and not errors
         )
         summary = {

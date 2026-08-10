@@ -41,7 +41,7 @@ def test_b1_keeps_reconstruction_out_of_enabled_modes() -> None:
     assert "AppMode.RECONSTRUCTION" not in enabled
 
 
-def test_b1_does_not_add_reconstruction_routing_branch() -> None:
+def test_b1_page_is_routed_after_b5_navigation_enablement() -> None:
     source = (ROOT / "app/main_window.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     main_window = next(
@@ -51,7 +51,7 @@ def test_b1_does_not_add_reconstruction_routing_branch() -> None:
         node for node in main_window.body if isinstance(node, ast.FunctionDef) and node.name == "_on_mode_changed"
     )
     handler_source = ast.get_source_segment(source, handler) or ""
-    assert "AppMode.RECONSTRUCTION" not in handler_source
+    assert "AppMode.RECONSTRUCTION" in handler_source
 
 
 def test_b1_main_window_constructs_and_passively_binds_page() -> None:
