@@ -26,9 +26,10 @@ def test_main_window_owns_dormant_reconstruction_controller(window) -> None:
     assert window._reconstruction_controller.is_active is False
 
 
-def test_a1_does_not_enable_or_add_reconstruction_ui(window) -> None:
+def test_a1_controller_boundary_remains_dormant_after_b1_page_addition(window) -> None:
     reconstruction_button = window._mode_tabs._buttons[AppMode.RECONSTRUCTION]
 
     assert reconstruction_button.isEnabled() is False
-    assert window._mode_stack.count() == 5
+    assert window._mode_stack.count() == 6
+    assert window._mode_stack.indexOf(window._reconstruction_page) >= 0
     assert window._mode_stack.currentWidget() is window._page

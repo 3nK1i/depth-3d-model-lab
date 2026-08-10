@@ -54,6 +54,6 @@ def test_offline_guard_blocks_busy_inference_then_releases_idle_model(window, mo
 def test_a5_readiness_gate_still_keeps_reconstruction_ui_disabled(window) -> None:
     reconstruction_button = window._mode_tabs._buttons[AppMode.RECONSTRUCTION]
     assert reconstruction_button.isEnabled() is False
-    assert window._mode_stack.count() == 5
+    assert window._mode_stack.count() == 6
     with pytest.raises(ValueError, match="Mode is not enabled"):
         window._mode_tabs.set_active_mode(AppMode.RECONSTRUCTION)

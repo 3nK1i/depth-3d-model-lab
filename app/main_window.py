@@ -57,6 +57,7 @@ from app.widgets.header_widget import HeaderWidget
 from app.widgets.inspection_page import InspectionPage
 from app.widgets.mode_tabs import AppMode, ModeTabs
 from app.widgets.original_view import OriginalSourceView
+from app.widgets.reconstruction_page import ReconstructionPage
 from app.widgets.performance_bar import PerformanceBar
 from app.widgets.settings_panel import SettingsPanel
 from app.widgets.snapshot_page import SnapshotPage
@@ -120,6 +121,9 @@ class MainWindow(QMainWindow):
         # compatibility alias for the already-qualified Phase 8.4 boundary.
         self._reconstruction_controller = ReconstructionController(self._controller, self)
         self._live_slam_controller = self._reconstruction_controller.live_slam_controller
+        # Passive-only binding: B1 mirrors qualified controller state but starts
+        # no reconstruction job and leaves the navigation gate locked.
+        self._reconstruction_page.bind_controller(self._reconstruction_controller)
 
         self._benchmark_controller = BenchmarkController(self)
         self._benchmark_page.run_requested.connect(self._on_benchmark_run_requested)
@@ -224,11 +228,16 @@ class MainWindow(QMainWindow):
         self._benchmark_page = BenchmarkPage()
         self._snapshot_page = SnapshotPage()
         self._stable_video_page = StableVideoPage()
+        # Phase 8.8B1: construct the Reconstruction workspace shell now that
+        # the 8.8A controller boundary is hardened. Navigation remains disabled
+        # in ModeTabs until a later B-step deliberately enables it.
+        self._reconstruction_page = ReconstructionPage()
         self._mode_stack = QStackedWidget()
         self._mode_stack.addWidget(self._page)
         self._mode_stack.addWidget(self._inspection_page)
         self._mode_stack.addWidget(self._stable_video_page)
         self._mode_stack.addWidget(self._snapshot_page)
+        self._mode_stack.addWidget(self._reconstruction_page)
         self._mode_stack.addWidget(self._benchmark_page)
         outer.addWidget(self._mode_stack, stretch=1)
 

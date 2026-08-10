@@ -1166,6 +1166,153 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
 
+    /* ---- Phase 8.8 Reconstruction workspace ---- */
+
+    QWidget#reconstructionPage {{
+        background-color: {p.bg_root};
+    }}
+
+    QFrame#reconstructionHeaderCard, QFrame#reconstructionCard {{
+        background-color: {p.viewport_card_bg};
+        border: 1px solid {p.viewport_border};
+        border-radius: 7px;
+    }}
+
+    QLabel#reconstructionTitle {{
+        color: {p.text_primary};
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+    }}
+
+    QLabel#reconstructionSubtitle {{
+        color: {p.text_secondary};
+        font-size: 11px;
+    }}
+
+    QLabel#reconstructionReadinessBadge {{
+        background-color: {p.footer_status_green_bg};
+        border: 1px solid {p.footer_status_green_border};
+        border-radius: 5px;
+        color: {p.footer_status_green_fg};
+        padding: 4px 10px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.35px;
+    }}
+    QLabel#reconstructionReadinessBadge[statusKind="warning"] {{
+        background-color: {p.footer_status_amber_bg};
+        border-color: {p.footer_status_amber_border};
+        color: {p.footer_status_amber_fg};
+    }}
+
+    QLabel#reconstructionSectionTitle {{
+        color: {p.text_primary};
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.55px;
+    }}
+
+    QLabel#reconstructionRowLabel {{
+        color: {p.text_secondary};
+        font-size: 10px;
+        font-weight: 650;
+    }}
+
+    QLabel#reconstructionValue, QLabel#reconstructionSettingsValue {{
+        color: {p.text_primary};
+        font-size: 10px;
+    }}
+
+    QLabel#reconstructionStatusValue {{
+        background-color: {p.footer_status_neutral_bg};
+        border: 1px solid {p.footer_status_neutral_border};
+        border-radius: 4px;
+        color: {p.footer_status_neutral_fg};
+        padding: 2px 7px;
+        font-size: 9px;
+        font-weight: 700;
+    }}
+    QLabel#reconstructionStatusValue[statusKind="ready"] {{
+        background-color: {p.footer_status_green_bg};
+        border-color: {p.footer_status_green_border};
+        color: {p.footer_status_green_fg};
+    }}
+    QLabel#reconstructionStatusValue[statusKind="running"] {{
+        background-color: {p.badge_compatible_bg};
+        border-color: {p.badge_compatible_fg};
+        color: {p.badge_compatible_fg};
+    }}
+    QLabel#reconstructionStatusValue[statusKind="warning"] {{
+        background-color: {p.footer_status_amber_bg};
+        border-color: {p.footer_status_amber_border};
+        color: {p.footer_status_amber_fg};
+    }}
+    QLabel#reconstructionStatusValue[statusKind="error"] {{
+        background-color: {p.footer_status_red_bg};
+        border-color: {p.footer_status_red_border};
+        color: {p.footer_status_red_fg};
+    }}
+
+    QPushButton#reconstructionDisabledAction {{
+        background-color: transparent;
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 5px;
+        color: {p.text_muted};
+        padding: 5px 9px;
+        font-size: 10px;
+        font-weight: 650;
+    }}
+
+    QFrame#reconstructionViewportCard {{
+        background-color: {p.viewport_canvas_bg};
+        border: 1px solid {p.viewport_border};
+        border-radius: 7px;
+    }}
+
+    QLabel#reconstructionViewportState {{
+        color: {p.viewport_text_dim};
+        font-size: 10px;
+        font-weight: 650;
+    }}
+
+    QLabel#reconstructionViewportGlyph {{
+        color: {p.border_light};
+        font-size: 34px;
+        font-weight: 400;
+    }}
+
+    QLabel#reconstructionViewportHeadline {{
+        color: {p.viewport_text};
+        font-size: 14px;
+        font-weight: 750;
+    }}
+
+    QLabel#reconstructionViewportHint {{
+        color: {p.viewport_text_dim};
+        font-size: 10px;
+    }}
+
+    QFrame#reconstructionSettingsPanel {{
+        background-color: {p.settings_sidebar_bg};
+        border: 1px solid {p.settings_card_border};
+        border-radius: 7px;
+    }}
+
+    QFrame#reconstructionSettingsGroup {{
+        background-color: {p.settings_card_bg};
+        border: 1px solid {p.settings_card_border};
+        border-radius: 6px;
+    }}
+
+    QLabel#reconstructionSettingsGroupTitle {{
+        color: {p.settings_text_secondary};
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.55px;
+    }}
+
+
     /* ---- Performance footer ---- */
 
     QFrame#performanceFooter {{
