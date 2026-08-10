@@ -132,6 +132,14 @@ class MainWindow(QMainWindow):
         self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
         self._inspection_controller = MeasurementInspectionController(Path(__file__).resolve().parents[1], self)
         self._inspection_export_controller = InspectionExportController(Path(__file__).resolve().parents[1], self)
+        # Phase 8.8A5: bind dormant Reconstruction starts to the application's
+        # existing long-running job ownership rules. Live reconstruction may
+        # share capture/inference; offline reconstruction additionally requires
+        # idle inference and releases any resident depth model before PyCOLMAP.
+        self._reconstruction_controller.configure_start_guards(
+            live=self._reconstruction_live_start_guard,
+            offline=self._reconstruction_offline_start_guard,
+        )
         self._inspection_frame: np.ndarray | None = None
         self._snapshot_frame: np.ndarray | None = None
         self._stable_previous_smoothing: float | None = None
@@ -326,6 +334,52 @@ class MainWindow(QMainWindow):
             else None
         )
         self._header.update_cuda_status(cuda_label)
+
+    # -- Reconstruction resource interlocks ------------------------------
+
+    def _reconstruction_shared_job_conflict(self) -> str | None:
+        if self._benchmark_controller.is_running:
+            return "Benchmark is running; finish or cancel it before starting Reconstruction."
+        if self._snapshot_controller.is_running:
+            return "Snapshot processing is running; finish or cancel it before starting Reconstruction."
+        if self._stable_video_controller.is_active:
+            return "Stable Video is active; stop it before starting Reconstruction."
+        if self._inspection_controller.is_running:
+            return "Measure & Inspect analysis is running; finish or cancel it before starting Reconstruction."
+        if self._inspection_export_controller.is_running:
+            return "Inspection export is running; finish it before starting Reconstruction."
+        return None
+
+    def _reconstruction_live_start_guard(self) -> str | None:
+        """Live SLAM may share capture/inference but not another long-running mode job."""
+
+        return self._reconstruction_shared_job_conflict()
+
+    def _reconstruction_offline_start_guard(self) -> str | None:
+        """Reserve GPU/process capacity before an isolated offline reconstruction job."""
+
+        conflict = self._reconstruction_shared_job_conflict()
+        if conflict:
+            return conflict
+        state = self._inference_controller.current_state
+        if state in {
+            ApplicationState.CONNECTING,
+            ApplicationState.LOADING_MODEL,
+            ApplicationState.RUNNING,
+            ApplicationState.PAUSED,
+            ApplicationState.STOPPING,
+            ApplicationState.SWITCHING_MODEL,
+            ApplicationState.RECOVERING_WORKER,
+            ApplicationState.RECONNECTING,
+            ApplicationState.SHUTTING_DOWN,
+        }:
+            return (
+                "Live 3D inference is busy; stop inference and wait for an idle source/model state "
+                "before starting offline Reconstruction."
+            )
+        if not self._inference_controller.release_model_for_external_job():
+            return "Live 3D model resources could not be released for offline Reconstruction."
+        return None
 
     # -- Primary application modes ---------------------------------------
 

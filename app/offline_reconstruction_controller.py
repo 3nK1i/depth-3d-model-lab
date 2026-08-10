@@ -1,4 +1,4 @@
-"""Non-blocking offline reconstruction process bridge for Phase 8.8A3."""
+"""Non-blocking offline reconstruction process bridge, hardened through Phase 8.8A5."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+from uuid import UUID
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSignal
 
@@ -230,6 +231,8 @@ class OfflineReconstructionController(QObject):
         self._output_dir: Path | None = None
         self._session_id: str | None = None
         self._cancel_requested = False
+        self._shutdown_started = False
+        self._run_finalized = True
 
     @property
     def state(self) -> OfflineReconstructionRunState:
@@ -249,7 +252,13 @@ class OfflineReconstructionController(QObject):
 
     @property
     def is_active(self) -> bool:
-        return self.is_running
+        # Keep the controller reserved until the queued completion handler has
+        # validated/admitted the result and finalized the previous run.
+        return self.is_running or not self._run_finalized
+
+    @property
+    def is_shutdown(self) -> bool:
+        return self._shutdown_started
 
     def start(
         self,
@@ -257,19 +266,29 @@ class OfflineReconstructionController(QObject):
         *,
         session_id: str | None = None,
     ) -> str:
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Offline reconstruction controller is shut down and cannot start a new job."
+            )
         if self.is_running:
             raise ReconstructionValidationError("An offline reconstruction job is already running.")
-        sid = session_id or new_reconstruction_session_id()
+        if not self._run_finalized:
+            raise ReconstructionValidationError(
+                "The previous offline reconstruction completion is still being finalized."
+            )
+        sid = self._canonical_session_id(session_id or new_reconstruction_session_id())
         program, arguments, output_dir = build_offline_reconstruction_command(
             configuration,
             session_id=sid,
             worker_script=self._worker_script,
         )
+        self._validate_output_dir_for_start(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         self._buffer = ""
         self._output_dir = output_dir
         self._session_id = sid
         self._cancel_requested = False
+        self._run_finalized = False
         self._set_state(OfflineReconstructionRunState.STARTING)
 
         environment = QProcessEnvironment.systemEnvironment()
@@ -280,6 +299,7 @@ class OfflineReconstructionController(QObject):
         self._process.setArguments(arguments)
         self._process.start()
         if not self._process.waitForStarted(3000):
+            self._run_finalized = True
             self._set_state(OfflineReconstructionRunState.FAILED)
             raise ReconstructionValidationError(
                 f"Failed to start offline reconstruction worker: {self._process.errorString()}"
@@ -288,7 +308,7 @@ class OfflineReconstructionController(QObject):
         return sid
 
     def cancel(self) -> bool:
-        if not self.is_running or self._cancel_requested:
+        if self._shutdown_started or not self.is_running or self._cancel_requested:
             return False
         self._cancel_requested = True
         self._set_state(OfflineReconstructionRunState.CANCELLING)
@@ -297,8 +317,12 @@ class OfflineReconstructionController(QObject):
         return True
 
     def shutdown(self) -> None:
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         if self.is_running:
             self._cancel_requested = True
+            self._set_state(OfflineReconstructionRunState.CANCELLING)
             self._process.terminate()
             if not self._process.waitForFinished(8000):
                 self._kill_if_running()
@@ -352,16 +376,44 @@ class OfflineReconstructionController(QObject):
             self._consume_line(self._buffer.strip())
         self._buffer = ""
         result = self._load_result()
-        if result is not None and self._output_dir is not None:
-            self.result_ready.emit(result, str(self._output_dir))
+        result_rejection_reason = self._result_rejection_reason(result)
 
         if self._cancel_requested:
             state = OfflineReconstructionRunState.CANCELLED
-        elif exit_code == 0 and result is not None and bool(result.get("pass")):
+        elif (
+            exit_code == 0
+            and result is not None
+            and not result_rejection_reason
+            and bool(result.get("pass"))
+        ):
             state = OfflineReconstructionRunState.COMPLETED
         else:
             state = OfflineReconstructionRunState.FAILED
+
+        if result_rejection_reason and not self._cancel_requested:
+            self.error_occurred.emit(
+                f"Offline reconstruction result rejected: {result_rejection_reason}"
+            )
+        elif state is OfflineReconstructionRunState.FAILED and not self._cancel_requested:
+            if result is None:
+                detail = (
+                    "Offline reconstruction worker did not produce a readable offline_result.json "
+                    f"(exit code {int(exit_code)})."
+                )
+            else:
+                detail = str(result.get("error", "")).strip() or (
+                    f"Offline reconstruction worker failed with exit code {int(exit_code)}."
+                )
+            self.error_occurred.emit(detail)
+        if (
+            state is OfflineReconstructionRunState.COMPLETED
+            and result is not None
+            and self._output_dir is not None
+        ):
+            self.result_ready.emit(result, str(self._output_dir))
+
         self._set_state(state)
+        self._run_finalized = True
         self.run_finished.emit(
             {
                 "state": state,
@@ -369,14 +421,54 @@ class OfflineReconstructionController(QObject):
                 "session_id": self._session_id or "",
                 "output_dir": str(self._output_dir or ""),
                 "result": result,
+                "result_accepted": state is OfflineReconstructionRunState.COMPLETED,
+                "result_rejection_reason": result_rejection_reason,
             }
         )
 
     def _process_error(self, _error: QProcess.ProcessError) -> None:
-        if not self._cancel_requested:
+        if not self._cancel_requested and not self._shutdown_started:
             message = self._process.errorString()
             self.log_received.emit(f"Offline reconstruction process error: {message}")
             self.error_occurred.emit(message)
+
+    @staticmethod
+    def _canonical_session_id(value: object) -> str:
+        text = str(value).strip()
+        try:
+            return str(UUID(text))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ReconstructionValidationError(
+                "Offline reconstruction session_id must be a valid UUID."
+            ) from exc
+
+    @staticmethod
+    def _validate_output_dir_for_start(output_dir: Path) -> None:
+        if output_dir.exists():
+            if not output_dir.is_dir():
+                raise ReconstructionValidationError(
+                    f"Offline output path is not a directory: {output_dir}"
+                )
+            if any(output_dir.iterdir()):
+                raise ReconstructionValidationError(
+                    "Offline output directory became non-empty before start; refusing stale-result reuse."
+                )
+
+    def _result_rejection_reason(self, result: dict[str, object] | None) -> str:
+        if result is None:
+            return ""
+        if self._session_id is None:
+            return "controller has no active session identity for the finished worker"
+        try:
+            actual = self._canonical_session_id(result.get("session_id", ""))
+        except ReconstructionValidationError as exc:
+            return str(exc)
+        if actual != self._session_id:
+            return (
+                "result session_id does not match the active offline reconstruction session "
+                f"({actual} != {self._session_id})"
+            )
+        return ""
 
     def _kill_if_running(self) -> None:
         if not self.is_running:

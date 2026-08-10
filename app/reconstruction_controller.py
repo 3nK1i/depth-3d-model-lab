@@ -4,11 +4,14 @@ Phase 8.8A1 established one dormant application-facing ownership boundary.
 Phase 8.8A2 exposed the existing live-SLAM lifecycle. Phase 8.8A3 composes an
 offline process bridge for real image-sequence/recorded-video ingestion and
 isolated PyCOLMAP execution. Phase 8.8A4 exposes the existing F5 persistent
-scene and G2 checkpoint/resume contracts without enabling Reconstruction UI.
+scene and G2 checkpoint/resume contracts. Phase 8.8A5 hardens resource
+interlocks, result admission, cancellation/restart, and shutdown while the
+Reconstruction UI remains disabled.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Collection, Mapping, Sequence
 
@@ -45,6 +48,9 @@ from core.reconstruction import (
 from core.reconstruction.errors import ReconstructionValidationError
 
 
+ReconstructionStartGuard = Callable[[], str | None]
+
+
 class ReconstructionController(QObject):
     """Application-level reconstruction coordinator."""
 
@@ -74,6 +80,8 @@ class ReconstructionController(QObject):
 
         self._application_controller = application_controller
         self._shutdown_started = False
+        self._live_start_guard: ReconstructionStartGuard | None = None
+        self._offline_start_guard: ReconstructionStartGuard | None = None
         self._live_session_id: str | None = None
         self._live_slam_controller = LiveSlamCaptureController(
             application_controller,
@@ -180,6 +188,34 @@ class ReconstructionController(QObject):
     def is_shutdown(self) -> bool:
         return self._shutdown_started
 
+    def configure_start_guards(
+        self,
+        *,
+        live: ReconstructionStartGuard | None = None,
+        offline: ReconstructionStartGuard | None = None,
+    ) -> None:
+        """Install application-level resource guards before Reconstruction UI is enabled.
+
+        The controller remains usable in focused tests without guards. ``MainWindow``
+        supplies guards that reject starts while another long-running application mode
+        owns resources and releases an idle resident depth model before offline SfM.
+        """
+
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot be reconfigured."
+            )
+        if self.is_active:
+            raise ReconstructionValidationError(
+                "Reconstruction start guards cannot be changed while reconstruction is active."
+            )
+        if live is not None and not callable(live):
+            raise TypeError("live reconstruction start guard must be callable or None.")
+        if offline is not None and not callable(offline):
+            raise TypeError("offline reconstruction start guard must be callable or None.")
+        self._live_start_guard = live
+        self._offline_start_guard = offline
+
     def start_live(
         self,
         *,
@@ -192,10 +228,11 @@ class ReconstructionController(QObject):
             raise ReconstructionValidationError(
                 "Reconstruction controller is shut down and cannot start a live session."
             )
-        if self._offline_controller.is_running:
+        if self._offline_controller.is_active:
             raise ReconstructionValidationError(
-                "Offline reconstruction is active; stop it before starting live reconstruction."
+                "Offline reconstruction is active or finalizing; wait for it before starting live reconstruction."
             )
+        self._run_start_guard(self._live_start_guard, operation="live reconstruction")
         sid = self._live_slam_controller.start_stella_for_active_source(
             camera=camera,
             settings=settings,
@@ -237,6 +274,7 @@ class ReconstructionController(QObject):
             raise ReconstructionValidationError(
                 "Live reconstruction is active; stop it before starting offline reconstruction."
             )
+        self._run_start_guard(self._offline_start_guard, operation="offline reconstruction")
         return self._offline_controller.start(configuration, session_id=session_id)
 
     def cancel_offline(self) -> bool:
@@ -251,6 +289,7 @@ class ReconstructionController(QObject):
         *,
         payload_snapshots_by_kind: Mapping[str, Mapping[str, object]] | None = None,
     ) -> PersistentReconstructionScene:
+        self._require_idle_for_persistence("adopt a persistent reconstruction scene")
         return self._persistence_controller.adopt_pipeline_result(
             result,
             output_dir,
@@ -264,6 +303,7 @@ class ReconstructionController(QObject):
         expected_session_id: str | None = None,
         verify_file_references: bool = True,
     ) -> PersistentReconstructionScene:
+        self._require_idle_for_persistence("load a persistent reconstruction scene")
         return self._persistence_controller.load_scene(
             path,
             expected_session_id=expected_session_id,
@@ -271,9 +311,11 @@ class ReconstructionController(QObject):
         )
 
     def save_persistent_scene(self, output_dir: str | Path) -> Path:
+        self._require_idle_for_persistence("save a persistent reconstruction scene")
         return self._persistence_controller.save_scene(output_dir)
 
     def clear_persistent_scene(self) -> None:
+        self._require_idle_for_persistence("clear the persistent reconstruction scene")
         self._persistence_controller.clear_scene()
 
     def create_engine_checkpoint(
@@ -284,6 +326,7 @@ class ReconstructionController(QObject):
         stage_results: Sequence[ReconstructionStageRunResult],
         output_dir: str | Path,
     ) -> ReconstructionEngineCheckpoint:
+        self._require_idle_for_persistence("create a reconstruction checkpoint")
         return self._persistence_controller.create_checkpoint(
             plan=plan,
             providers=providers,
@@ -292,6 +335,7 @@ class ReconstructionController(QObject):
         )
 
     def load_engine_checkpoint(self, path: str | Path) -> ReconstructionEngineCheckpoint:
+        self._require_idle_for_persistence("load a reconstruction checkpoint")
         return self._persistence_controller.load_checkpoint(path)
 
     def check_engine_resume_compatibility(
@@ -301,6 +345,7 @@ class ReconstructionController(QObject):
         providers: Sequence[ReconstructionProviderDescriptor],
         available_payload_refs: Collection[str],
     ) -> ReconstructionResumeCompatibilityResult:
+        self._require_idle_for_persistence("check reconstruction resume compatibility")
         return self._persistence_controller.check_resume_compatibility(
             plan=plan,
             providers=providers,
@@ -314,6 +359,7 @@ class ReconstructionController(QObject):
         providers: Sequence[ReconstructionProviderDescriptor],
         available_payload_refs: Collection[str],
     ) -> ReconstructionResumePreparation:
+        self._require_idle_for_persistence("prepare reconstruction resume")
         return self._persistence_controller.prepare_resume(
             plan=plan,
             providers=providers,
@@ -321,7 +367,42 @@ class ReconstructionController(QObject):
         )
 
     def clear_engine_checkpoint(self) -> None:
+        self._require_idle_for_persistence("clear the reconstruction checkpoint")
         self._persistence_controller.clear_checkpoint()
+
+    def _run_start_guard(
+        self,
+        guard: ReconstructionStartGuard | None,
+        *,
+        operation: str,
+    ) -> None:
+        if guard is None:
+            return
+        try:
+            reason = guard()
+        except Exception as exc:
+            raise ReconstructionValidationError(
+                f"{operation.capitalize()} preflight failed: {exc}"
+            ) from exc
+        if reason is None:
+            return
+        if not isinstance(reason, str):
+            raise ReconstructionValidationError(
+                f"{operation.capitalize()} preflight returned an invalid result."
+            )
+        reason = reason.strip()
+        if reason:
+            raise ReconstructionValidationError(reason)
+
+    def _require_idle_for_persistence(self, operation: str) -> None:
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                f"Cannot {operation}: reconstruction controller is shut down."
+            )
+        if self.is_active:
+            raise ReconstructionValidationError(
+                f"Cannot {operation} while a reconstruction session is active."
+            )
 
     def _on_offline_result_ready(self, payload: object, output_dir: str) -> None:
         if isinstance(payload, dict):
@@ -342,6 +423,7 @@ class ReconstructionController(QObject):
 
 __all__ = [
     "ReconstructionController",
+    "ReconstructionStartGuard",
     "OfflineReconstructionConfiguration",
     "OfflineReconstructionRunState",
     "OfflineReconstructionSourceKind",
