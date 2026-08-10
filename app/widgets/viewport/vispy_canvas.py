@@ -498,6 +498,18 @@ class ReconstructionCanvas(QObject):
             parent=self._view.scene,
         )
         self._offline_camera_path.visible = False
+        self._offline_sparse_envelope = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(0.36, 0.84, 0.64, 0.62),
+            width=1.3,
+            parent=self._view.scene,
+        )
+        self._offline_sparse_envelope.visible = False
+        self._offline_sparse_envelope_visible = True
+        self._offline_sparse_envelope_available = False
+        self._offline_sparse_envelope_min = None
+        self._offline_sparse_envelope_max = None
         self._selected_offline_camera_frustum = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
             connect="segments",
@@ -617,6 +629,13 @@ class ReconstructionCanvas(QObject):
         self._offline_scale_status = None
         self._offline_camera_path.set_data(pos=np.zeros((0, 3), dtype=np.float32), connect="strip")
         self._offline_camera_path.visible = False
+        self._offline_sparse_envelope.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._offline_sparse_envelope.visible = False
+        self._offline_sparse_envelope_available = False
+        self._offline_sparse_envelope_min = None
+        self._offline_sparse_envelope_max = None
         self._selected_offline_camera_frustum.set_data(
             pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
         )
@@ -780,6 +799,69 @@ class ReconstructionCanvas(QObject):
         self._offline_camera_path.visible = bool(
             self._offline_visualization_loaded and self._keyframes_visible
         )
+
+    def set_offline_sparse_envelope(
+        self,
+        minimum_reconstruction: np.ndarray | tuple[float, float, float],
+        maximum_reconstruction: np.ndarray | tuple[float, float, float],
+    ) -> None:
+        """Show one robust D4 sparse-SfM presentation envelope.
+
+        The box is a visualization aid in arbitrary reconstruction gauge. It is
+        never promoted to canonical geometry or object dimensions.
+        """
+
+        lower = np.asarray(minimum_reconstruction, dtype=np.float64)
+        upper = np.asarray(maximum_reconstruction, dtype=np.float64)
+        if lower.shape != (3,) or upper.shape != (3,):
+            raise ValueError("Offline sparse envelope bounds must be 3-vectors.")
+        if not np.isfinite(lower).all() or not np.isfinite(upper).all() or np.any(upper < lower):
+            raise ValueError("Offline sparse envelope bounds must be finite and ordered.")
+        from app.reconstruction_visualization import sparse_landmarks_to_viewer
+
+        x0, y0, z0 = lower
+        x1, y1, z1 = upper
+        corners = np.asarray(
+            [
+                [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+            ],
+            dtype=np.float64,
+        )
+        edges = (
+            (0, 1), (1, 2), (2, 3), (3, 0),
+            (4, 5), (5, 6), (6, 7), (7, 4),
+            (0, 4), (1, 5), (2, 6), (3, 7),
+        )
+        viewer = sparse_landmarks_to_viewer(corners)
+        segments = np.asarray([viewer[index] for edge in edges for index in edge], dtype=np.float32)
+        self._offline_sparse_envelope.set_data(pos=segments, connect="segments")
+        self._offline_sparse_envelope_min = np.array(lower, copy=True)
+        self._offline_sparse_envelope_max = np.array(upper, copy=True)
+        self._offline_sparse_envelope_available = True
+        self._offline_sparse_envelope.visible = bool(
+            self._offline_sparse_envelope_visible and self._offline_visualization_loaded
+        )
+        self._canvas.update()
+
+    def clear_offline_sparse_envelope(self) -> None:
+        self._offline_sparse_envelope.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._offline_sparse_envelope.visible = False
+        self._offline_sparse_envelope_available = False
+        self._offline_sparse_envelope_min = None
+        self._offline_sparse_envelope_max = None
+        self._canvas.update()
+
+    def set_offline_sparse_envelope_visible(self, visible: bool) -> None:
+        self._offline_sparse_envelope_visible = bool(visible)
+        self._offline_sparse_envelope.visible = bool(
+            self._offline_sparse_envelope_visible
+            and self._offline_sparse_envelope_available
+            and self._offline_visualization_loaded
+        )
+        self._canvas.update()
 
     def select_offline_camera(self, camera_index: int) -> None:
         """Highlight one registered offline camera without changing reconstruction state."""
@@ -1207,6 +1289,23 @@ class ReconstructionCanvas(QObject):
         return bool(
             self._selected_offline_camera_index is not None
             and self._selected_offline_camera_frustum.visible
+        )
+
+    @property
+    def offline_sparse_envelope_visible(self) -> bool:
+        return bool(self._offline_sparse_envelope.visible)
+
+    @property
+    def offline_sparse_envelope_available(self) -> bool:
+        return bool(self._offline_sparse_envelope_available)
+
+    @property
+    def offline_sparse_envelope_bounds(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if self._offline_sparse_envelope_min is None or self._offline_sparse_envelope_max is None:
+            return None
+        return (
+            np.array(self._offline_sparse_envelope_min, copy=True),
+            np.array(self._offline_sparse_envelope_max, copy=True),
         )
 
     @property

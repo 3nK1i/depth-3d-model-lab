@@ -1,9 +1,9 @@
-"""Reconstruction workspace through Phase 8.8D3.
+"""Reconstruction workspace through Phase 8.8D4.
 
 C1-C5 established the live viewer. D1 added bounded visualization of completed
-offline PyCOLMAP sparse SfM, D2 added camera-structure inspection, and D3
-surfaces the backend sparse-SfM health gate without turning operational quality
-telemetry into metric accuracy or metrology authority.
+offline PyCOLMAP sparse SfM, D2 added camera-structure inspection, D3 surfaced
+the backend sparse-SfM health gate, and D4 adds unit-honest spatial coverage
+inspection without turning sparse presentation bounds into object dimensions.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -43,6 +45,10 @@ from app.offline_reconstruction_quality import (
     OfflineSfmHealthPresentation,
     build_offline_sfm_health_presentation,
     unavailable_offline_sfm_health,
+)
+from app.offline_reconstruction_spatial import (
+    OfflineSparseSpatialCoverage,
+    build_offline_sparse_spatial_coverage,
 )
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
@@ -109,6 +115,7 @@ class ReconstructionPage(QWidget):
         self._offline_visualization: OfflineSparseVisualization | None = None
         self._offline_camera_selection_index: int | None = None
         self._offline_sfm_health: OfflineSfmHealthPresentation | None = None
+        self._offline_spatial_coverage: OfflineSparseSpatialCoverage | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
@@ -404,6 +411,17 @@ class ReconstructionPage(QWidget):
         keyframes_button.toggled.connect(self._reconstruction_canvas.set_keyframes_visible)
         self._viewport_tool_buttons["keyframes"] = keyframes_button
         tool_row.addWidget(keyframes_button)
+        envelope_button = IconButton(
+            "cube",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide offline sparse presentation envelope",
+            checkable=True,
+        )
+        envelope_button.setChecked(True)
+        envelope_button.toggled.connect(self._reconstruction_canvas.set_offline_sparse_envelope_visible)
+        self._viewport_tool_buttons["offline_envelope"] = envelope_button
+        tool_row.addWidget(envelope_button)
         diagnostics_button = IconButton(
             "diagnostics",
             size=28,
@@ -517,6 +535,44 @@ class ReconstructionPage(QWidget):
             "D3 never promotes sparse-SfM health to metric accuracy or certified metrology."
         )
 
+    def _apply_offline_spatial_coverage(self, presentation: OfflineSparseSpatialCoverage) -> None:
+        self._offline_spatial_coverage = presentation
+        self._offline_spatial_envelope_value.setText(presentation.envelope_text)
+        self._offline_spatial_envelope_value.setToolTip(presentation.envelope_tooltip)
+        self._offline_spatial_camera_span_value.setText(presentation.camera_span_text)
+        self._offline_spatial_camera_span_value.setToolTip(
+            "Axis-aligned span of registered camera centers in arbitrary reconstruction gauge units."
+        )
+        self._offline_spatial_standoff_value.setText(presentation.standoff_text)
+        self._offline_spatial_standoff_value.setToolTip(
+            "Camera-center distance to the robust sparse-SfM sample center. Values are gauge units, not metres."
+        )
+        self._offline_spatial_basis_value.setText(presentation.basis_text)
+        self._offline_spatial_basis_value.setToolTip(
+            "D4 uses the bounded D1 visualization sample only. The envelope is a presentation aid, not canonical geometry."
+        )
+        if presentation.has_envelope:
+            self._reconstruction_canvas.set_offline_sparse_envelope(
+                presentation.robust_min_reconstruction,
+                presentation.robust_max_reconstruction,
+            )
+        else:
+            self._reconstruction_canvas.clear_offline_sparse_envelope()
+        self._offline_inspection_group.setVisible(True)
+
+    def _reset_offline_spatial_coverage(self) -> None:
+        self._offline_spatial_coverage = None
+        if hasattr(self, "_offline_spatial_envelope_value"):
+            self._offline_spatial_envelope_value.setText("—")
+            self._offline_spatial_envelope_value.setToolTip("")
+            self._offline_spatial_camera_span_value.setText("—")
+            self._offline_spatial_standoff_value.setText("—")
+            self._offline_spatial_basis_value.setText(
+                "Sparse presentation envelope only • not object dimensions"
+            )
+        if hasattr(self, "_reconstruction_canvas"):
+            self._reconstruction_canvas.clear_offline_sparse_envelope()
+
     def _activate_offline_inspection(self, visual: OfflineSparseVisualization) -> None:
         self._offline_visualization = visual
         self._offline_camera_selection_index = None
@@ -551,7 +607,9 @@ class ReconstructionPage(QWidget):
             self._offline_camera_delta_value.setText("—")
             self._offline_structure_value.setText("No offline sparse SfM")
             self._offline_inspection_group.setVisible(
-                (not hide) or self._offline_sfm_health is not None
+                (not hide)
+                or self._offline_sfm_health is not None
+                or self._offline_spatial_coverage is not None
             )
             self._refresh_offline_camera_navigation()
         if hasattr(self, "_reconstruction_canvas"):
@@ -638,13 +696,42 @@ class ReconstructionPage(QWidget):
         panel.setObjectName("reconstructionSettingsPanel")
         panel.setMinimumWidth(290)
         panel.setMaximumWidth(380)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(12, 12, 12, 12)
+        panel_layout.setSpacing(10)
 
         title = QLabel("RECONSTRUCTION SETTINGS")
         title.setObjectName("reconstructionSectionTitle")
-        layout.addWidget(title)
+        panel_layout.addWidget(title)
+
+        # D4 makes the offline inspection stack taller than the available
+        # sidebar height on common 768p/900p/1080p desktops.  Do not let Qt
+        # satisfy that pressure by crushing rows into each other.  Keep the
+        # panel width fixed and make only the settings body vertically
+        # scrollable.  The title remains pinned and no horizontal scrolling
+        # is permitted.
+        self._settings_scroll = QScrollArea(panel)
+        self._settings_scroll.setObjectName("reconstructionSettingsScroll")
+        self._settings_scroll.setWidgetResizable(True)
+        self._settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._settings_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._settings_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._settings_scroll.viewport().setAutoFillBackground(False)
+
+        settings_body = QWidget()
+        settings_body.setObjectName("reconstructionSettingsScrollBody")
+        settings_body.setAutoFillBackground(False)
+        layout = QVBoxLayout(settings_body)
+        # Some Linux/Qt styles draw the vertical scrollbar over the scroll
+        # viewport instead of reserving its full visual width.  Keep a small
+        # right-side gutter so right-aligned settings values wrap before the
+        # scrollbar and never render underneath it.
+        layout.setContentsMargins(0, 0, 14, 0)
+        layout.setSpacing(10)
 
         workflow = self._settings_group("WORKFLOW")
         workflow_layout = workflow.layout()
@@ -681,7 +768,16 @@ class ReconstructionPage(QWidget):
         self._offline_camera_combo = QComboBox()
         self._offline_camera_combo.setObjectName("reconstructionOfflineCameraCombo")
         self._offline_camera_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self._offline_camera_combo.setMinimumContentsLength(12)
+        # D4 responsive-sidebar hardening: the camera identifier may be long,
+        # but it must not impose that text width as a minimum on the entire
+        # scroll body.  The combo remains readable at normal sidebar widths
+        # and can shrink when the splitter is constrained.
+        self._offline_camera_combo.setMinimumContentsLength(4)
+        self._offline_camera_combo.setMinimumWidth(0)
+        self._offline_camera_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
         self._offline_camera_combo.addItem("Select camera…", -1)
         self._offline_camera_combo.setEnabled(False)
         selector_row.addWidget(self._offline_camera_combo, stretch=1)
@@ -713,6 +809,23 @@ class ReconstructionPage(QWidget):
         self._add_status_row(inspection_layout, "Support", self._offline_quality_support_value)
         self._add_status_row(inspection_layout, "Gate", self._offline_quality_gate_value)
 
+        spatial_title = QLabel("SPARSE SPATIAL COVERAGE")
+        spatial_title.setObjectName("reconstructionRowLabel")
+        spatial_title.setToolTip(
+            "Presentation-space coverage derived from the bounded sparse-SfM sample; not object dimensions or metric scale."
+        )
+        inspection_layout.addWidget(spatial_title)
+        self._offline_spatial_envelope_value = self._settings_value("—")
+        self._offline_spatial_camera_span_value = self._settings_value("—")
+        self._offline_spatial_standoff_value = self._settings_value("—")
+        self._offline_spatial_basis_value = self._settings_value(
+            "Sparse presentation envelope only • not object dimensions"
+        )
+        self._add_status_row(inspection_layout, "Envelope", self._offline_spatial_envelope_value)
+        self._add_status_row(inspection_layout, "Camera span", self._offline_spatial_camera_span_value)
+        self._add_status_row(inspection_layout, "Standoff", self._offline_spatial_standoff_value)
+        self._add_status_row(inspection_layout, "Basis", self._offline_spatial_basis_value)
+
         nav_row = QHBoxLayout()
         nav_row.setSpacing(6)
         self._offline_prev_camera_button = QPushButton("Prev")
@@ -726,6 +839,16 @@ class ReconstructionPage(QWidget):
             self._offline_clear_camera_button,
         ):
             button.setEnabled(False)
+            # Keep the D2 camera navigation row horizontally shrinkable.
+            # QPushButton defaults can otherwise raise the scroll body's
+            # minimum width above the narrow settings viewport once D3/D4
+            # sections are visible, which clips every right-aligned value
+            # even when horizontal scrolling is disabled.
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
             nav_row.addWidget(button)
         inspection_layout.addLayout(nav_row)
         self._offline_camera_combo.currentIndexChanged.connect(self._on_offline_camera_selected)
@@ -734,6 +857,7 @@ class ReconstructionPage(QWidget):
         self._offline_next_camera_button.clicked.connect(self._select_next_offline_camera)
         self._offline_clear_camera_button.clicked.connect(self._clear_offline_camera_selection)
         self._reset_offline_sfm_health()
+        self._reset_offline_spatial_coverage()
         self._offline_inspection_group.setVisible(False)
         layout.addWidget(self._offline_inspection_group)
 
@@ -748,6 +872,8 @@ class ReconstructionPage(QWidget):
         self._add_settings_row(authority_layout, "Heavy backends", "Isolated workers")
         layout.addWidget(authority)
         layout.addStretch(1)
+        self._settings_scroll.setWidget(settings_body)
+        panel_layout.addWidget(self._settings_scroll, stretch=1)
         return panel
 
     @staticmethod
@@ -792,6 +918,15 @@ class ReconstructionPage(QWidget):
         label = QLabel(text)
         label.setObjectName("reconstructionSettingsValue")
         label.setWordWrap(True)
+        # Right-side values must be allowed to wrap rather than establish a
+        # horizontal minimum that forces the settings scroll body under the
+        # vertical scrollbar.  Ignored affects only layout negotiation; the
+        # label still receives its normal size at ordinary sidebar widths.
+        label.setMinimumWidth(0)
+        label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         return label
 
     @staticmethod
@@ -800,9 +935,14 @@ class ReconstructionPage(QWidget):
         row.setSpacing(8)
         label = QLabel(label_text)
         label.setObjectName("reconstructionRowLabel")
-        row.addWidget(label)
-        row.addStretch(1)
-        row.addWidget(value)
+        # Give the value the row's remaining width directly.  A separate
+        # expanding spacer used to consume that width first; once D4 made
+        # value labels horizontally shrinkable, Qt could collapse them to
+        # nearly zero width and word-wrapped labels then requested enormous
+        # heights.  That produced the large blank vertical gaps seen in the
+        # real Linux preview.
+        row.addWidget(label, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(value, 1, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(row)
 
     def _add_settings_row(self, layout: QVBoxLayout, label_text: str, value_text: str) -> None:
@@ -1233,6 +1373,7 @@ class ReconstructionPage(QWidget):
             self._pending_keyframes = None
             self._visual_pose_timer.stop()
             self._reset_offline_sfm_health()
+            self._reset_offline_spatial_coverage()
             self._reset_offline_inspection()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
@@ -1349,6 +1490,7 @@ class ReconstructionPage(QWidget):
         if not visualization_path:
             # Older A3 results remain valid but simply cannot be visualized by D1/D2.
             self._offline_visualization_error = "Offline result predates the D1 visualization artifact."
+            self._reset_offline_spatial_coverage()
             self._reset_offline_inspection()
             return
         try:
@@ -1369,6 +1511,7 @@ class ReconstructionPage(QWidget):
             self._offline_visualization_path = Path(visualization_path).expanduser().resolve()
             self._offline_visualization_error = ""
             self._activate_offline_inspection(visual)
+            self._apply_offline_spatial_coverage(build_offline_sparse_spatial_coverage(visual))
             self._viewport_state.setToolTip("")
             if self._reconstruction_canvas.offline_visualization_loaded:
                 self._viewport_placeholder.setVisible(False)
@@ -1379,6 +1522,7 @@ class ReconstructionPage(QWidget):
             # A visualization artifact is presentation-only. A completed authoritative
             # offline worker result remains completed even if this optional view fails.
             self._offline_visualization_error = str(exc)
+            self._reset_offline_spatial_coverage()
             self._reset_offline_inspection()
             self._viewport_state.setText("Offline visualization unavailable")
             self._viewport_state.setToolTip(str(exc))

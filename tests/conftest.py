@@ -186,6 +186,10 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_camera_ids = ()
             self._offline_camera_path_visible = False
             self._offline_camera_path_display_count = 0
+            self._offline_sparse_envelope_visible_requested = True
+            self._offline_sparse_envelope_available = False
+            self._offline_sparse_envelope_min = None
+            self._offline_sparse_envelope_max = None
             self._selected_offline_camera_index = None
             self._selected_offline_camera_visible = False
             self._keyframes_visible = True
@@ -250,6 +254,9 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_camera_ids = ()
             self._offline_camera_path_visible = False
             self._offline_camera_path_display_count = 0
+            self._offline_sparse_envelope_available = False
+            self._offline_sparse_envelope_min = None
+            self._offline_sparse_envelope_max = None
             self._selected_offline_camera_index = None
             self._selected_offline_camera_visible = False
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
@@ -359,6 +366,25 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_scale_status = str(scale_status)
             self._has_pose = False
             self._current_camera_position = None
+
+        def set_offline_sparse_envelope(self, minimum_reconstruction, maximum_reconstruction) -> None:
+            lower = np.asarray(minimum_reconstruction, dtype=np.float64)
+            upper = np.asarray(maximum_reconstruction, dtype=np.float64)
+            if lower.shape != (3,) or upper.shape != (3,):
+                raise ValueError("Offline sparse envelope bounds must be 3-vectors.")
+            if not np.isfinite(lower).all() or not np.isfinite(upper).all() or np.any(upper < lower):
+                raise ValueError("Offline sparse envelope bounds must be finite and ordered.")
+            self._offline_sparse_envelope_min = lower.copy()
+            self._offline_sparse_envelope_max = upper.copy()
+            self._offline_sparse_envelope_available = True
+
+        def clear_offline_sparse_envelope(self) -> None:
+            self._offline_sparse_envelope_available = False
+            self._offline_sparse_envelope_min = None
+            self._offline_sparse_envelope_max = None
+
+        def set_offline_sparse_envelope_visible(self, visible: bool) -> None:
+            self._offline_sparse_envelope_visible_requested = bool(visible)
 
         def select_offline_camera(self, camera_index: int) -> None:
             index = int(camera_index)
@@ -550,6 +576,24 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def selected_offline_camera_visible(self) -> bool:
             return bool(self._selected_offline_camera_visible)
+
+        @property
+        def offline_sparse_envelope_visible(self) -> bool:
+            return bool(
+                self._offline_sparse_envelope_visible_requested
+                and self._offline_sparse_envelope_available
+                and self._offline_visualization_loaded
+            )
+
+        @property
+        def offline_sparse_envelope_available(self) -> bool:
+            return bool(self._offline_sparse_envelope_available)
+
+        @property
+        def offline_sparse_envelope_bounds(self):
+            if self._offline_sparse_envelope_min is None or self._offline_sparse_envelope_max is None:
+                return None
+            return (self._offline_sparse_envelope_min.copy(), self._offline_sparse_envelope_max.copy())
 
         @property
         def offline_visualization_loaded(self) -> bool:
