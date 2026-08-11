@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8F4.
+"""Reconstruction workspace through Phase 8.8F5.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -11,7 +11,8 @@ adds metadata-only appearance-representation controls over persisted Gaussian/Ne
 artifacts. F2 adds static visualization of an already-produced backend Gaussian
 preview. F3 adds the corresponding backend-authored NeRF preview without
 executing its isolated runtime. F4 coordinates user-driven switching between
-those qualified appearance views while canonical geometry remains authoritative.
+those qualified appearance views. F5 exposes bounded resource state and an
+explicit canonical fallback without changing any reconstruction authority.
 """
 
 from __future__ import annotations
@@ -112,6 +113,11 @@ from app.reconstruction_representation_switching import (
     build_representation_switch_target,
     canonical_view_text,
 )
+from app.reconstruction_appearance_resources import (
+    AppearanceResourceFallbackPresentation,
+    build_appearance_resource_fallback_presentation,
+    empty_appearance_resource_fallback_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -157,6 +163,7 @@ class ReconstructionPage(QWidget):
     gaussian_visualization_changed = pyqtSignal(object)
     nerf_visualization_changed = pyqtSignal(object)
     representation_switching_changed = pyqtSignal(object)
+    appearance_resource_fallback_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -199,6 +206,8 @@ class ReconstructionPage(QWidget):
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
         self._representation_switch_target: RepresentationSwitchTarget | None = None
+        self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
+        self._appearance_fallback_reason = ""
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1400,6 +1409,7 @@ class ReconstructionPage(QWidget):
     def _on_appearance_representation_selected(self, combo_index: int) -> None:
         artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
         self._selected_appearance_artifact_id = artifact_id
+        self._appearance_fallback_reason = ""
         self._refresh_appearance_representation_values()
         # F2/F3 still clear stale imagery on metadata changes. F4 performs the
         # actual user-driven switch only from QComboBox.activated, so programmatic
@@ -1535,8 +1545,8 @@ class ReconstructionPage(QWidget):
         elif target is not None and not target.ready:
             text = target.unavailable_text
             tooltip = (
-                "The selected appearance preview is unavailable, so F4 keeps the canonical Reconstruction viewport. "
-                "No alternate representation or resource fallback is chosen here; F5 owns fallback policy."
+                "The selected appearance preview is unavailable, so canonical geometry remains visible. "
+                "F5 reports the fallback reason and does not substitute another neural representation."
             )
         else:
             text = canonical_view_text()
@@ -1548,6 +1558,58 @@ class ReconstructionPage(QWidget):
         self._appearance_viewport_value.setToolTip(tooltip)
         if target != previous:
             self.representation_switching_changed.emit(target)
+        self._refresh_appearance_resource_fallback_controls()
+
+    @property
+    def appearance_resource_fallback_presentation(self) -> AppearanceResourceFallbackPresentation | None:
+        return self._appearance_resource_fallback_presentation
+
+    def _refresh_appearance_resource_fallback_controls(self) -> None:
+        if not hasattr(self, "_appearance_resource_state_value"):
+            return
+        previous = self._appearance_resource_fallback_presentation
+        values = empty_appearance_resource_fallback_text()
+        try:
+            presentation = build_appearance_resource_fallback_presentation(
+                self._persistent_scene,
+                selected=self.selected_appearance_representation,
+                switch_target=self._representation_switch_target,
+                active_view=self.active_view_representation,
+                failure_reason=self._appearance_fallback_reason,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            self._appearance_resource_fallback_presentation = None
+            self._appearance_resource_device_value.setText(values["device"])
+            self._appearance_resource_resources_value.setText(values["resources"])
+            self._appearance_resource_presentation_value.setText(values["presentation"])
+            self._appearance_resource_fallback_value.setText(values["fallback"])
+            self._appearance_resource_pipeline_value.setText(values["pipeline"])
+            self._appearance_resource_state_value.setText("Resource/fallback presentation unavailable")
+            self._appearance_resource_state_value.setToolTip(str(exc))
+            if previous is not None:
+                self.appearance_resource_fallback_changed.emit(None)
+            return
+
+        self._appearance_resource_fallback_presentation = presentation
+        self._appearance_resource_device_value.setText(presentation.device_text)
+        self._appearance_resource_device_value.setToolTip(presentation.resource_details)
+        self._appearance_resource_resources_value.setText(presentation.resources_text)
+        self._appearance_resource_resources_value.setToolTip(
+            "Existing F2/F3 static previews are backend-free display artifacts. Startup GPU state is advisory and does not disable an existing preview."
+        )
+        self._appearance_resource_presentation_value.setText(presentation.presentation_text)
+        self._appearance_resource_fallback_value.setText(presentation.fallback_text)
+        self._appearance_resource_fallback_value.setToolTip(
+            "F5 always fails closed to canonical geometry. It never silently substitutes Gaussian for NeRF or NeRF for Gaussian."
+        )
+        self._appearance_resource_pipeline_value.setText(presentation.pipeline_text)
+        self._appearance_resource_pipeline_value.setToolTip(
+            presentation.pipeline_details or "No appearance-stage fallback was recorded in the persistent scene."
+        )
+        self._appearance_resource_state_value.setText(presentation.state_text)
+        self._appearance_resource_state_value.setToolTip(presentation.state_details)
+        if presentation != previous:
+            self.appearance_resource_fallback_changed.emit(presentation)
 
     def _on_appearance_representation_activated(self, combo_index: int) -> None:
         # ``activated`` is user-driven, unlike currentIndexChanged during internal
@@ -1561,13 +1623,16 @@ class ReconstructionPage(QWidget):
         self._activate_selected_appearance_representation()
 
     def _activate_selected_appearance_representation(self) -> None:
+        self._appearance_fallback_reason = ""
         self._refresh_representation_switching_controls()
         target = self._representation_switch_target
         if target is None:
+            self._appearance_fallback_reason = "No qualified appearance target is selected"
             self._hide_active_appearance_preview()
             self._refresh_representation_switching_controls()
             return
         if not target.ready:
+            self._appearance_fallback_reason = target.state_text or f"{target.label} preview unavailable"
             self._hide_active_appearance_preview()
             self._refresh_representation_switching_controls()
             return
@@ -1643,7 +1708,7 @@ class ReconstructionPage(QWidget):
                 self._gaussian_state_value.setText(presentation.state_text)
             self._gaussian_state_value.setToolTip(
                 "F2 supplies the backend-authored static Gaussian preview. "
-                "F4 coordinates switching between qualified appearance views; resource/fallback UX remains F5."
+                "F4 coordinates switching; F5 reports resource state and canonical fallback without launching a backend."
             )
             self._gaussian_authority_value.setText(presentation.authority_text)
             self._gaussian_show_button.setEnabled(bool(presentation.ready and gaussian_selected))
@@ -1665,7 +1730,9 @@ class ReconstructionPage(QWidget):
             or selected.representation_kind != "gaussian_scene"
             or selected.artifact_id != presentation.artifact_id
         ):
-            self._gaussian_state_value.setText("Gaussian preview cannot be shown for the current selection")
+            self._appearance_fallback_reason = "Gaussian preview cannot be shown for the current selection"
+            self._gaussian_state_value.setText(self._appearance_fallback_reason)
+            self._refresh_appearance_resource_fallback_controls()
             return
         if self._nerf_preview_visible:
             self._hide_nerf_preview()
@@ -1675,12 +1742,15 @@ class ReconstructionPage(QWidget):
                 title="GAUSSIAN SPLATTING PREVIEW • APPEARANCE ONLY",
             )
         except (OSError, ValueError) as exc:
-            self._gaussian_state_value.setText("Gaussian preview image could not be displayed")
+            self._appearance_fallback_reason = "Gaussian preview image could not be displayed"
+            self._gaussian_state_value.setText(self._appearance_fallback_reason)
             self._gaussian_state_value.setToolTip(str(exc))
             self._gaussian_show_button.setEnabled(False)
+            self._refresh_appearance_resource_fallback_controls()
             return
         # The overlay was inserted after the canvas but before the normal viewport
         # tools/HUD/gizmo, so showing it preserves those controls above the image.
+        self._appearance_fallback_reason = ""
         self._appearance_preview.show()
         self._gaussian_preview_visible = True
         self._viewport_placeholder.setVisible(False)
@@ -1786,7 +1856,7 @@ class ReconstructionPage(QWidget):
                 self._nerf_state_value.setText(presentation.state_text)
             self._nerf_state_value.setToolTip(
                 "F3 supplies an existing backend-authored static NeRF render. "
-                "F4 coordinates switching between qualified appearance views; resource/fallback UX remains F5."
+                "F4 coordinates switching; F5 reports resource state and canonical fallback without launching a backend."
             )
             self._nerf_authority_value.setText(presentation.authority_text)
             self._nerf_show_button.setEnabled(bool(presentation.ready and nerf_selected))
@@ -1808,7 +1878,9 @@ class ReconstructionPage(QWidget):
             or selected.representation_kind != "nerf_scene"
             or selected.artifact_id != presentation.artifact_id
         ):
-            self._nerf_state_value.setText("NeRF preview cannot be shown for the current selection")
+            self._appearance_fallback_reason = "NeRF preview cannot be shown for the current selection"
+            self._nerf_state_value.setText(self._appearance_fallback_reason)
+            self._refresh_appearance_resource_fallback_controls()
             return
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
@@ -1818,10 +1890,13 @@ class ReconstructionPage(QWidget):
                 title="NERF PREVIEW • APPEARANCE ONLY",
             )
         except (OSError, ValueError) as exc:
-            self._nerf_state_value.setText("NeRF preview image could not be displayed")
+            self._appearance_fallback_reason = "NeRF preview image could not be displayed"
+            self._nerf_state_value.setText(self._appearance_fallback_reason)
             self._nerf_state_value.setToolTip(str(exc))
             self._nerf_show_button.setEnabled(False)
+            self._refresh_appearance_resource_fallback_controls()
             return
+        self._appearance_fallback_reason = ""
         self._appearance_preview.show()
         self._nerf_preview_visible = True
         self._viewport_placeholder.setVisible(False)
@@ -2251,7 +2326,7 @@ class ReconstructionPage(QWidget):
 
         # F1 supplies persisted neural appearance metadata. F2/F3 supply the
         # qualified static previews. F4 reuses this selector as the explicit
-        # user-driven viewport switch without launching either backend.
+        # user-driven viewport switch. F5 adds resource/fallback state below.
         self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")
         appearance_layout = self._appearance_group.layout()
         appearance_selector = QHBoxLayout()
@@ -2390,6 +2465,31 @@ class ReconstructionPage(QWidget):
         nerf_layout.addLayout(nerf_buttons)
         layout.addWidget(self._nerf_visualization_group)
         self._refresh_nerf_visualization_controls()
+
+        # F5 consumes the application's existing startup hardware snapshot plus
+        # persisted appearance/fallback evidence. Existing static previews remain
+        # displayable without launching an external neural backend, and failures
+        # retain canonical geometry without cross-representation substitution.
+        self._appearance_resource_group = self._settings_group("RESOURCE & FALLBACK")
+        resource_layout = self._appearance_resource_group.layout()
+        self._appearance_resource_device_value = self._settings_value("—")
+        self._appearance_resource_resources_value = self._settings_value("Startup resource snapshot unavailable")
+        self._appearance_resource_presentation_value = self._settings_value("Canonical viewport")
+        self._appearance_resource_fallback_value = self._settings_value(
+            "Canonical geometry • no neural cross-fallback"
+        )
+        self._appearance_resource_pipeline_value = self._settings_value("No persistent scene")
+        self._appearance_resource_state_value = self._settings_value(
+            "Waiting for persistent reconstruction scene"
+        )
+        self._add_status_row(resource_layout, "Device", self._appearance_resource_device_value)
+        self._add_status_row(resource_layout, "Resources", self._appearance_resource_resources_value)
+        self._add_status_row(resource_layout, "Presentation", self._appearance_resource_presentation_value)
+        self._add_status_row(resource_layout, "Fallback", self._appearance_resource_fallback_value)
+        self._add_status_row(resource_layout, "Pipeline", self._appearance_resource_pipeline_value)
+        self._add_status_row(resource_layout, "State", self._appearance_resource_state_value)
+        layout.addWidget(self._appearance_resource_group)
+        self._refresh_appearance_resource_fallback_controls()
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -3436,6 +3536,7 @@ class ReconstructionPage(QWidget):
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
         self._hide_gaussian_preview()
         self._hide_nerf_preview()
+        self._appearance_fallback_reason = ""
         self._persistent_scene = scene
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()

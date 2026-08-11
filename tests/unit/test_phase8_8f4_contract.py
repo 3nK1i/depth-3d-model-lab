@@ -51,13 +51,13 @@ def test_f4_reuses_existing_appearance_selector_without_duplicate_switch_control
     assert "QFileDialog" not in group
 
 
-def test_f4_switches_only_existing_f2_f3_previews_and_leaves_f5_policy_deferred() -> None:
+def test_f4_switches_only_existing_f2_f3_previews_and_leaves_f5_policy_external() -> None:
     module = MODULE.read_text(encoding="utf-8")
     page = PAGE.read_text(encoding="utf-8")
     assert "gaussian_presentation" in module
     assert "nerf_presentation" in module
-    assert "F5 owns fallback policy" in page
-    assert "resource/fallback UX remains F5" in page
+    assert "F5 reports the fallback reason" in page
+    assert "F5 reports resource state and canonical fallback" in page
     assert "resource_probe" not in module
     assert "fallback_to" not in module
 
@@ -79,6 +79,6 @@ def test_f4_preserves_canonical_authority_and_is_object_agnostic() -> None:
 
 
 def test_prior_f1_f2_f3_contracts_are_updated_only_for_f4_ownership() -> None:
-    assert "viewport switching available in F4" in F1.read_text(encoding="utf-8")
-    assert "F4 coordinates switching between qualified appearance views" in F2.read_text(encoding="utf-8")
-    assert "F4 coordinates switching between qualified appearance views" in F3.read_text(encoding="utf-8")
+    assert "resource/fallback UX available in F5" in F1.read_text(encoding="utf-8")
+    assert "F5 reports resource state and canonical fallback" in F2.read_text(encoding="utf-8")
+    assert "F5 reports resource state and canonical fallback" in F3.read_text(encoding="utf-8")

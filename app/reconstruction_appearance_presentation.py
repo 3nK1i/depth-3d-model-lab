@@ -136,7 +136,7 @@ class ReconstructionAppearancePresentation:
         if self.missing_kinds:
             missing = ", ".join(_APPEARANCE_KIND_LABELS.get(value, _humanize(value)) for value in self.missing_kinds)
             return f"Appearance metadata available • {missing} missing"
-        return "Appearance metadata ready • viewport switching available in F4"
+        return "Appearance metadata ready • resource/fallback UX available in F5"
 
     @property
     def authority_text(self) -> str:
@@ -211,7 +211,8 @@ def build_reconstruction_appearance_presentation(scene: Any) -> ReconstructionAp
     """Build F1 metadata controls from an existing persistent reconstruction scene.
 
     This function deliberately performs no filesystem probing and no backend
-    availability/resource checks.  Rich failure/resource handling belongs to F5.
+    availability/resource checks. F5 consumes this persisted metadata together
+    with the existing application hardware snapshot for bounded fallback UX.
     """
 
     if scene is None:

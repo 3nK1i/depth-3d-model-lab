@@ -1,9 +1,9 @@
 """Phase 8.8F4 application-level appearance representation switching.
 
 F4 coordinates the already-qualified F2 Gaussian and F3 NeRF static preview
-presentations.  It does not render neural representations, launch isolated
-backends, probe GPU resources, or apply fallback policy.  Canonical geometry
-remains authoritative regardless of which appearance representation is shown.
+presentations. It does not render neural representations or launch isolated
+backends. F5 adds bounded resource/fallback UX around this explicit switching
+path. Canonical geometry remains authoritative regardless of the active view.
 """
 
 from __future__ import annotations
@@ -87,9 +87,9 @@ def build_representation_switch_target(
 ) -> RepresentationSwitchTarget | None:
     """Resolve the selected F1 artifact to an already-qualified F2/F3 target.
 
-    ``ready`` reflects only persisted preview presentation readiness.  It is not
-    a hardware/resource probe and deliberately does not choose another target
-    when the selected representation is unavailable; F5 owns fallback policy.
+    ``ready`` reflects only persisted preview presentation readiness. It does
+    not choose another target when the selected representation is unavailable;
+    F5 reports the explicit canonical fallback without neural cross-substitution.
     """
 
     if selected is None:
