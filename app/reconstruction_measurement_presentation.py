@@ -58,7 +58,7 @@ class ReconstructionMeasurementValue:
             return f"{self.value_si * 1000.0:.1f} mm"
         if self.kind.startswith("orientation_") and self.unit_si == "rad":
             return f"{degrees(self.value_si):.2f}°"
-        if self.kind == "volume" and self.unit_si == "m^3":
+        if self.kind == "volume" and self.unit_si in {"m3", "m^3"}:
             return f"{self.value_si * 1000.0:.2f} L"
         return f"{self.value_si:.4g} {self.unit_si}"
 

@@ -1,10 +1,11 @@
-"""Reconstruction workspace through Phase 8.8E2.
+"""Reconstruction workspace through Phase 8.8E3.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
 the active scene/object inspection target. E2 presents already-computed
-measurement evidence for that target without recomputing measurements or
-exposing E3 validity/confidence, E4 QC, or E5 reference comparison.
+measurement values. E3 presents the exact source-authored validity, uncertainty,
+reliability, scale/calibration context, support, and rejection evidence without
+recomputing any of it. E4 QC and E5 reference comparison remain deferred.
 """
 
 from __future__ import annotations
@@ -66,6 +67,11 @@ from app.reconstruction_measurement_presentation import (
     build_reconstruction_measurement_presentation,
     empty_reconstruction_measurement_text,
 )
+from app.reconstruction_measurement_validity_presentation import (
+    ReconstructionMeasurementValidityPresentation,
+    build_reconstruction_measurement_validity_presentation,
+    empty_reconstruction_measurement_validity_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -103,6 +109,7 @@ class ReconstructionPage(QWidget):
 
     inspection_target_changed = pyqtSignal(object)
     reconstruction_measurement_changed = pyqtSignal(object)
+    reconstruction_measurement_validity_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -130,6 +137,10 @@ class ReconstructionPage(QWidget):
             tuple[str, str], ReconstructionMeasurementPresentation
         ] = {}
         self._reconstruction_measurement_presentation: ReconstructionMeasurementPresentation | None = None
+        self._reconstruction_measurement_validity_presentations: dict[
+            tuple[str, str], ReconstructionMeasurementValidityPresentation
+        ] = {}
+        self._reconstruction_measurement_validity_presentation: ReconstructionMeasurementValidityPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -981,10 +992,15 @@ class ReconstructionPage(QWidget):
         )
         key = (presentation.session_id, presentation.target_object_id)
         self._reconstruction_measurement_presentations[key] = presentation
+        # Replacing E2 evidence invalidates any E3 qualification previously
+        # attached to this exact target/provenance. The caller must reattach
+        # source-authored validity evidence explicitly.
+        self._reconstruction_measurement_validity_presentations.pop(key, None)
         self._refresh_reconstruction_measurement_presentation()
 
     def clear_reconstruction_measurement_evidence(self) -> None:
         self._reconstruction_measurement_presentations.clear()
+        self._reconstruction_measurement_validity_presentations.clear()
         self._refresh_reconstruction_measurement_presentation()
 
     def _refresh_reconstruction_measurement_presentation(self) -> None:
@@ -1019,6 +1035,95 @@ class ReconstructionPage(QWidget):
 
         if changed:
             self.reconstruction_measurement_changed.emit(presentation)
+        self._refresh_reconstruction_measurement_validity_presentation()
+
+    @property
+    def reconstruction_measurement_validity_presentation(self) -> ReconstructionMeasurementValidityPresentation | None:
+        return self._reconstruction_measurement_validity_presentation
+
+    def set_reconstruction_measurement_validity_evidence(
+        self,
+        measurement_object: object,
+        *,
+        source: str = "phase7_5_measurement",
+        context: object | None = None,
+    ) -> None:
+        """Attach E3 qualification to the exact E2-bound measurement evidence.
+
+        E3 requires an existing E2 presentation for the same target and exact
+        source observation. It never guesses correspondence, computes new
+        uncertainty/reliability, runs QC, or changes reconstruction scale.
+        """
+
+        selection = self._inspection_selection
+        session_key = selection.session_id or selection.scene_id
+        key = (session_key, selection.object_id) if selection.has_object else None
+        e2 = self._reconstruction_measurement_presentations.get(key) if key is not None else None
+        if e2 is None:
+            raise ValueError("E3 validity evidence requires existing E2 measurement evidence for the active target.")
+        presentation = build_reconstruction_measurement_validity_presentation(
+            selection,
+            measurement_object,
+            source=source,
+            context=context,
+        )
+        if presentation.source != e2.source:
+            raise ValueError("E3 validity source must match the exact E2 measurement source.")
+        if presentation.source_observation_id != e2.source_observation_id:
+            raise ValueError("E3 validity observation must match the exact E2 measurement observation.")
+        self._reconstruction_measurement_validity_presentations[key] = presentation
+        self._refresh_reconstruction_measurement_validity_presentation()
+
+    def clear_reconstruction_measurement_validity_evidence(self) -> None:
+        self._reconstruction_measurement_validity_presentations.clear()
+        self._refresh_reconstruction_measurement_validity_presentation()
+
+    def _refresh_reconstruction_measurement_validity_presentation(self) -> None:
+        selection = self._inspection_selection
+        session_key = selection.session_id or selection.scene_id
+        key = (session_key, selection.object_id) if selection.has_object else None
+        e2 = self._reconstruction_measurement_presentations.get(key) if key is not None else None
+        presentation = (
+            self._reconstruction_measurement_validity_presentations.get(key)
+            if key is not None and e2 is not None
+            else None
+        )
+        changed = presentation != self._reconstruction_measurement_validity_presentation
+        self._reconstruction_measurement_validity_presentation = presentation
+
+        if not hasattr(self, "_measurement_validity_qualified_value"):
+            return
+        if presentation is None:
+            qualified, validity, reliability, uncertainty, scale, calibration, support, authority = (
+                empty_reconstruction_measurement_validity_text(
+                    selection,
+                    has_e2_evidence=e2 is not None,
+                )
+            )
+            self._measurement_validity_qualified_value.setText(qualified)
+            self._measurement_validity_qualified_value.setToolTip("")
+            self._measurement_validity_status_value.setText(validity)
+            self._measurement_validity_reliability_value.setText(reliability)
+            self._measurement_validity_uncertainty_value.setText(uncertainty)
+            self._measurement_validity_scale_value.setText(scale)
+            self._measurement_validity_calibration_value.setText(calibration)
+            self._measurement_validity_support_value.setText(support)
+            self._measurement_validity_reasons_value.setText("—")
+            self._measurement_validity_authority_value.setText(authority)
+        else:
+            self._measurement_validity_qualified_value.setText(presentation.qualified_values_text)
+            self._measurement_validity_qualified_value.setToolTip(presentation.provenance_tooltip)
+            self._measurement_validity_status_value.setText(presentation.validity_text)
+            self._measurement_validity_reliability_value.setText(presentation.reliability_text)
+            self._measurement_validity_uncertainty_value.setText(presentation.uncertainty_text)
+            self._measurement_validity_scale_value.setText(presentation.scale_text)
+            self._measurement_validity_calibration_value.setText(presentation.calibration_text)
+            self._measurement_validity_support_value.setText(presentation.support_text)
+            self._measurement_validity_reasons_value.setText(presentation.reasons_text)
+            self._measurement_validity_authority_value.setText(presentation.authority_text)
+
+        if changed:
+            self.reconstruction_measurement_validity_changed.emit(presentation)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1298,6 +1403,37 @@ class ReconstructionPage(QWidget):
             "E2 presents existing source-authored values only. Uncertainty, reliability, calibration/scale validity, rejection reasons, and confidence are Phase 8.8E3."
         )
         layout.addWidget(self._reconstruction_measurement_group)
+
+        # E3 qualifies the exact E2-bound source observation. It renders only
+        # fields authored by the Phase 7.5 measurement result/bundle: status,
+        # uncertainty, bounds, reliability, support, scale/calibration context,
+        # warnings, and rejection reasons. No thresholds or QC decisions live here.
+        self._measurement_validity_group = self._settings_group("MEASUREMENT VALIDITY")
+        validity_layout = self._measurement_validity_group.layout()
+        self._measurement_validity_qualified_value = self._settings_value("—")
+        self._measurement_validity_status_value = self._settings_value("Waiting for reconstruction target")
+        self._measurement_validity_reliability_value = self._settings_value("—")
+        self._measurement_validity_uncertainty_value = self._settings_value("—")
+        self._measurement_validity_scale_value = self._settings_value("—")
+        self._measurement_validity_calibration_value = self._settings_value("—")
+        self._measurement_validity_support_value = self._settings_value("—")
+        self._measurement_validity_reasons_value = self._settings_value("—")
+        self._measurement_validity_authority_value = self._settings_value(
+            "Existing validity evidence only • E3 does not compute confidence/uncertainty"
+        )
+        self._add_status_row(validity_layout, "Qualified", self._measurement_validity_qualified_value)
+        self._add_status_row(validity_layout, "Validity", self._measurement_validity_status_value)
+        self._add_status_row(validity_layout, "Reliability", self._measurement_validity_reliability_value)
+        self._add_status_row(validity_layout, "Uncertainty", self._measurement_validity_uncertainty_value)
+        self._add_status_row(validity_layout, "Scale", self._measurement_validity_scale_value)
+        self._add_status_row(validity_layout, "Calibration", self._measurement_validity_calibration_value)
+        self._add_status_row(validity_layout, "Support", self._measurement_validity_support_value)
+        self._add_status_row(validity_layout, "Reasons", self._measurement_validity_reasons_value)
+        self._add_status_row(validity_layout, "Authority", self._measurement_validity_authority_value)
+        self._measurement_validity_authority_value.setToolTip(
+            "E3 presents source-authored measurement validity and uncertainty. It does not infer reliability from semantic confidence, run inspection/QC, compare references, or certify metrology."
+        )
+        layout.addWidget(self._measurement_validity_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
