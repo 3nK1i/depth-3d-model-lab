@@ -51,8 +51,9 @@ def test_e1_does_not_duplicate_d5_object_selector() -> None:
     source = PAGE.read_text(encoding="utf-8")
     assert source.count("reconstructionSemanticObjectCombo") == 1
     assert "INSPECTION TARGET" in source
-    e1_group = source[source.index('self._inspection_target_group = self._settings_group("INSPECTION TARGET")'):]
-    e1_group = e1_group[: e1_group.index('authority = self._settings_group("AUTHORITY & SAFETY")')]
+    start = source.index('self._inspection_target_group = self._settings_group("INSPECTION TARGET")')
+    end = source.index('self._reconstruction_measurement_group = self._settings_group("RECONSTRUCTION MEASUREMENTS")', start)
+    e1_group = source[start:end]
     assert "QComboBox(" not in e1_group
     assert "Prev" not in e1_group
     assert "Next" not in e1_group

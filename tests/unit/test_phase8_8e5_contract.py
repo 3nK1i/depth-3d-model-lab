@@ -67,7 +67,7 @@ def test_e5_ui_has_one_reference_group_and_load_clear_only() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert page.count('self._settings_group("REFERENCE COMPARISON")') == 1
     start = page.index('self._reference_comparison_group = self._settings_group("REFERENCE COMPARISON")')
-    end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = page.index('self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")', start)
     group = page[start:end]
     assert 'QPushButton("Load JSON")' in group
     assert 'QPushButton("Clear")' in group

@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8E5.
+"""Reconstruction workspace through Phase 8.8F1.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -6,7 +6,9 @@ the active scene/object inspection target. E2 presents already-computed
 measurement values. E3 presents source-authored measurement validity and
 uncertainty. E4 presents authoritative inspection/QC reports. E5 adds the
 reference-comparison workflow around an explicit reference identity and existing
-Phase 8.7C comparison evidence without rerunning registration or tolerances.
+Phase 8.7C comparison evidence without rerunning registration or tolerances. F1
+adds metadata-only appearance-representation controls over persisted Gaussian/NeRF
+artifacts; visualization remains deferred to F2/F3 and switching to F4.
 """
 
 from __future__ import annotations
@@ -86,6 +88,12 @@ from app.reconstruction_reference_comparison import (
     load_reference_descriptor_json,
     reference_descriptor_from_payload,
 )
+from app.reconstruction_appearance_presentation import (
+    AppearanceRepresentationEntry,
+    ReconstructionAppearancePresentation,
+    build_reconstruction_appearance_presentation,
+    empty_appearance_representation_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -126,6 +134,7 @@ class ReconstructionPage(QWidget):
     reconstruction_measurement_validity_changed = pyqtSignal(object)
     reconstruction_inspection_qc_changed = pyqtSignal(object)
     reconstruction_reference_comparison_changed = pyqtSignal(object)
+    appearance_representation_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -161,6 +170,8 @@ class ReconstructionPage(QWidget):
         self._reconstruction_inspection_qc_presentation: ReconstructionInspectionQcPresentation | None = None
         self._reconstruction_reference_descriptors: dict[str, ReconstructionReferenceDescriptor] = {}
         self._reconstruction_reference_comparison_presentation: ReconstructionReferenceComparisonPresentation | None = None
+        self._appearance_presentation: ReconstructionAppearancePresentation | None = None
+        self._selected_appearance_artifact_id = ""
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1342,6 +1353,107 @@ class ReconstructionPage(QWidget):
         if changed:
             self.reconstruction_reference_comparison_changed.emit(presentation)
 
+    @property
+    def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
+        return self._appearance_presentation
+
+    @property
+    def selected_appearance_representation(self) -> AppearanceRepresentationEntry | None:
+        presentation = self._appearance_presentation
+        if presentation is None or not self._selected_appearance_artifact_id:
+            return None
+        return presentation.entry_by_artifact_id(self._selected_appearance_artifact_id)
+
+    def _on_appearance_representation_selected(self, combo_index: int) -> None:
+        artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
+        self._selected_appearance_artifact_id = artifact_id
+        self._refresh_appearance_representation_values()
+        self.appearance_representation_changed.emit(self.selected_appearance_representation)
+
+    def _refresh_appearance_representation_controls(self) -> None:
+        previous = self._selected_appearance_artifact_id
+        try:
+            presentation = build_reconstruction_appearance_presentation(self._persistent_scene)
+        except (TypeError, ValueError) as exc:
+            self._appearance_presentation = None
+            self._selected_appearance_artifact_id = ""
+            self._appearance_representation_combo.blockSignals(True)
+            self._appearance_representation_combo.clear()
+            self._appearance_representation_combo.addItem("Appearance unavailable", "")
+            self._appearance_representation_combo.setEnabled(False)
+            self._appearance_representation_combo.blockSignals(False)
+            values = empty_appearance_representation_text()
+            self._appearance_available_value.setText("Appearance metadata rejected")
+            self._appearance_available_value.setToolTip(str(exc))
+            self._appearance_provider_value.setText(values["provider"])
+            self._appearance_artifact_value.setText(values["artifact"])
+            self._appearance_render_value.setText(values["render"])
+            self._appearance_scale_value.setText(values["scale"])
+            self._appearance_state_value.setText("Appearance metadata unavailable")
+            self._appearance_state_value.setToolTip(str(exc))
+            self._appearance_authority_value.setText(values["authority"])
+            self.appearance_representation_changed.emit(None)
+            return
+
+        self._appearance_presentation = presentation
+        self._appearance_representation_combo.blockSignals(True)
+        self._appearance_representation_combo.clear()
+        if presentation is None:
+            self._selected_appearance_artifact_id = ""
+            self._appearance_representation_combo.addItem("No appearance scene", "")
+            self._appearance_representation_combo.setEnabled(False)
+        else:
+            for entry in presentation.entries:
+                self._appearance_representation_combo.addItem(entry.label, entry.artifact_id)
+            self._appearance_representation_combo.setEnabled(bool(presentation.entries))
+            available_ids = {entry.artifact_id for entry in presentation.entries}
+            if previous in available_ids:
+                self._selected_appearance_artifact_id = previous
+            elif presentation.entries:
+                self._selected_appearance_artifact_id = presentation.entries[0].artifact_id
+            else:
+                self._selected_appearance_artifact_id = ""
+            if self._selected_appearance_artifact_id:
+                index = self._appearance_representation_combo.findData(self._selected_appearance_artifact_id)
+                if index >= 0:
+                    self._appearance_representation_combo.setCurrentIndex(index)
+            elif not presentation.entries:
+                self._appearance_representation_combo.addItem("No neural appearance artifacts", "")
+        self._appearance_representation_combo.blockSignals(False)
+        self._refresh_appearance_representation_values()
+        self.appearance_representation_changed.emit(self.selected_appearance_representation)
+
+    def _refresh_appearance_representation_values(self) -> None:
+        values = empty_appearance_representation_text()
+        presentation = self._appearance_presentation
+        selected = self.selected_appearance_representation
+        self._appearance_available_value.setText(
+            presentation.available_text if presentation is not None else values["available"]
+        )
+        self._appearance_available_value.setToolTip(
+            "Persisted Phase 8.7 Gaussian/NeRF appearance artifacts only; this is not backend runtime probing."
+        )
+        if selected is None:
+            self._appearance_provider_value.setText(values["provider"])
+            self._appearance_artifact_value.setText(values["artifact"])
+            self._appearance_render_value.setText(values["render"])
+            self._appearance_scale_value.setText(values["scale"])
+        else:
+            self._appearance_provider_value.setText(selected.provider_text)
+            self._appearance_artifact_value.setText(selected.artifact_id)
+            self._appearance_artifact_value.setToolTip(selected.artifact_id)
+            self._appearance_render_value.setText(selected.render_text)
+            self._appearance_scale_value.setText(selected.scale_text)
+        self._appearance_state_value.setText(
+            presentation.state_text if presentation is not None else values["state"]
+        )
+        self._appearance_authority_value.setText(
+            presentation.authority_text if presentation is not None else values["authority"]
+        )
+        self._appearance_authority_value.setToolTip(
+            "F1 inspects persisted appearance metadata only. Gaussian/NeRF do not become canonical geometry, measurement, inspection/QC, reference, or certified-metrology authority."
+        )
+
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("reconstructionSettingsPanel")
@@ -1723,6 +1835,61 @@ class ReconstructionPage(QWidget):
         self._reference_comparison_clear_button.clicked.connect(self._clear_active_reconstruction_reference)
         reference_layout.addLayout(reference_buttons)
         layout.addWidget(self._reference_comparison_group)
+
+        # F1 controls persisted neural appearance metadata only. The selector
+        # chooses which appearance artifact metadata is inspected; it does not
+        # render or switch the viewport. Gaussian visualization starts in F2,
+        # NeRF visualization in F3, and whole-view switching in F4.
+        self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")
+        appearance_layout = self._appearance_group.layout()
+        appearance_selector = QHBoxLayout()
+        appearance_selector.setSpacing(6)
+        appearance_label = QLabel("Representation")
+        appearance_label.setObjectName("reconstructionRowLabel")
+        appearance_selector.addWidget(appearance_label)
+        self._appearance_representation_combo = QComboBox()
+        self._appearance_representation_combo.setObjectName("reconstructionAppearanceRepresentationCombo")
+        self._appearance_representation_combo.setMinimumContentsLength(4)
+        self._appearance_representation_combo.setMinimumWidth(0)
+        self._appearance_representation_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._appearance_representation_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self._appearance_representation_combo.setToolTip(
+            "Inspect persisted appearance artifact metadata. F1 does not render or switch the Reconstruction viewport."
+        )
+        self._appearance_representation_combo.currentIndexChanged.connect(
+            self._on_appearance_representation_selected
+        )
+        appearance_selector.addWidget(self._appearance_representation_combo, stretch=1)
+        appearance_layout.addLayout(appearance_selector)
+        self._appearance_available_value = self._settings_value("No persistent appearance scene")
+        self._appearance_provider_value = self._settings_value("—")
+        self._appearance_artifact_value = self._settings_value("—")
+        self._appearance_render_value = self._settings_value("—")
+        self._appearance_scale_value = self._settings_value("—")
+        self._appearance_state_value = self._settings_value("Waiting for persistent reconstruction scene")
+        self._appearance_authority_value = self._settings_value(
+            "Appearance only • canonical geometry remains authoritative"
+        )
+        # Keep the complete authority statement visibly readable at the
+        # minimum Reconstruction sidebar width. QLabel height-for-width can
+        # otherwise under-allocate this final wrapped row inside the scroll
+        # body, visually clipping the safety-critical last line.
+        self._appearance_authority_value.setMinimumHeight(
+            self._appearance_authority_value.fontMetrics().lineSpacing() * 3
+        )
+        self._add_status_row(appearance_layout, "Available", self._appearance_available_value)
+        self._add_status_row(appearance_layout, "Provider", self._appearance_provider_value)
+        self._add_status_row(appearance_layout, "Artifact", self._appearance_artifact_value)
+        self._add_status_row(appearance_layout, "Render", self._appearance_render_value)
+        self._add_status_row(appearance_layout, "Scale", self._appearance_scale_value)
+        self._add_status_row(appearance_layout, "State", self._appearance_state_value)
+        self._add_status_row(appearance_layout, "Authority", self._appearance_authority_value)
+        layout.addWidget(self._appearance_group)
+        self._refresh_appearance_representation_controls()
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -2762,6 +2929,7 @@ class ReconstructionPage(QWidget):
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
         self._persistent_scene = scene
+        self._refresh_appearance_representation_controls()
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()
