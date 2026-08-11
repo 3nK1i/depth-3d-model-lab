@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8G4.
+"""Reconstruction workspace through Phase 8.8G5.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -19,7 +19,8 @@ adds explicit idle-only persistent-scene load/save/reload interaction on top of
 the existing persistence controller. G3 exposes integrity-checked whole-engine checkpoint loading
 and exact-context resume preparation without automatically launching resumed execution. G4 adds
 explicit failure/recovery guidance, observes bounded live auto-recovery, and offers only a guarded
-fresh retry from the current source; checkpoint execution remains outside G4.
+fresh retry from the current source; checkpoint execution remains outside G4. G5 adds compact
+progressive disclosure to the settings sidebar without changing any reconstruction behavior.
 """
 
 from __future__ import annotations
@@ -146,6 +147,7 @@ from app.reconstruction_failure_recovery import (
     ReconstructionFailureRecoveryState,
     build_reconstruction_failure_recovery_presentation,
 )
+from app.widgets.reconstruction_settings_disclosure import ReconstructionSettingsDisclosureGroup
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.reconstruction_status import (
     ReconstructionStatusPresentation,
@@ -2017,7 +2019,8 @@ class ReconstructionPage(QWidget):
         layout.setSpacing(10)
 
         workflow = self._settings_group("WORKFLOW")
-        workflow_layout = workflow.layout()
+        self._workflow_group = workflow
+        workflow_layout = workflow.content_layout
         self._workflow_input_value = self._settings_value("No source selected")
         self._runtime_prerequisite_value = self._settings_value("Choose a workflow")
         self._runtime_output_value = self._settings_value("Not started")
@@ -2030,7 +2033,8 @@ class ReconstructionPage(QWidget):
         layout.addWidget(workflow)
 
         session = self._settings_group("SESSION & PERSISTENCE")
-        session_layout = session.layout()
+        self._session_group = session
+        session_layout = session.content_layout
         self._session_value = self._settings_value("No active session")
         self._session_context_value = self._settings_value("No session context")
         self._session_evidence_value = self._settings_value("Runtime/session metadata only")
@@ -2119,7 +2123,7 @@ class ReconstructionPage(QWidget):
         layout.addWidget(session)
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
-        inspection_layout = self._offline_inspection_group.layout()
+        inspection_layout = self._offline_inspection_group.content_layout
         selector_row = QHBoxLayout()
         selector_row.setSpacing(6)
         selector_label = QLabel("Camera")
@@ -2222,7 +2226,7 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._offline_inspection_group)
 
         self._semantic_objects_group = self._settings_group("SEMANTIC / OBJECTS")
-        semantic_layout = self._semantic_objects_group.layout()
+        semantic_layout = self._semantic_objects_group.content_layout
         semantic_selector = QHBoxLayout()
         semantic_selector.setSpacing(6)
         semantic_label = QLabel("Object")
@@ -2288,7 +2292,7 @@ class ReconstructionPage(QWidget):
         # the target; choosing an existing D5 object changes the target scope
         # to that object.  Later E2-E5 consume this generic selection contract.
         self._inspection_target_group = self._settings_group("INSPECTION TARGET")
-        inspection_target_layout = self._inspection_target_group.layout()
+        inspection_target_layout = self._inspection_target_group.content_layout
         self._inspection_scope_value = self._settings_value("—")
         self._inspection_scene_value = self._settings_value("No reconstruction scene")
         self._inspection_object_value = self._settings_value("—")
@@ -2312,7 +2316,8 @@ class ReconstructionPage(QWidget):
         # evidence can be attached to the active E1 object target; no depth,
         # fitting, measurement, uncertainty, QC, or reference algorithm runs here.
         self._reconstruction_measurement_group = self._settings_group("RECONSTRUCTION MEASUREMENTS")
-        measurement_layout = self._reconstruction_measurement_group.layout()
+        self._reconstruction_measurement_group.set_expanded(False)
+        measurement_layout = self._reconstruction_measurement_group.content_layout
         self._measurement_target_value = self._settings_value("No target")
         self._measurement_source_value = self._settings_value("No measurement evidence")
         self._measurement_values_value = self._settings_value("—")
@@ -2335,7 +2340,8 @@ class ReconstructionPage(QWidget):
         # uncertainty, bounds, reliability, support, scale/calibration context,
         # warnings, and rejection reasons. No thresholds or QC decisions live here.
         self._measurement_validity_group = self._settings_group("MEASUREMENT VALIDITY")
-        validity_layout = self._measurement_validity_group.layout()
+        self._measurement_validity_group.set_expanded(False)
+        validity_layout = self._measurement_validity_group.content_layout
         self._measurement_validity_qualified_value = self._settings_value("—")
         self._measurement_validity_status_value = self._settings_value("Waiting for reconstruction target")
         self._measurement_validity_reliability_value = self._settings_value("—")
@@ -2365,7 +2371,8 @@ class ReconstructionPage(QWidget):
         # The decision and findings remain source-authored. Registration/QC is
         # not rerun here and the reference selection/comparison workflow is E5.
         self._inspection_qc_group = self._settings_group("INSPECTION / QC")
-        inspection_qc_layout = self._inspection_qc_group.layout()
+        self._inspection_qc_group.set_expanded(False)
+        inspection_qc_layout = self._inspection_qc_group.content_layout
         self._inspection_qc_target_value = self._settings_value("No target")
         self._inspection_qc_decision_value = self._settings_value("Not evaluated")
         self._inspection_qc_findings_value = self._settings_value("—")
@@ -2394,7 +2401,8 @@ class ReconstructionPage(QWidget):
         # CAD geometry, rerun registration, apply tolerance rules, or promote
         # an arbitrary reconstruction to metric/certified authority.
         self._reference_comparison_group = self._settings_group("REFERENCE COMPARISON")
-        reference_layout = self._reference_comparison_group.layout()
+        self._reference_comparison_group.set_expanded(False)
+        reference_layout = self._reference_comparison_group.content_layout
         self._reference_comparison_target_value = self._settings_value("No target")
         self._reference_comparison_reference_value = self._settings_value("No reference attached")
         self._reference_comparison_structure_value = self._settings_value("—")
@@ -2437,7 +2445,7 @@ class ReconstructionPage(QWidget):
         # qualified static previews. F4 reuses this selector as the explicit
         # user-driven viewport switch. F5 adds resource/fallback state below.
         self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")
-        appearance_layout = self._appearance_group.layout()
+        appearance_layout = self._appearance_group.content_layout
         appearance_selector = QHBoxLayout()
         appearance_selector.setSpacing(6)
         appearance_label = QLabel("Representation")
@@ -2497,7 +2505,8 @@ class ReconstructionPage(QWidget):
         # not parse heavy scene payloads, import Gaussian runtimes, retrain, or
         # register geometry. F4 only coordinates this already-qualified preview.
         self._gaussian_visualization_group = self._settings_group("GAUSSIAN SPLATTING VISUALIZATION")
-        gaussian_layout = self._gaussian_visualization_group.layout()
+        self._gaussian_visualization_group.set_expanded(False)
+        gaussian_layout = self._gaussian_visualization_group.content_layout
         self._gaussian_provider_value = self._settings_value("—")
         self._gaussian_scene_value = self._settings_value("—")
         self._gaussian_preview_value = self._settings_value("—")
@@ -2538,7 +2547,8 @@ class ReconstructionPage(QWidget):
         # appearance artifact. It does not parse checkpoints or launch a neural
         # backend. F4 only coordinates this already-qualified preview.
         self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")
-        nerf_layout = self._nerf_visualization_group.layout()
+        self._nerf_visualization_group.set_expanded(False)
+        nerf_layout = self._nerf_visualization_group.content_layout
         self._nerf_provider_value = self._settings_value("—")
         self._nerf_scene_value = self._settings_value("—")
         self._nerf_preview_value = self._settings_value("—")
@@ -2580,7 +2590,8 @@ class ReconstructionPage(QWidget):
         # displayable without launching an external neural backend, and failures
         # retain canonical geometry without cross-representation substitution.
         self._appearance_resource_group = self._settings_group("RESOURCE & FALLBACK")
-        resource_layout = self._appearance_resource_group.layout()
+        self._appearance_resource_group.set_expanded(False)
+        resource_layout = self._appearance_resource_group.content_layout
         self._appearance_resource_device_value = self._settings_value("—")
         self._appearance_resource_resources_value = self._settings_value("Startup resource snapshot unavailable")
         self._appearance_resource_presentation_value = self._settings_value("Canonical viewport")
@@ -2601,7 +2612,8 @@ class ReconstructionPage(QWidget):
         self._refresh_appearance_resource_fallback_controls()
 
         authority = self._settings_group("AUTHORITY & SAFETY")
-        authority_layout = authority.layout()
+        self._authority_group = authority
+        authority_layout = authority.content_layout
         self._metric_scale_value = self._settings_value("Evidence-driven")
         self._camera_geometry_value = self._settings_value("Not selected")
         self._metrology_value = self._settings_value("Not certified")
@@ -2628,16 +2640,11 @@ class ReconstructionPage(QWidget):
         return card
 
     @staticmethod
-    def _settings_group(title_text: str) -> QFrame:
-        card = QFrame()
-        card.setObjectName("reconstructionSettingsGroup")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(10, 9, 10, 9)
-        layout.setSpacing(7)
-        title = QLabel(title_text)
-        title.setObjectName("reconstructionSettingsGroupTitle")
-        layout.addWidget(title)
-        return card
+    def _settings_group(title_text: str) -> ReconstructionSettingsDisclosureGroup:
+        # G5 keeps the long Reconstruction sidebar fully available while making
+        # detail-heavy groups collapsible. The disclosure widget is presentation
+        # only: it never changes controller, persistence, runtime, or authority state.
+        return ReconstructionSettingsDisclosureGroup(title_text)
 
     @staticmethod
     def _value_label(text: str) -> QLabel:

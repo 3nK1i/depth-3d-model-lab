@@ -1494,6 +1494,24 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         letter-spacing: 0.55px;
     }}
 
+    QToolButton#reconstructionSettingsDisclosureToggle {{
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: {p.settings_text_secondary};
+        padding: 0;
+        font-size: 11px;
+        font-weight: 800;
+    }}
+    QToolButton#reconstructionSettingsDisclosureToggle:hover {{
+        background-color: {p.bg_panel_alt};
+        color: {p.accent};
+    }}
+    QToolButton#reconstructionSettingsDisclosureToggle:pressed {{
+        background-color: #2a1417;
+        color: {p.accent};
+    }}
+
 
     /* ---- Performance footer ---- */
 
