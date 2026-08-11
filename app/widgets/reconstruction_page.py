@@ -14,7 +14,9 @@ executing its isolated runtime. F4 coordinates user-driven switching between
 those qualified appearance views. F5 exposes bounded resource state and an
 explicit canonical fallback without changing any reconstruction authority. G1
 composes the existing runtime/scene/checkpoint evidence into one generic session
-model without adding save/reload, resume, recovery, or domain-specific behavior.
+model without adding save/reload, resume, recovery, or domain-specific behavior. G2
+adds explicit idle-only persistent-scene load/save/reload interaction on top of
+the existing persistence controller; checkpoint resume remains deferred to G3.
 """
 
 from __future__ import annotations
@@ -128,6 +130,10 @@ from app.reconstruction_session_model import (
     ReconstructionSessionIdentityStatus,
     ReconstructionSessionModel,
 )
+from app.reconstruction_session_interaction import (
+    ReconstructionSceneInteractionPresentation,
+    build_reconstruction_scene_interaction_presentation,
+)
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.reconstruction_status import (
     ReconstructionStatusPresentation,
@@ -152,6 +158,7 @@ from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CameraIntrinsicsPolicy,
     LiveCaptureRuntimeState,
+    PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
     ReconstructionCamera,
     load_live_camera_calibration,
 )
@@ -216,6 +223,7 @@ class ReconstructionPage(QWidget):
         self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
         self._appearance_fallback_reason = ""
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
+        self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -2019,6 +2027,38 @@ class ReconstructionPage(QWidget):
         self._add_status_row(session_layout, "Scene", self._scene_manifest_value)
         self._add_status_row(session_layout, "Checkpoint", self._checkpoint_value)
         self._add_status_row(session_layout, "Telemetry", self._telemetry_value)
+        self._session_action_state_value = self._settings_value("Load persistent scene")
+        self._add_status_row(session_layout, "Actions", self._session_action_state_value)
+        session_actions = QHBoxLayout()
+        session_actions.setSpacing(6)
+        self._session_load_button = QPushButton("Load Scene")
+        self._session_load_button.setObjectName("reconstructionRuntimeAction")
+        self._session_load_button.setToolTip(
+            "Load a persistent reconstruction scene manifest with checksum and referenced-file "
+            "verification. This does not start reconstruction or resume a checkpoint."
+        )
+        self._session_load_button.clicked.connect(self._load_persistent_scene_interaction)
+        self._session_load_button.setEnabled(False)
+        session_actions.addWidget(self._session_load_button)
+        self._session_save_button = QPushButton("Save Scene")
+        self._session_save_button.setObjectName("reconstructionRuntimeAction")
+        self._session_save_button.setToolTip(
+            "Write the currently loaded persistent scene manifest and checksum to a selected "
+            "folder. Referenced artifact payloads remain at their recorded paths."
+        )
+        self._session_save_button.clicked.connect(self._save_persistent_scene_interaction)
+        self._session_save_button.setEnabled(False)
+        session_actions.addWidget(self._session_save_button)
+        self._session_reload_button = QPushButton("Reload")
+        self._session_reload_button.setObjectName("reconstructionRuntimeAction")
+        self._session_reload_button.setToolTip(
+            "Re-read the active persistent scene from its current manifest, verify integrity, "
+            "and require the same session identity. No checkpoint resume is executed."
+        )
+        self._session_reload_button.clicked.connect(self._reload_persistent_scene_interaction)
+        self._session_reload_button.setEnabled(False)
+        session_actions.addWidget(self._session_reload_button)
+        session_layout.addLayout(session_actions)
         layout.addWidget(session)
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
@@ -2675,8 +2715,108 @@ class ReconstructionPage(QWidget):
         for widget in (self._session_value, self._session_context_value):
             widget.setProperty("statusKind", status_kind)
             self._refresh_style(widget)
+        self._refresh_scene_interaction_controls()
         if model != previous:
             self.reconstruction_session_model_changed.emit(model)
+
+    @property
+    def scene_interaction_presentation(self) -> ReconstructionSceneInteractionPresentation | None:
+        return self._scene_interaction_presentation
+
+    def _refresh_scene_interaction_controls(self) -> None:
+        if not hasattr(self, "_session_load_button"):
+            return
+        controller = self._controller
+        presentation = build_reconstruction_scene_interaction_presentation(
+            self._reconstruction_session_model,
+            controller_active=bool(controller and controller.is_active),
+            controller_shutdown=bool(controller is None or controller.is_shutdown),
+        )
+        self._scene_interaction_presentation = presentation
+        self._session_action_state_value.setText(presentation.text)
+        self._session_action_state_value.setToolTip(presentation.details)
+        self._session_action_state_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._session_action_state_value)
+        self._session_load_button.setEnabled(presentation.can_load)
+        self._session_save_button.setEnabled(presentation.can_save)
+        self._session_reload_button.setEnabled(presentation.can_reload)
+
+    def _load_persistent_scene_interaction(self) -> None:
+        controller = self._controller
+        if controller is None:
+            return
+        current = controller.persistent_scene_manifest
+        start_dir = str(current.parent if current is not None else Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Persistent Reconstruction Scene",
+            start_dir,
+            (
+                f"Persistent reconstruction scene ({PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST});;"
+                "JSON files (*.json);;All files (*)"
+            ),
+        )
+        if not selected:
+            return
+        try:
+            controller.load_persistent_scene(
+                Path(selected).expanduser().resolve(),
+                verify_file_references=True,
+            )
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.set_error(f"Could not load persistent reconstruction scene: {exc}")
+        finally:
+            self._refresh_scene_interaction_controls()
+
+    def _save_persistent_scene_interaction(self) -> None:
+        controller = self._controller
+        if controller is None:
+            return
+        current = controller.persistent_scene_manifest
+        start_dir = str(current.parent if current is not None else Path.home())
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Save Persistent Reconstruction Scene",
+            start_dir,
+        )
+        if not selected:
+            return
+        output_dir = Path(selected).expanduser().resolve()
+        target_manifest = output_dir / PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST
+        current_manifest = current.resolve() if current is not None else None
+        if target_manifest.exists() and target_manifest.resolve() != current_manifest:
+            response = QMessageBox.question(
+                self,
+                "Replace Persistent Reconstruction Scene",
+                (
+                    "The selected folder already contains a persistent reconstruction scene. "
+                    "Replace its manifest and checksum? Referenced artifact payload files are not copied."
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            controller.save_persistent_scene(output_dir)
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.set_error(f"Could not save persistent reconstruction scene: {exc}")
+        finally:
+            self._refresh_scene_interaction_controls()
+
+    def _reload_persistent_scene_interaction(self) -> None:
+        controller = self._controller
+        if controller is None:
+            return
+        try:
+            controller.reload_persistent_scene()
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.set_error(f"Could not reload persistent reconstruction scene: {exc}")
+        finally:
+            self._refresh_scene_interaction_controls()
 
     def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
         if not isinstance(selection, ReconstructionSourceSelection):
@@ -3425,6 +3565,7 @@ class ReconstructionPage(QWidget):
             self._start_button.setEnabled(False)
             self._pause_button.setEnabled(False)
             self._stop_button.setEnabled(False)
+            self._refresh_scene_interaction_controls()
             return
 
         selection = controller.source_selection
@@ -3476,6 +3617,7 @@ class ReconstructionPage(QWidget):
             not controller.is_shutdown and (can_stop_live or can_stop_offline)
         )
         self._stop_button.setText("Cancel" if offline_busy else "Stop")
+        self._refresh_scene_interaction_controls()
 
     def _clear_warning_if_possible(self) -> None:
         if self._controller is None or self._controller.is_shutdown:

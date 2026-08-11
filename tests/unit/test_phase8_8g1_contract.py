@@ -81,7 +81,7 @@ def test_g1_preserves_authority_and_does_not_certify_metrology() -> None:
     assert "G1 cannot promote reconstruction session state to certified metrology" in module
 
 
-def test_g1_adds_passive_context_to_existing_session_group_without_actions() -> None:
+def test_g1_context_rows_remain_passive_as_g2_adds_scene_actions() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert page.count('session = self._settings_group("SESSION & PERSISTENCE")') == 1
     start = page.index('session = self._settings_group("SESSION & PERSISTENCE")')
@@ -89,8 +89,10 @@ def test_g1_adds_passive_context_to_existing_session_group_without_actions() -> 
     group = page[start:end]
     assert '"Context"' in group
     assert '"Evidence"' in group
-    assert "QPushButton(" not in group
-    assert "QFileDialog" not in group
+    assert 'QPushButton("Load Scene")' in group
+    assert 'QPushButton("Save Scene")' in group
+    assert 'QPushButton("Reload")' in group
+    assert "_session_resume_button" not in group
 
 
 def test_g1_controller_exposes_computed_model_and_change_signal_only() -> None:

@@ -8,7 +8,8 @@ scene and G2 checkpoint/resume contracts. Phase 8.8A5 hardens resource
 interlocks, result admission, cancellation/restart, and shutdown. Phase 8.8B2
 adds dependency-light source/workflow selection. Phase 8.8B3 adds state-driven
 runtime launch/pause/resume/stop helpers while Reconstruction navigation remains
-disabled.
+disabled. Phase 8.8G2 exposes explicit persistent-scene load/save/reload interaction
+without adding a second persistence format or checkpoint-resume behavior.
 """
 
 from __future__ import annotations
@@ -811,6 +812,22 @@ class ReconstructionController(QObject):
     def save_persistent_scene(self, output_dir: str | Path) -> Path:
         self._require_idle_for_persistence("save a persistent reconstruction scene")
         return self._persistence_controller.save_scene(output_dir)
+
+    def reload_persistent_scene(self) -> PersistentReconstructionScene:
+        """Reload the active manifest with integrity and same-session checks."""
+
+        self._require_idle_for_persistence("reload the persistent reconstruction scene")
+        scene = self._persistence_controller.scene
+        manifest = self._persistence_controller.scene_manifest
+        if scene is None or manifest is None:
+            raise ReconstructionValidationError(
+                "No persistent reconstruction scene manifest is available to reload."
+            )
+        return self._persistence_controller.load_scene(
+            manifest,
+            expected_session_id=scene.session_id,
+            verify_file_references=True,
+        )
 
     def clear_persistent_scene(self) -> None:
         self._require_idle_for_persistence("clear the persistent reconstruction scene")

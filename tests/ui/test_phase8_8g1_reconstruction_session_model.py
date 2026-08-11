@@ -98,8 +98,8 @@ def test_g1_existing_session_group_gains_compact_context_and_evidence_rows(windo
     page = window._reconstruction_page
     assert page._session_context_value.text() in {"No session context", "No session context • Idle"}
     assert page._session_evidence_value.text() == "Runtime/session metadata only"
-    assert not hasattr(page, "_session_save_button")
-    assert not hasattr(page, "_session_reload_button")
+    assert hasattr(page, "_session_save_button")  # G2 ownership
+    assert hasattr(page, "_session_reload_button")  # G2 ownership
     assert not hasattr(page, "_session_resume_button")
 
 
