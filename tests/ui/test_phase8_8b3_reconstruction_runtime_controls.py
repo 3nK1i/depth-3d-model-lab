@@ -88,7 +88,8 @@ def test_b3_offline_start_button_delegates_to_selected_controller_workflow(
     page._start_button.click()
 
     assert calls == ["offline"]
-    assert page._session_value.text() == "00000000-0000-4000-8000-0000000088b3"
+    assert page._session_value.text() == "00000000"  # G1 compact session UX
+    assert page._session_value.toolTip() == "00000000-0000-4000-8000-0000000088b3"
     assert page._runtime_output_value.text() == "Preparing output"
 
 
@@ -125,7 +126,8 @@ def test_b3_live_start_calibrated_mode_delegates_to_live_bridge(
     assert captured[0].intrinsics.calibration_status.value == "calibrated"
     assert page._runtime_prerequisite_value.text() == calibration.name
     assert page._camera_geometry_value.text() == "Calibrated"
-    assert page._session_value.text() == "00000000-0000-4000-8000-00000000b3b3"
+    assert page._session_value.text() == "00000000"  # G1 compact session UX
+    assert page._session_value.toolTip() == "00000000-0000-4000-8000-00000000b3b3"
 
 
 def test_b3_live_start_test_mode_uses_explicit_estimated_policy(window, monkeypatch) -> None:
@@ -155,7 +157,8 @@ def test_b3_live_start_test_mode_uses_explicit_estimated_policy(window, monkeypa
     assert page._metric_scale_value.text() == "Unavailable (test)"
     assert page._metrology_value.text() == "Not certified"
     assert page._readiness_badge.text() == "TEST MODE • NON-METRIC"
-    assert page._session_value.text() == "00000000-0000-4000-8000-00000000b3e3"
+    assert page._session_value.text() == "00000000"  # G1 compact session UX
+    assert page._session_value.toolTip() == "00000000-0000-4000-8000-00000000b3e3"
 
 
 def test_b3_live_start_mode_cancel_never_starts_backend(window, monkeypatch) -> None:

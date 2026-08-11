@@ -9,7 +9,15 @@ reconstruction state, controller state, persistence, or backend execution.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class ReconstructionSettingsDisclosureGroup(QFrame):
@@ -41,8 +49,19 @@ class ReconstructionSettingsDisclosureGroup(QFrame):
 
         self._title_label = QLabel(self._title)
         self._title_label.setObjectName("reconstructionSettingsGroupTitle")
-        header.addWidget(self._title_label)
-        header.addStretch(1)
+        # Long disclosure titles must negotiate within the fixed Reconstruction
+        # sidebar width.  Keeping their natural one-line size hint can make the
+        # QScrollArea body wider than its viewport even when horizontal scrolling
+        # is disabled.  Let the title consume the remaining header width and wrap
+        # instead; this is presentation-only and preserves the full title text.
+        self._title_label.setWordWrap(True)
+        self._title_label.setMinimumWidth(0)
+        self._title_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._title_label.setToolTip(self._title)
+        header.addWidget(self._title_label, 1)
 
         self._toggle_button = QToolButton()
         self._toggle_button.setObjectName("reconstructionSettingsDisclosureToggle")

@@ -2077,6 +2077,19 @@ class ReconstructionPage(QWidget):
         )
         self._session_reload_button.clicked.connect(self._reload_persistent_scene_interaction)
         self._session_reload_button.setEnabled(False)
+        for button in (
+            self._session_load_button,
+            self._session_save_button,
+            self._session_reload_button,
+        ):
+            # G6 responsive-sidebar hardening: session action labels must not
+            # establish a minimum width wider than the Reconstruction viewport.
+            # This changes only layout negotiation; action semantics stay intact.
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
         session_actions.addWidget(self._session_reload_button)
         session_layout.addLayout(session_actions)
 
@@ -2101,6 +2114,15 @@ class ReconstructionPage(QWidget):
         )
         self._session_resume_button.clicked.connect(self._prepare_engine_resume_interaction)
         self._session_resume_button.setEnabled(False)
+        for button in (
+            self._session_checkpoint_load_button,
+            self._session_resume_button,
+        ):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
         resume_actions.addWidget(self._session_resume_button)
         session_layout.addLayout(resume_actions)
 
@@ -2117,6 +2139,11 @@ class ReconstructionPage(QWidget):
         )
         self._session_retry_button.clicked.connect(self._retry_failed_runtime_interaction)
         self._session_retry_button.setEnabled(False)
+        self._session_retry_button.setMinimumWidth(0)
+        self._session_retry_button.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
         recovery_actions.addWidget(self._session_retry_button)
         recovery_actions.addStretch(1)
         session_layout.addLayout(recovery_actions)

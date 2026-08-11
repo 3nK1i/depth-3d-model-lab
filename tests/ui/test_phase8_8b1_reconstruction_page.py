@@ -49,8 +49,16 @@ def test_b1_page_binding_is_passive_and_starts_no_backend(window) -> None:
     runtime_actions = [
         button for button in actions if button.objectName() == "reconstructionRuntimeAction"
     ]
-    assert len(runtime_actions) == 3
-    assert all(not button.isEnabled() for button in runtime_actions)
+    # B1 owns the original Start/Pause/Stop runtime controls. Later G2-G4
+    # legitimately add Scene, Resume, and Recovery actions with the same
+    # styling object name, so backward compatibility must not count them.
+    original_runtime_actions = (
+        page._start_button,
+        page._pause_button,
+        page._stop_button,
+    )
+    assert all(button in runtime_actions for button in original_runtime_actions)
+    assert all(not button.isEnabled() for button in original_runtime_actions)
     assert controller.is_active is False
 
 
@@ -66,7 +74,7 @@ def test_b1_page_passively_tracks_qualified_controller_signals(window, qtbot) ->
     assert page._live_value.text() == "Running"
     assert page._offline_value.text() == "Starting"
     assert page._scene_value.text() == "Partial"
-    assert page._viewport_state.text() == "Awaiting scene"
+    assert page._viewport_state.text() == "Waiting for live pose"  # C1 ownership
     assert controller.is_active is False
 
 

@@ -28,8 +28,15 @@ def test_b2_source_controls_remain_safe_after_b5_navigation_enablement(window) -
         for button in page.findChildren(QPushButton)
         if button.objectName() == "reconstructionRuntimeAction"
     ]
-    assert len(runtime) == 3
-    assert all(not button.isEnabled() for button in runtime)
+    # B2 verifies the original Start/Pause/Stop controls. G2-G4 add separate
+    # persistence/resume/recovery actions that intentionally reuse this style.
+    original_runtime = (
+        page._start_button,
+        page._pause_button,
+        page._stop_button,
+    )
+    assert all(button in runtime for button in original_runtime)
+    assert all(not button.isEnabled() for button in original_runtime)
     assert window._mode_tabs._buttons[AppMode.RECONSTRUCTION].isEnabled() is True
     assert window._reconstruction_controller.is_active is False
 
