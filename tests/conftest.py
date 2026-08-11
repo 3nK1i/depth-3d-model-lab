@@ -162,6 +162,7 @@ def _install_fake_vispy_canvas() -> None:
         MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
         MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
         MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
+        MAX_SEMANTIC_OBJECT_DISPLAY = 256
 
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
@@ -190,6 +191,15 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_sparse_envelope_available = False
             self._offline_sparse_envelope_min = None
             self._offline_sparse_envelope_max = None
+            self._semantic_objects_visible = True
+            self._semantic_objects_available = False
+            self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
+            self._semantic_bounds_max = np.zeros((0, 3), dtype=np.float64)
+            self._semantic_centroids_viewer = np.zeros((0, 3), dtype=np.float32)
+            self._semantic_object_ids = ()
+            self._semantic_object_total_count = 0
+            self._selected_semantic_object_index = None
+            self._selected_semantic_object_visible = False
             self._selected_offline_camera_index = None
             self._selected_offline_camera_visible = False
             self._keyframes_visible = True
@@ -257,6 +267,7 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_sparse_envelope_available = False
             self._offline_sparse_envelope_min = None
             self._offline_sparse_envelope_max = None
+            self.clear_semantic_objects()
             self._selected_offline_camera_index = None
             self._selected_offline_camera_visible = False
             self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
@@ -385,6 +396,75 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_offline_sparse_envelope_visible(self, visible: bool) -> None:
             self._offline_sparse_envelope_visible_requested = bool(visible)
+
+        def set_semantic_objects(
+            self,
+            *,
+            bounds_min_reconstruction,
+            bounds_max_reconstruction,
+            centroids_reconstruction,
+            object_ids,
+            total_count: int | None = None,
+        ) -> None:
+            from app.offline_reconstruction_semantics import semantic_centroid_in_viewer
+
+            lower = np.asarray(bounds_min_reconstruction, dtype=np.float64)
+            upper = np.asarray(bounds_max_reconstruction, dtype=np.float64)
+            centroids = np.asarray(centroids_reconstruction, dtype=np.float64)
+            if lower.size == 0:
+                lower = np.zeros((0, 3), dtype=np.float64)
+            if upper.shape != lower.shape or centroids.shape != lower.shape:
+                raise ValueError("Semantic bounds and centroids must share shape (N, 3).")
+            ids = tuple(str(value).strip() for value in object_ids)
+            if len(ids) != lower.shape[0]:
+                raise ValueError("object_ids must match semantic objects.")
+            self._semantic_bounds_min = lower.copy()
+            self._semantic_bounds_max = upper.copy()
+            self._semantic_centroids_viewer = np.asarray(
+                [semantic_centroid_in_viewer(value) for value in centroids], dtype=np.float32
+            ).reshape((-1, 3))
+            self._semantic_object_ids = ids
+            self._semantic_object_total_count = max(
+                int(total_count) if total_count is not None else int(lower.shape[0]),
+                int(lower.shape[0]),
+            )
+            self._semantic_objects_available = bool(lower.shape[0])
+            self._selected_semantic_object_index = None
+            self._selected_semantic_object_visible = False
+
+        def clear_semantic_objects(self, *, update_canvas: bool = True) -> None:
+            self._semantic_objects_available = False
+            self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
+            self._semantic_bounds_max = np.zeros((0, 3), dtype=np.float64)
+            self._semantic_centroids_viewer = np.zeros((0, 3), dtype=np.float32)
+            self._semantic_object_ids = ()
+            self._semantic_object_total_count = 0
+            self._selected_semantic_object_index = None
+            self._selected_semantic_object_visible = False
+
+        def set_semantic_objects_visible(self, visible: bool) -> None:
+            self._semantic_objects_visible = bool(visible)
+            self._selected_semantic_object_visible = bool(
+                self._semantic_objects_visible
+                and self._semantic_objects_available
+                and self._selected_semantic_object_index is not None
+            )
+
+        def select_semantic_object(self, object_index: int) -> None:
+            index = int(object_index)
+            if not self._semantic_objects_available:
+                raise ValueError("No semantic object presentation is loaded.")
+            if index < 0 or index >= self._semantic_bounds_min.shape[0]:
+                raise IndexError("Semantic object index is out of range.")
+            self._selected_semantic_object_index = index
+            self._selected_semantic_object_visible = self._semantic_objects_visible
+
+        def clear_semantic_object_selection(self) -> None:
+            self._selected_semantic_object_index = None
+            self._selected_semantic_object_visible = False
+
+        def focus_selected_semantic_object(self) -> None:
+            self.focus_calls += 1
 
         def select_offline_camera(self, camera_index: int) -> None:
             index = int(camera_index)
@@ -606,6 +686,41 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def offline_scale_status(self):
             return self._offline_scale_status
+
+        @property
+        def semantic_objects_available(self) -> bool:
+            return bool(self._semantic_objects_available)
+
+        @property
+        def semantic_objects_visible(self) -> bool:
+            return bool(self._semantic_objects_visible and self._semantic_objects_available)
+
+        @property
+        def semantic_object_count(self) -> int:
+            return int(self._semantic_object_total_count)
+
+        @property
+        def semantic_object_display_count(self) -> int:
+            return int(self._semantic_bounds_min.shape[0])
+
+        @property
+        def semantic_object_ids(self):
+            return self._semantic_object_ids
+
+        @property
+        def selected_semantic_object_index(self):
+            return self._selected_semantic_object_index
+
+        @property
+        def selected_semantic_object_id(self):
+            index = self._selected_semantic_object_index
+            if index is None or index < 0 or index >= len(self._semantic_object_ids):
+                return None
+            return self._semantic_object_ids[index]
+
+        @property
+        def selected_semantic_object_visible(self) -> bool:
+            return bool(self._selected_semantic_object_visible)
 
         @property
         def world_axis_length(self) -> float:

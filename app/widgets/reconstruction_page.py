@@ -1,9 +1,9 @@
-"""Reconstruction workspace through Phase 8.8D4.
+"""Reconstruction workspace through Phase 8.8D5.
 
-C1-C5 established the live viewer. D1 added bounded visualization of completed
-offline PyCOLMAP sparse SfM, D2 added camera-structure inspection, D3 surfaced
-the backend sparse-SfM health gate, and D4 adds unit-honest spatial coverage
-inspection without turning sparse presentation bounds into object dimensions.
+C1-C5 established the live viewer. D1-D4 added bounded offline sparse-SfM
+visualization, camera inspection, health, and spatial coverage. D5 presents the
+already-qualified Phase 8.7 semantic/object context without promoting semantics
+to inspection/QC decisions, measurements, or canonical geometry authority.
 """
 
 from __future__ import annotations
@@ -49,6 +49,11 @@ from app.offline_reconstruction_quality import (
 from app.offline_reconstruction_spatial import (
     OfflineSparseSpatialCoverage,
     build_offline_sparse_spatial_coverage,
+)
+from app.offline_reconstruction_semantics import (
+    OfflineSemanticPresentation,
+    semantic_presentation_from_payload,
+    semantic_presentation_from_persistent_scene,
 )
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
 from app.reconstruction_controller import (
@@ -116,6 +121,8 @@ class ReconstructionPage(QWidget):
         self._offline_camera_selection_index: int | None = None
         self._offline_sfm_health: OfflineSfmHealthPresentation | None = None
         self._offline_spatial_coverage: OfflineSparseSpatialCoverage | None = None
+        self._offline_semantics: OfflineSemanticPresentation | None = None
+        self._semantic_object_selection_index: int | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
@@ -422,6 +429,18 @@ class ReconstructionPage(QWidget):
         envelope_button.toggled.connect(self._reconstruction_canvas.set_offline_sparse_envelope_visible)
         self._viewport_tool_buttons["offline_envelope"] = envelope_button
         tool_row.addWidget(envelope_button)
+        semantic_button = IconButton(
+            "semantics",
+            size=28,
+            icon_size=15,
+            tooltip="Show or hide semantic object context",
+            checkable=True,
+        )
+        semantic_button.setChecked(True)
+        semantic_button.setEnabled(False)
+        semantic_button.toggled.connect(self._reconstruction_canvas.set_semantic_objects_visible)
+        self._viewport_tool_buttons["semantic_objects"] = semantic_button
+        tool_row.addWidget(semantic_button)
         diagnostics_button = IconButton(
             "diagnostics",
             size=28,
@@ -691,6 +710,180 @@ class ReconstructionPage(QWidget):
             self._reconstruction_canvas.clear_offline_camera_selection()
             self._refresh_offline_camera_navigation()
 
+    def set_semantic_geometry(self, payload: object, *, source: str = "semantic_geometry") -> None:
+        """Present an already-built semantic result without recomputing semantics."""
+
+        presentation = semantic_presentation_from_payload(payload, source=source)
+        self._apply_semantic_presentation(presentation)
+
+    def _apply_semantic_presentation(self, presentation: OfflineSemanticPresentation) -> None:
+        if not isinstance(presentation, OfflineSemanticPresentation):
+            raise TypeError("presentation must be OfflineSemanticPresentation.")
+        self._offline_semantics = presentation
+        self._semantic_object_selection_index = None
+        self._semantic_object_combo.blockSignals(True)
+        self._semantic_object_combo.clear()
+        self._semantic_object_combo.addItem("Select object…", -1)
+        for index, item in enumerate(presentation.objects):
+            self._semantic_object_combo.addItem(
+                f"{index + 1:02d} • {item.display_name}", index
+            )
+        self._semantic_object_combo.setCurrentIndex(0)
+        self._semantic_object_combo.setEnabled(bool(presentation.objects))
+        self._semantic_object_combo.blockSignals(False)
+        self._semantic_structure_value.setText(presentation.structure_text)
+        self._semantic_structure_value.setToolTip(
+            "Bounded semantic-object presentation from existing Phase 8.7 semantic context."
+        )
+        self._semantic_role_value.setText("—")
+        self._semantic_support_value.setText("—")
+        self._semantic_quality_value.setText("—")
+        if presentation.metric_geometry_status == "arbitrary":
+            self._semantic_scale_value.setText("Arbitrary reconstruction gauge")
+        elif presentation.metric_geometry_status == "provisional_metric":
+            self._semantic_scale_value.setText("Provisional metric geometry • not certified")
+        elif presentation.metric_geometry_status == "validated_metric":
+            self._semantic_scale_value.setText("Validated metric geometry • metrology not certified")
+        else:
+            self._semantic_scale_value.setText("Scale semantics unavailable")
+        self._semantic_authority_value.setText(presentation.authority_text)
+        self._semantic_authority_value.setToolTip(
+            "Semantic context labels geometry; inspection/QC and measurement retain their own authority."
+        )
+        if presentation.objects:
+            self._viewport_placeholder.setVisible(False)
+            lower = np.asarray(
+                [item.bounds_min_reconstruction for item in presentation.objects], dtype=np.float64
+            )
+            upper = np.asarray(
+                [item.bounds_max_reconstruction for item in presentation.objects], dtype=np.float64
+            )
+            centroids = np.asarray(
+                [item.centroid_reconstruction for item in presentation.objects], dtype=np.float64
+            )
+            self._reconstruction_canvas.set_semantic_objects(
+                bounds_min_reconstruction=lower,
+                bounds_max_reconstruction=upper,
+                centroids_reconstruction=centroids,
+                object_ids=tuple(item.object_id for item in presentation.objects),
+                total_count=presentation.total_object_count,
+            )
+        else:
+            self._reconstruction_canvas.clear_semantic_objects()
+        semantic_button = self._viewport_tool_buttons.get("semantic_objects")
+        if semantic_button is not None:
+            semantic_button.setEnabled(bool(presentation.objects))
+            self._reconstruction_canvas.set_semantic_objects_visible(semantic_button.isChecked())
+        self._semantic_objects_group.setVisible(True)
+        self._refresh_semantic_navigation()
+        self._refresh_viewport_state()
+
+    def _reset_semantic_presentation(self, *, hide: bool = True) -> None:
+        self._offline_semantics = None
+        self._semantic_object_selection_index = None
+        if hasattr(self, "_semantic_object_combo"):
+            self._semantic_object_combo.blockSignals(True)
+            self._semantic_object_combo.clear()
+            self._semantic_object_combo.addItem("Select object…", -1)
+            self._semantic_object_combo.setCurrentIndex(0)
+            self._semantic_object_combo.setEnabled(False)
+            self._semantic_object_combo.blockSignals(False)
+            self._semantic_structure_value.setText("No semantic context")
+            self._semantic_role_value.setText("—")
+            self._semantic_support_value.setText("—")
+            self._semantic_quality_value.setText("—")
+            self._semantic_scale_value.setText("—")
+            self._semantic_authority_value.setText(
+                "Semantic context only • not inspection/QC decision"
+            )
+            self._semantic_objects_group.setVisible(not hide)
+            self._refresh_semantic_navigation()
+        if hasattr(self, "_reconstruction_canvas"):
+            self._reconstruction_canvas.clear_semantic_objects()
+        button = getattr(self, "_viewport_tool_buttons", {}).get("semantic_objects")
+        if button is not None:
+            button.setEnabled(False)
+
+    def _on_semantic_object_selected(self, combo_index: int) -> None:
+        presentation = self._offline_semantics
+        if presentation is None:
+            return
+        data = self._semantic_object_combo.itemData(combo_index)
+        index = -1 if data is None else int(data)
+        if index < 0:
+            self._semantic_object_selection_index = None
+            self._reconstruction_canvas.clear_semantic_object_selection()
+            self._semantic_role_value.setText("—")
+            self._semantic_support_value.setText("—")
+            self._semantic_quality_value.setText("—")
+            if presentation.metric_geometry_status == "arbitrary":
+                self._semantic_scale_value.setText("Arbitrary reconstruction gauge")
+            elif presentation.metric_geometry_status == "provisional_metric":
+                self._semantic_scale_value.setText("Provisional metric geometry • not certified")
+            elif presentation.metric_geometry_status == "validated_metric":
+                self._semantic_scale_value.setText("Validated metric geometry • metrology not certified")
+            else:
+                self._semantic_scale_value.setText("Scale semantics unavailable")
+            self._semantic_authority_value.setText(presentation.authority_text)
+            self._refresh_semantic_navigation()
+            return
+        if index >= len(presentation.objects):
+            return
+        item = presentation.objects[index]
+        self._semantic_object_selection_index = index
+        self._reconstruction_canvas.select_semantic_object(index)
+        self._semantic_role_value.setText(item.role_text)
+        self._semantic_support_value.setText(item.support_text)
+        self._semantic_quality_value.setText(item.quality_text)
+        self._semantic_scale_value.setText(item.scale_text)
+        self._semantic_authority_value.setText(item.authority_text)
+        self._semantic_quality_value.setToolTip(
+            "Semantic/model confidence and mesh-vertex quality are context signals, not measurement accuracy."
+        )
+        self._viewport_state.setToolTip(
+            f"Selected semantic object {item.object_id}: {item.class_name} ({item.semantic_role})."
+        )
+        self._refresh_semantic_navigation()
+
+    def _refresh_semantic_navigation(self) -> None:
+        presentation = self._offline_semantics
+        selected = self._semantic_object_selection_index
+        count = 0 if presentation is None else len(presentation.objects)
+        valid = selected is not None and 0 <= selected < count
+        if hasattr(self, "_semantic_focus_button"):
+            self._semantic_focus_button.setEnabled(valid)
+            self._semantic_clear_button.setEnabled(valid)
+            self._semantic_prev_button.setEnabled(valid and selected > 0)
+            self._semantic_next_button.setEnabled(valid and selected + 1 < count)
+
+    def _select_previous_semantic_object(self) -> None:
+        if self._semantic_object_selection_index is None:
+            return
+        target = self._semantic_object_selection_index - 1
+        if target >= 0:
+            self._semantic_object_combo.setCurrentIndex(target + 1)
+
+    def _select_next_semantic_object(self) -> None:
+        presentation = self._offline_semantics
+        if presentation is None or self._semantic_object_selection_index is None:
+            return
+        target = self._semantic_object_selection_index + 1
+        if target < len(presentation.objects):
+            self._semantic_object_combo.setCurrentIndex(target + 1)
+
+    def _focus_selected_semantic_object(self) -> None:
+        if self._semantic_object_selection_index is None:
+            return
+        self._reconstruction_canvas.focus_selected_semantic_object()
+
+    def _clear_semantic_object_selection(self) -> None:
+        if self._semantic_object_combo.count():
+            self._semantic_object_combo.setCurrentIndex(0)
+        else:
+            self._semantic_object_selection_index = None
+            self._reconstruction_canvas.clear_semantic_object_selection()
+            self._refresh_semantic_navigation()
+
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
         panel.setObjectName("reconstructionSettingsPanel")
@@ -860,6 +1053,68 @@ class ReconstructionPage(QWidget):
         self._reset_offline_spatial_coverage()
         self._offline_inspection_group.setVisible(False)
         layout.addWidget(self._offline_inspection_group)
+
+        self._semantic_objects_group = self._settings_group("SEMANTIC / OBJECTS")
+        semantic_layout = self._semantic_objects_group.layout()
+        semantic_selector = QHBoxLayout()
+        semantic_selector.setSpacing(6)
+        semantic_label = QLabel("Object")
+        semantic_label.setObjectName("reconstructionRowLabel")
+        semantic_selector.addWidget(semantic_label)
+        self._semantic_object_combo = QComboBox()
+        self._semantic_object_combo.setObjectName("reconstructionSemanticObjectCombo")
+        self._semantic_object_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._semantic_object_combo.setMinimumContentsLength(4)
+        self._semantic_object_combo.setMinimumWidth(0)
+        self._semantic_object_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self._semantic_object_combo.addItem("Select object…", -1)
+        self._semantic_object_combo.setEnabled(False)
+        semantic_selector.addWidget(self._semantic_object_combo, stretch=1)
+        semantic_layout.addLayout(semantic_selector)
+
+        self._semantic_structure_value = self._settings_value("No semantic context")
+        self._semantic_role_value = self._settings_value("—")
+        self._semantic_support_value = self._settings_value("—")
+        self._semantic_quality_value = self._settings_value("—")
+        self._semantic_scale_value = self._settings_value("—")
+        self._semantic_authority_value = self._settings_value(
+            "Semantic context only • not inspection/QC decision"
+        )
+        self._add_status_row(semantic_layout, "Structure", self._semantic_structure_value)
+        self._add_status_row(semantic_layout, "Role", self._semantic_role_value)
+        self._add_status_row(semantic_layout, "Support", self._semantic_support_value)
+        self._add_status_row(semantic_layout, "Quality", self._semantic_quality_value)
+        self._add_status_row(semantic_layout, "Scale", self._semantic_scale_value)
+        self._add_status_row(semantic_layout, "Authority", self._semantic_authority_value)
+
+        semantic_nav = QHBoxLayout()
+        semantic_nav.setSpacing(6)
+        self._semantic_prev_button = QPushButton("Prev")
+        self._semantic_focus_button = QPushButton("Focus")
+        self._semantic_next_button = QPushButton("Next")
+        self._semantic_clear_button = QPushButton("Clear")
+        for button in (
+            self._semantic_prev_button,
+            self._semantic_focus_button,
+            self._semantic_next_button,
+            self._semantic_clear_button,
+        ):
+            button.setEnabled(False)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            semantic_nav.addWidget(button)
+        semantic_layout.addLayout(semantic_nav)
+        self._semantic_object_combo.currentIndexChanged.connect(self._on_semantic_object_selected)
+        self._semantic_prev_button.clicked.connect(self._select_previous_semantic_object)
+        self._semantic_focus_button.clicked.connect(self._focus_selected_semantic_object)
+        self._semantic_next_button.clicked.connect(self._select_next_semantic_object)
+        self._semantic_clear_button.clicked.connect(self._clear_semantic_object_selection)
+        self._semantic_objects_group.setVisible(False)
+        layout.addWidget(self._semantic_objects_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -1354,6 +1609,7 @@ class ReconstructionPage(QWidget):
         self._runtime_elapsed_frozen = 0.0
         self._active_runtime_kind = None
         self._last_runtime_error = ""
+        self._reset_semantic_presentation()
         if workflow is ReconstructionWorkflow.LIVE_SOURCE:
             self._live_pose_count = 0
             self._live_keyframe_count = 0
@@ -1652,6 +1908,9 @@ class ReconstructionPage(QWidget):
         if self._reconstruction_canvas.offline_visualization_loaded:
             self._viewport_state.setText("Offline sparse reconstruction")
             return
+        if self._reconstruction_canvas.semantic_objects_available:
+            self._viewport_state.setText("Semantic object context")
+            return
         if self._reconstruction_canvas.has_pose:
             suffix = " retained" if self._live_state in {
                 LiveCaptureRuntimeState.STOPPED,
@@ -1804,6 +2063,7 @@ class ReconstructionPage(QWidget):
             self._visual_pose_timer.stop()
             self._reset_offline_sfm_health()
             self._reset_offline_inspection()
+            self._reset_semantic_presentation()
             self._reconstruction_canvas.clear_live_state()
             self._viewport_placeholder.setVisible(True)
             self._visualizer_fitted_once = False
@@ -1891,9 +2151,21 @@ class ReconstructionPage(QWidget):
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
+            self._reset_semantic_presentation()
             return
         path = Path(manifest_path).name if manifest_path else "Persistent scene ready"
         self._scene_manifest_value.setText(path)
+        try:
+            presentation = semantic_presentation_from_persistent_scene(scene)
+        except (TypeError, ValueError) as exc:
+            self._reset_semantic_presentation(hide=False)
+            self._semantic_structure_value.setText("Semantic context unavailable")
+            self._semantic_structure_value.setToolTip(str(exc))
+            return
+        if presentation is None:
+            self._reset_semantic_presentation()
+            return
+        self._apply_semantic_presentation(presentation)
 
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
         if checkpoint is None:

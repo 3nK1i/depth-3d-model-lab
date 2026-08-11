@@ -393,6 +393,7 @@ class ReconstructionCanvas(QObject):
     MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
     MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
     MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
+    MAX_SEMANTIC_OBJECT_DISPLAY = 256
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -510,6 +511,42 @@ class ReconstructionCanvas(QObject):
         self._offline_sparse_envelope_available = False
         self._offline_sparse_envelope_min = None
         self._offline_sparse_envelope_max = None
+        self._semantic_object_boxes = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(0.64, 0.46, 0.94, 0.48),
+            width=1.2,
+            parent=self._view.scene,
+        )
+        self._semantic_object_centers = scene.visuals.Markers(parent=self._view.scene)
+        self._semantic_object_centers.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.64, 0.46, 0.94, 0.76),
+            size=4.2,
+            edge_width=0,
+        )
+        self._selected_semantic_object_box = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(1.0, 0.80, 0.22, 0.98),
+            width=2.4,
+            parent=self._view.scene,
+        )
+        self._selected_semantic_object_center = scene.visuals.Markers(parent=self._view.scene)
+        self._selected_semantic_object_center.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(1.0, 0.80, 0.22, 1.0),
+            size=7.0,
+            edge_width=0,
+        )
+        self._semantic_objects_visible = True
+        self._semantic_objects_available = False
+        self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
+        self._semantic_bounds_max = np.zeros((0, 3), dtype=np.float64)
+        self._semantic_centroids_viewer = np.zeros((0, 3), dtype=np.float32)
+        self._semantic_object_ids: tuple[str, ...] = ()
+        self._semantic_object_total_count = 0
+        self._selected_semantic_object_index: int | None = None
         self._selected_offline_camera_frustum = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
             connect="segments",
@@ -636,6 +673,7 @@ class ReconstructionCanvas(QObject):
         self._offline_sparse_envelope_available = False
         self._offline_sparse_envelope_min = None
         self._offline_sparse_envelope_max = None
+        self.clear_semantic_objects(update_canvas=False)
         self._selected_offline_camera_frustum.set_data(
             pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
         )
@@ -863,6 +901,178 @@ class ReconstructionCanvas(QObject):
         )
         self._canvas.update()
 
+    def set_semantic_objects(
+        self,
+        *,
+        bounds_min_reconstruction: np.ndarray,
+        bounds_max_reconstruction: np.ndarray,
+        centroids_reconstruction: np.ndarray,
+        object_ids: tuple[str, ...] | list[str],
+        total_count: int | None = None,
+    ) -> None:
+        """Render bounded D5 semantic-context object boxes and centroids.
+
+        These wireframes are presentation-only semantic support bounds. They
+        are not measurement boxes, defect decisions, or canonical geometry.
+        """
+
+        lower = np.asarray(bounds_min_reconstruction, dtype=np.float64)
+        upper = np.asarray(bounds_max_reconstruction, dtype=np.float64)
+        centroids = np.asarray(centroids_reconstruction, dtype=np.float64)
+        if lower.size == 0:
+            lower = np.zeros((0, 3), dtype=np.float64)
+        if upper.size == 0:
+            upper = np.zeros((0, 3), dtype=np.float64)
+        if centroids.size == 0:
+            centroids = np.zeros((0, 3), dtype=np.float64)
+        if lower.ndim != 2 or lower.shape[1:] != (3,):
+            raise ValueError("bounds_min_reconstruction must be a finite (N, 3) array.")
+        if upper.shape != lower.shape or centroids.shape != lower.shape:
+            raise ValueError("Semantic bounds and centroids must share shape (N, 3).")
+        if not np.isfinite(lower).all() or not np.isfinite(upper).all() or not np.isfinite(centroids).all():
+            raise ValueError("Semantic bounds and centroids must be finite.")
+        if np.any(upper < lower):
+            raise ValueError("Semantic bounds must be ordered.")
+        if np.any(centroids < lower - 1e-8) or np.any(centroids > upper + 1e-8):
+            raise ValueError("Semantic centroids must lie inside their bounds.")
+        ids = tuple(str(value).strip() for value in object_ids)
+        if len(ids) != lower.shape[0] or any(not value for value in ids) or len(set(ids)) != len(ids):
+            raise ValueError("object_ids must match semantic objects and remain unique.")
+        if lower.shape[0] > self.MAX_SEMANTIC_OBJECT_DISPLAY:
+            raise ValueError("Semantic object presentation exceeds the bounded display limit.")
+
+        from app.offline_reconstruction_semantics import (
+            semantic_bounds_segments_in_viewer,
+            semantic_centroid_in_viewer,
+        )
+
+        segments = [
+            semantic_bounds_segments_in_viewer(lower[index], upper[index])
+            for index in range(lower.shape[0])
+        ]
+        combined = (
+            np.ascontiguousarray(np.vstack(segments), dtype=np.float32)
+            if segments
+            else np.zeros((0, 3), dtype=np.float32)
+        )
+        center_viewer = np.asarray(
+            [semantic_centroid_in_viewer(value) for value in centroids],
+            dtype=np.float32,
+        ).reshape((-1, 3))
+        self._semantic_object_boxes.set_data(pos=combined, connect="segments")
+        self._semantic_object_centers.set_data(
+            pos=center_viewer,
+            face_color=(0.64, 0.46, 0.94, 0.76),
+            size=4.2,
+            edge_width=0,
+        )
+        self._semantic_bounds_min = np.ascontiguousarray(lower)
+        self._semantic_bounds_max = np.ascontiguousarray(upper)
+        self._semantic_centroids_viewer = np.ascontiguousarray(center_viewer)
+        self._semantic_object_ids = ids
+        self._semantic_object_total_count = max(
+            int(total_count) if total_count is not None else int(lower.shape[0]),
+            int(lower.shape[0]),
+        )
+        self._semantic_objects_available = bool(lower.shape[0])
+        self._selected_semantic_object_index = None
+        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        self._semantic_object_boxes.visible = visible
+        self._semantic_object_centers.visible = visible
+        self._selected_semantic_object_box.visible = False
+        self._selected_semantic_object_center.visible = False
+        self._refresh_world_axis_scale()
+        self._canvas.update()
+
+    def clear_semantic_objects(self, *, update_canvas: bool = True) -> None:
+        self._semantic_object_boxes.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._semantic_object_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._selected_semantic_object_box.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._selected_semantic_object_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._semantic_object_boxes.visible = False
+        self._semantic_object_centers.visible = False
+        self._selected_semantic_object_box.visible = False
+        self._selected_semantic_object_center.visible = False
+        self._semantic_objects_available = False
+        self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
+        self._semantic_bounds_max = np.zeros((0, 3), dtype=np.float64)
+        self._semantic_centroids_viewer = np.zeros((0, 3), dtype=np.float32)
+        self._semantic_object_ids = ()
+        self._semantic_object_total_count = 0
+        self._selected_semantic_object_index = None
+        if update_canvas:
+            self._canvas.update()
+
+    def set_semantic_objects_visible(self, visible: bool) -> None:
+        self._semantic_objects_visible = bool(visible)
+        show = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        self._semantic_object_boxes.visible = show
+        self._semantic_object_centers.visible = show
+        selected = bool(show and self._selected_semantic_object_index is not None)
+        self._selected_semantic_object_box.visible = selected
+        self._selected_semantic_object_center.visible = selected
+        self._canvas.update()
+
+    def select_semantic_object(self, object_index: int) -> None:
+        index = int(object_index)
+        if not self._semantic_objects_available:
+            raise ValueError("No semantic object presentation is loaded.")
+        if index < 0 or index >= self._semantic_bounds_min.shape[0]:
+            raise IndexError("Semantic object index is out of range.")
+        self._selected_semantic_object_index = index
+        self._refresh_selected_semantic_object()
+        self._canvas.update()
+
+    def clear_semantic_object_selection(self) -> None:
+        self._selected_semantic_object_index = None
+        self._selected_semantic_object_box.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._selected_semantic_object_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._selected_semantic_object_box.visible = False
+        self._selected_semantic_object_center.visible = False
+        self._canvas.update()
+
+    def _refresh_selected_semantic_object(self) -> None:
+        index = self._selected_semantic_object_index
+        if index is None:
+            return
+        if index < 0 or index >= self._semantic_bounds_min.shape[0]:
+            self.clear_semantic_object_selection()
+            return
+        from app.offline_reconstruction_semantics import semantic_bounds_segments_in_viewer
+
+        segments = semantic_bounds_segments_in_viewer(
+            self._semantic_bounds_min[index], self._semantic_bounds_max[index]
+        )
+        center = self._semantic_centroids_viewer[index : index + 1]
+        self._selected_semantic_object_box.set_data(pos=segments, connect="segments")
+        self._selected_semantic_object_center.set_data(
+            pos=center,
+            face_color=(1.0, 0.80, 0.22, 1.0),
+            size=7.0,
+            edge_width=0,
+        )
+        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        self._selected_semantic_object_box.visible = visible
+        self._selected_semantic_object_center.visible = visible
+
+    def focus_selected_semantic_object(self) -> None:
+        index = self._selected_semantic_object_index
+        if index is None or index < 0 or index >= self._semantic_centroids_viewer.shape[0]:
+            self.fit_scene()
+            return
+        center = self._semantic_centroids_viewer[index]
+        span = self._semantic_bounds_max[index] - self._semantic_bounds_min[index]
+        radius = max(float(np.linalg.norm(span)) * 0.5, 0.08)
+        self._camera.center = tuple(float(value) for value in center)
+        self._camera.distance = max(radius * 3.2, 0.7)
+        self._camera.view_changed()
+
     def select_offline_camera(self, camera_index: int) -> None:
         """Highlight one registered offline camera without changing reconstruction state."""
 
@@ -1044,6 +1254,8 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
         if self._keyframe_positions.size:
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+        if self._semantic_centroids_viewer.size:
+            groups.append(np.asarray(self._semantic_centroids_viewer, dtype=np.float64))
         points = np.vstack(groups) if groups else None
         target = adaptive_world_axis_length(points)
         if abs(target - self._world_axis_length) <= max(0.01, self._world_axis_length * 0.12):
@@ -1117,6 +1329,8 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
         if self._keyframe_positions.size:
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+        if self._semantic_centroids_viewer.size:
+            groups.append(np.asarray(self._semantic_centroids_viewer, dtype=np.float64))
         if groups:
             points = np.vstack(groups)
             center = points.mean(axis=0)
@@ -1319,6 +1533,46 @@ class ReconstructionCanvas(QObject):
     @property
     def offline_scale_status(self) -> str | None:
         return self._offline_scale_status
+
+    @property
+    def semantic_objects_available(self) -> bool:
+        return bool(self._semantic_objects_available)
+
+    @property
+    def semantic_objects_visible(self) -> bool:
+        return bool(self._semantic_objects_visible and self._semantic_objects_available)
+
+    @property
+    def semantic_object_count(self) -> int:
+        return int(self._semantic_object_total_count)
+
+    @property
+    def semantic_object_display_count(self) -> int:
+        return int(self._semantic_bounds_min.shape[0])
+
+    @property
+    def semantic_object_ids(self) -> tuple[str, ...]:
+        return self._semantic_object_ids
+
+    @property
+    def selected_semantic_object_index(self) -> int | None:
+        return self._selected_semantic_object_index
+
+    @property
+    def selected_semantic_object_id(self) -> str | None:
+        index = self._selected_semantic_object_index
+        if index is None or index < 0 or index >= len(self._semantic_object_ids):
+            return None
+        return self._semantic_object_ids[index]
+
+    @property
+    def selected_semantic_object_visible(self) -> bool:
+        return bool(
+            self._semantic_objects_visible
+            and self._semantic_objects_available
+            and self._selected_semantic_object_index is not None
+            and self._selected_semantic_object_box.visible
+        )
 
     @property
     def world_axis_length(self) -> float:

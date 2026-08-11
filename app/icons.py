@@ -57,6 +57,7 @@ _ICON_PATHS: dict[str, str] = {
     "landmarks": '<circle cx="5" cy="7" r="1.3"/><circle cx="11" cy="5" r="1.3"/><circle cx="18" cy="8" r="1.3"/><circle cx="8" cy="13" r="1.3"/><circle cx="15" cy="14" r="1.3"/><circle cx="20" cy="18" r="1.3"/><circle cx="4" cy="19" r="1.3"/><circle cx="12" cy="20" r="1.3"/>',
     "keyframes": '<path d="M4 7h5l1.5-2h3L15 7h5v10H4z"/><path d="M7 11l2-1.5 2 1.5"/><path d="M13 11l2-1.5 2 1.5"/><path d="M7 14h10"/>',
     "diagnostics": '<path d="M3 12h4l2-6 4 12 2-7 2 1h4"/><circle cx="3" cy="12" r="1"/><circle cx="21" cy="12" r="1"/>',
+    "semantics": '<path d="M4 6h6l2 2h8v10H4z"/><path d="M8 11h8"/><path d="M8 14h5"/><circle cx="17" cy="14" r="1.5"/>',
 }
 
 
