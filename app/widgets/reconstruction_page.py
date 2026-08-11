@@ -1,11 +1,11 @@
-"""Reconstruction workspace through Phase 8.8E3.
+"""Reconstruction workspace through Phase 8.8E4.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
 the active scene/object inspection target. E2 presents already-computed
-measurement values. E3 presents the exact source-authored validity, uncertainty,
-reliability, scale/calibration context, support, and rejection evidence without
-recomputing any of it. E4 QC and E5 reference comparison remain deferred.
+measurement values. E3 presents source-authored measurement validity and
+uncertainty. E4 presents existing authoritative inspection/QC reports without
+running registration/QC or pulling the E5 reference-comparison workflow forward.
 """
 
 from __future__ import annotations
@@ -72,6 +72,11 @@ from app.reconstruction_measurement_validity_presentation import (
     build_reconstruction_measurement_validity_presentation,
     empty_reconstruction_measurement_validity_text,
 )
+from app.reconstruction_inspection_qc_presentation import (
+    ReconstructionInspectionQcPresentation,
+    build_reconstruction_inspection_qc_presentation,
+    empty_reconstruction_inspection_qc_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -110,6 +115,7 @@ class ReconstructionPage(QWidget):
     inspection_target_changed = pyqtSignal(object)
     reconstruction_measurement_changed = pyqtSignal(object)
     reconstruction_measurement_validity_changed = pyqtSignal(object)
+    reconstruction_inspection_qc_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -141,6 +147,8 @@ class ReconstructionPage(QWidget):
             tuple[str, str], ReconstructionMeasurementValidityPresentation
         ] = {}
         self._reconstruction_measurement_validity_presentation: ReconstructionMeasurementValidityPresentation | None = None
+        self._reconstruction_inspection_qc_reports: dict[str, tuple[object, str]] = {}
+        self._reconstruction_inspection_qc_presentation: ReconstructionInspectionQcPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1124,6 +1132,78 @@ class ReconstructionPage(QWidget):
 
         if changed:
             self.reconstruction_measurement_validity_changed.emit(presentation)
+        self._refresh_reconstruction_inspection_qc_presentation()
+
+    @property
+    def reconstruction_inspection_qc_presentation(self) -> ReconstructionInspectionQcPresentation | None:
+        return self._reconstruction_inspection_qc_presentation
+
+    def set_reconstruction_inspection_qc_evidence(
+        self,
+        inspection_report: object,
+        *,
+        source: str = "phase8_7c.inspection_report",
+    ) -> None:
+        """Attach an existing authoritative inspection/QC report to the active scene.
+
+        E4 consumes the serialized Phase 8.7C contract only. It does not run
+        registration, apply tolerance rules, infer PASS/FAIL from semantic or
+        measurement confidence, or load/select references.
+        """
+
+        presentation = build_reconstruction_inspection_qc_presentation(
+            self._inspection_selection, inspection_report, source=source
+        )
+        self._reconstruction_inspection_qc_reports[presentation.session_id] = (
+            inspection_report, str(source).strip()
+        )
+        self._refresh_reconstruction_inspection_qc_presentation()
+
+    def clear_reconstruction_inspection_qc_evidence(self) -> None:
+        self._reconstruction_inspection_qc_reports.clear()
+        self._refresh_reconstruction_inspection_qc_presentation()
+
+    def _refresh_reconstruction_inspection_qc_presentation(self) -> None:
+        selection = self._inspection_selection
+        session_key = (selection.session_id or selection.scene_id).strip() if selection.has_scene else ""
+        attached = self._reconstruction_inspection_qc_reports.get(session_key) if session_key else None
+        presentation = None
+        if attached is not None:
+            report, source = attached
+            presentation = build_reconstruction_inspection_qc_presentation(
+                selection, report, source=source
+            )
+        changed = presentation != self._reconstruction_inspection_qc_presentation
+        self._reconstruction_inspection_qc_presentation = presentation
+
+        if not hasattr(self, "_inspection_qc_target_value"):
+            return
+        if presentation is None:
+            target, decision, findings, coverage, registration, comparison, authority = (
+                empty_reconstruction_inspection_qc_text(selection)
+            )
+            self._inspection_qc_target_value.setText(target)
+            self._inspection_qc_target_value.setToolTip("")
+            self._inspection_qc_decision_value.setText(decision)
+            self._inspection_qc_findings_value.setText(findings)
+            self._inspection_qc_coverage_value.setText(coverage)
+            self._inspection_qc_decisions_value.setText("—")
+            self._inspection_qc_registration_value.setText(registration)
+            self._inspection_qc_comparison_value.setText(comparison)
+            self._inspection_qc_authority_value.setText(authority)
+        else:
+            self._inspection_qc_target_value.setText(presentation.target_label)
+            self._inspection_qc_target_value.setToolTip(presentation.provenance_tooltip)
+            self._inspection_qc_decision_value.setText(presentation.decision_text)
+            self._inspection_qc_findings_value.setText(presentation.findings_text)
+            self._inspection_qc_coverage_value.setText(presentation.coverage_text)
+            self._inspection_qc_decisions_value.setText(presentation.decisions_text)
+            self._inspection_qc_registration_value.setText(presentation.registration_text)
+            self._inspection_qc_comparison_value.setText(presentation.comparison_text)
+            self._inspection_qc_authority_value.setText(presentation.authority_text)
+
+        if changed:
+            self.reconstruction_inspection_qc_changed.emit(presentation)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1434,6 +1514,34 @@ class ReconstructionPage(QWidget):
             "E3 presents source-authored measurement validity and uncertainty. It does not infer reliability from semantic confidence, run inspection/QC, compare references, or certify metrology."
         )
         layout.addWidget(self._measurement_validity_group)
+
+        # E4 presents an already-produced Phase 8.7C inspection/QC report.
+        # The decision and findings remain source-authored. Registration/QC is
+        # not rerun here and the reference selection/comparison workflow is E5.
+        self._inspection_qc_group = self._settings_group("INSPECTION / QC")
+        inspection_qc_layout = self._inspection_qc_group.layout()
+        self._inspection_qc_target_value = self._settings_value("No target")
+        self._inspection_qc_decision_value = self._settings_value("Not evaluated")
+        self._inspection_qc_findings_value = self._settings_value("—")
+        self._inspection_qc_coverage_value = self._settings_value("—")
+        self._inspection_qc_decisions_value = self._settings_value("—")
+        self._inspection_qc_registration_value = self._settings_value("No inspection report attached")
+        self._inspection_qc_comparison_value = self._settings_value("—")
+        self._inspection_qc_authority_value = self._settings_value(
+            "Existing QC only • E4 does not run inspection"
+        )
+        self._add_status_row(inspection_qc_layout, "Target", self._inspection_qc_target_value)
+        self._add_status_row(inspection_qc_layout, "Decision", self._inspection_qc_decision_value)
+        self._add_status_row(inspection_qc_layout, "Findings", self._inspection_qc_findings_value)
+        self._add_status_row(inspection_qc_layout, "Coverage", self._inspection_qc_coverage_value)
+        self._add_status_row(inspection_qc_layout, "Summary", self._inspection_qc_decisions_value)
+        self._add_status_row(inspection_qc_layout, "Registration", self._inspection_qc_registration_value)
+        self._add_status_row(inspection_qc_layout, "Comparison", self._inspection_qc_comparison_value)
+        self._add_status_row(inspection_qc_layout, "Authority", self._inspection_qc_authority_value)
+        self._inspection_qc_authority_value.setToolTip(
+            "E4 displays existing Phase 8.7C inspection/QC decisions only. It does not infer decisions from semantics/measurements, rerun registration, or implement the E5 reference-comparison workflow."
+        )
+        layout.addWidget(self._inspection_qc_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -1929,6 +2037,7 @@ class ReconstructionPage(QWidget):
         self._active_runtime_kind = None
         self._last_runtime_error = ""
         self.clear_reconstruction_measurement_evidence()
+        self.clear_reconstruction_inspection_qc_evidence()
         self._reset_semantic_presentation()
         if workflow is ReconstructionWorkflow.LIVE_SOURCE:
             self._live_pose_count = 0
@@ -2474,6 +2583,7 @@ class ReconstructionPage(QWidget):
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()
+            self.clear_reconstruction_inspection_qc_evidence()
             self._reset_semantic_presentation()
             self._refresh_inspection_selection()
             return
