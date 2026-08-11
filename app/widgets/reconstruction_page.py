@@ -1,9 +1,10 @@
-"""Reconstruction workspace through Phase 8.8D5.
+"""Reconstruction workspace through Phase 8.8E1.
 
-C1-C5 established the live viewer. D1-D4 added bounded offline sparse-SfM
-visualization, camera inspection, health, and spatial coverage. D5 presents the
-already-qualified Phase 8.7 semantic/object context without promoting semantics
-to inspection/QC decisions, measurements, or canonical geometry authority.
+C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
+camera/health/coverage inspection, and semantic-object presentation. E1 binds
+the active reconstruction scene plus the existing D5 object selection into one
+generic downstream inspection target without evaluating measurement, QC, or
+reference comparison.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from time import monotonic
 
 import numpy as np
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -56,6 +57,10 @@ from app.offline_reconstruction_semantics import (
     semantic_presentation_from_persistent_scene,
 )
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
+from app.reconstruction_inspection_selection import (
+    ReconstructionInspectionSelection,
+    build_reconstruction_inspection_selection,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -91,6 +96,8 @@ from core.reconstruction import (
 class ReconstructionPage(QWidget):
     """Professional Reconstruction workspace shell with passive state binding."""
 
+    inspection_target_changed = pyqtSignal(object)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("reconstructionPage")
@@ -111,6 +118,8 @@ class ReconstructionPage(QWidget):
         self._live_landmark_count: int | None = None
         self._last_runtime_error = ""
         self._scene_availability = ReconstructionSceneAvailability.NONE
+        self._persistent_scene = None
+        self._inspection_selection = build_reconstruction_inspection_selection()
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -611,6 +620,7 @@ class ReconstructionPage(QWidget):
         self._offline_camera_delta_value.setText("—")
         self._offline_inspection_group.setVisible(True)
         self._refresh_offline_camera_navigation()
+        self._refresh_inspection_selection()
 
     def _reset_offline_inspection(self, *, hide: bool = True) -> None:
         self._offline_visualization = None
@@ -633,6 +643,7 @@ class ReconstructionPage(QWidget):
             self._refresh_offline_camera_navigation()
         if hasattr(self, "_reconstruction_canvas"):
             self._reconstruction_canvas.clear_offline_camera_selection()
+        self._refresh_inspection_selection()
 
     def _on_offline_camera_selected(self, combo_index: int) -> None:
         visual = self._offline_visualization
@@ -776,6 +787,7 @@ class ReconstructionPage(QWidget):
             self._reconstruction_canvas.set_semantic_objects_visible(semantic_button.isChecked())
         self._semantic_objects_group.setVisible(True)
         self._refresh_semantic_navigation()
+        self._refresh_inspection_selection()
         self._refresh_viewport_state()
 
     def _reset_semantic_presentation(self, *, hide: bool = True) -> None:
@@ -803,6 +815,7 @@ class ReconstructionPage(QWidget):
         button = getattr(self, "_viewport_tool_buttons", {}).get("semantic_objects")
         if button is not None:
             button.setEnabled(False)
+        self._refresh_inspection_selection()
 
     def _on_semantic_object_selected(self, combo_index: int) -> None:
         presentation = self._offline_semantics
@@ -826,6 +839,7 @@ class ReconstructionPage(QWidget):
                 self._semantic_scale_value.setText("Scale semantics unavailable")
             self._semantic_authority_value.setText(presentation.authority_text)
             self._refresh_semantic_navigation()
+            self._refresh_inspection_selection()
             return
         if index >= len(presentation.objects):
             return
@@ -844,6 +858,7 @@ class ReconstructionPage(QWidget):
             f"Selected semantic object {item.object_id}: {item.class_name} ({item.semantic_role})."
         )
         self._refresh_semantic_navigation()
+        self._refresh_inspection_selection()
 
     def _refresh_semantic_navigation(self) -> None:
         presentation = self._offline_semantics
@@ -883,6 +898,53 @@ class ReconstructionPage(QWidget):
             self._semantic_object_selection_index = None
             self._reconstruction_canvas.clear_semantic_object_selection()
             self._refresh_semantic_navigation()
+
+    @property
+    def inspection_selection(self) -> ReconstructionInspectionSelection:
+        return self._inspection_selection
+
+    def _refresh_inspection_selection(self) -> None:
+        """Bind the active scene + existing D5 selection into the E1 target."""
+
+        scene = self._persistent_scene
+        scene_id = str(getattr(scene, "scene_id", "")).strip() if scene is not None else ""
+        session_id = str(getattr(scene, "session_id", "")).strip() if scene is not None else ""
+        scene_source = "persistent_scene" if scene is not None else ""
+        canonical = bool(
+            getattr(scene, "canonical_geometry_authoritative", False)
+        ) if scene is not None else False
+
+        if not session_id and self._offline_semantics is not None:
+            session_id = self._offline_semantics.session_id
+            scene_source = self._offline_semantics.source
+        if not session_id and self._offline_visualization is not None:
+            session_id = self._offline_visualization.session_id
+            scene_source = "offline_sparse_reconstruction"
+
+        selection = build_reconstruction_inspection_selection(
+            scene_id=scene_id,
+            session_id=session_id,
+            scene_source=scene_source,
+            scene_availability=getattr(self._scene_availability, "value", str(self._scene_availability)),
+            canonical_geometry_authoritative=canonical,
+            semantic_presentation=self._offline_semantics,
+            selected_object_index=self._semantic_object_selection_index,
+        )
+        changed = selection != self._inspection_selection
+        self._inspection_selection = selection
+
+        if hasattr(self, "_inspection_scope_value"):
+            self._inspection_scope_value.setText(selection.scope_text)
+            self._inspection_scene_value.setText(selection.scene_text)
+            self._inspection_scene_value.setToolTip(selection.scene_tooltip)
+            self._inspection_object_value.setText(selection.object_text)
+            self._inspection_object_value.setToolTip(selection.object_tooltip)
+            self._inspection_geometry_value.setText(selection.geometry_text)
+            self._inspection_state_value.setText(selection.state_text)
+            self._inspection_authority_value.setText(selection.authority_text)
+
+        if changed:
+            self.inspection_target_changed.emit(selection)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1115,6 +1177,31 @@ class ReconstructionPage(QWidget):
         self._semantic_clear_button.clicked.connect(self._clear_semantic_object_selection)
         self._semantic_objects_group.setVisible(False)
         layout.addWidget(self._semantic_objects_group)
+
+        # E1 reuses the D5 semantic selector instead of introducing a second
+        # object picker.  With no semantic object selected, the active scene is
+        # the target; choosing an existing D5 object changes the target scope
+        # to that object.  Later E2-E5 consume this generic selection contract.
+        self._inspection_target_group = self._settings_group("INSPECTION TARGET")
+        inspection_target_layout = self._inspection_target_group.layout()
+        self._inspection_scope_value = self._settings_value("—")
+        self._inspection_scene_value = self._settings_value("No reconstruction scene")
+        self._inspection_object_value = self._settings_value("—")
+        self._inspection_geometry_value = self._settings_value("No geometry target")
+        self._inspection_state_value = self._settings_value("No inspection target")
+        self._inspection_authority_value = self._settings_value(
+            "Selection only • measurement/QC not evaluated"
+        )
+        self._add_status_row(inspection_target_layout, "Scope", self._inspection_scope_value)
+        self._add_status_row(inspection_target_layout, "Scene", self._inspection_scene_value)
+        self._add_status_row(inspection_target_layout, "Object", self._inspection_object_value)
+        self._add_status_row(inspection_target_layout, "Geometry", self._inspection_geometry_value)
+        self._add_status_row(inspection_target_layout, "State", self._inspection_state_value)
+        self._add_status_row(inspection_target_layout, "Authority", self._inspection_authority_value)
+        self._inspection_authority_value.setToolTip(
+            "E1 establishes target selection only. Measurement, confidence, inspection/QC, and reference comparison remain E2-E5 responsibilities."
+        )
+        layout.addWidget(self._inspection_target_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -2146,12 +2233,15 @@ class ReconstructionPage(QWidget):
         }[availability]
         self._scene_value.setProperty("statusKind", kind)
         self._refresh_style(self._scene_value)
+        self._refresh_inspection_selection()
         self._refresh_viewport_state()
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
+        self._persistent_scene = scene
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self._reset_semantic_presentation()
+            self._refresh_inspection_selection()
             return
         path = Path(manifest_path).name if manifest_path else "Persistent scene ready"
         self._scene_manifest_value.setText(path)
