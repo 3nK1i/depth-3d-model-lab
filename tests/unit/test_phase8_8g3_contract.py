@@ -74,14 +74,16 @@ def test_g3_is_idle_guarded_and_session_conflict_fails_closed() -> None:
     assert "session identity conflict" in module.lower()
 
 
-def test_g3_keeps_g4_failure_recovery_deferred_and_authority_unchanged() -> None:
+def test_g3_checkpoint_boundary_remains_intact_as_g4_adds_failure_recovery_ux() -> None:
     module = RESUME.read_text(encoding="utf-8")
     page = PAGE.read_text(encoding="utf-8")
     assert "recover failed runtimes" in module
     assert "certified_metrology: bool = False" in module
     assert "G3 checkpoint/resume UX cannot certify metrology" in module
     assert "canonical_geometry_authoritative" in module
-    assert "Failure / Recovery" not in page[page.index('QPushButton("Load Checkpoint")'):page.index('layout.addWidget(session)', page.index('QPushButton("Load Checkpoint")'))]
+    group = page[page.index('QPushButton("Load Checkpoint")'):page.index('layout.addWidget(session)', page.index('QPushButton("Load Checkpoint")'))]
+    assert 'QPushButton("Prepare Resume")' in group
+    assert 'QPushButton("Retry From Source")' in group  # G4 ownership
 
 
 def test_g3_remains_generic_and_dependency_light() -> None:

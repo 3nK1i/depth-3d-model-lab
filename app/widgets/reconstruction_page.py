@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8G3.
+"""Reconstruction workspace through Phase 8.8G4.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -17,7 +17,9 @@ composes the existing runtime/scene/checkpoint evidence into one generic session
 model without adding save/reload, resume, recovery, or domain-specific behavior. G2
 adds explicit idle-only persistent-scene load/save/reload interaction on top of
 the existing persistence controller. G3 exposes integrity-checked whole-engine checkpoint loading
-and exact-context resume preparation without automatically launching resumed execution.
+and exact-context resume preparation without automatically launching resumed execution. G4 adds
+explicit failure/recovery guidance, observes bounded live auto-recovery, and offers only a guarded
+fresh retry from the current source; checkpoint execution remains outside G4.
 """
 
 from __future__ import annotations
@@ -139,6 +141,11 @@ from app.reconstruction_checkpoint_resume import (
     ReconstructionCheckpointResumePresentation,
     build_reconstruction_checkpoint_resume_presentation,
 )
+from app.reconstruction_failure_recovery import (
+    ReconstructionFailureRecoveryPresentation,
+    ReconstructionFailureRecoveryState,
+    build_reconstruction_failure_recovery_presentation,
+)
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.reconstruction_status import (
     ReconstructionStatusPresentation,
@@ -183,6 +190,7 @@ class ReconstructionPage(QWidget):
     nerf_visualization_changed = pyqtSignal(object)
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
+    failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -231,6 +239,7 @@ class ReconstructionPage(QWidget):
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
+        self._failure_recovery_presentation: ReconstructionFailureRecoveryPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -2090,6 +2099,23 @@ class ReconstructionPage(QWidget):
         self._session_resume_button.setEnabled(False)
         resume_actions.addWidget(self._session_resume_button)
         session_layout.addLayout(resume_actions)
+
+        self._session_recovery_state_value = self._settings_value("No recovery action required")
+        self._add_status_row(session_layout, "Recovery", self._session_recovery_state_value)
+        recovery_actions = QHBoxLayout()
+        recovery_actions.setSpacing(6)
+        self._session_retry_button = QPushButton("Retry From Source")
+        self._session_retry_button.setObjectName("reconstructionRuntimeAction")
+        self._session_retry_button.setToolTip(
+            "Start a fresh reconstruction attempt from the currently selected source after a terminal "
+            "failure/cancellation. This creates a new session; it is not checkpoint resume or manual "
+            "worker restart."
+        )
+        self._session_retry_button.clicked.connect(self._retry_failed_runtime_interaction)
+        self._session_retry_button.setEnabled(False)
+        recovery_actions.addWidget(self._session_retry_button)
+        recovery_actions.addStretch(1)
+        session_layout.addLayout(recovery_actions)
         layout.addWidget(session)
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
@@ -2751,6 +2777,7 @@ class ReconstructionPage(QWidget):
             self._refresh_style(widget)
         self._refresh_scene_interaction_controls()
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
         if model != previous:
             self.reconstruction_session_model_changed.emit(model)
 
@@ -2917,12 +2944,56 @@ class ReconstructionPage(QWidget):
 
     def _on_resume_compatibility_changed(self, _compatibility: object) -> None:
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
 
     def _on_resume_context_changed(self, _context: object) -> None:
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
 
     def _on_resume_preparation_changed(self, _preparation: object) -> None:
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
+
+    @property
+    def failure_recovery_presentation(self) -> ReconstructionFailureRecoveryPresentation | None:
+        return self._failure_recovery_presentation
+
+    def _refresh_failure_recovery_controls(self) -> None:
+        if not hasattr(self, "_session_retry_button"):
+            return
+        controller = self._controller
+        stats = controller.live_stats if controller is not None else None
+        source_ready = bool(controller and controller.source_selection.ready)
+        presentation = build_reconstruction_failure_recovery_presentation(
+            self._reconstruction_session_model,
+            live_state=self._live_state,
+            offline_state=self._offline_state,
+            live_stats=stats,
+            source_ready=source_ready,
+            last_error=self._last_runtime_error,
+            checkpoint_resume=self._checkpoint_resume_presentation,
+            controller_active=bool(controller and controller.is_active),
+            controller_shutdown=bool(controller is None or controller.is_shutdown),
+        )
+        previous = self._failure_recovery_presentation
+        self._failure_recovery_presentation = presentation
+        self._session_recovery_state_value.setText(presentation.text)
+        self._session_recovery_state_value.setToolTip(presentation.details)
+        self._session_recovery_state_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._session_recovery_state_value)
+        self._session_retry_button.setEnabled(presentation.can_retry_from_source)
+        if presentation != previous:
+            self.failure_recovery_changed.emit(presentation)
+
+    def _retry_failed_runtime_interaction(self) -> None:
+        presentation = self._failure_recovery_presentation
+        if presentation is None or not presentation.can_retry_from_source:
+            return
+        # G4 deliberately reuses the existing start path. This is a fresh attempt
+        # from the selected source, not checkpoint resume and not an unbounded manual
+        # restart of an already-recovering live worker.
+        self._start_runtime()
+        self._refresh_failure_recovery_controls()
 
     def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
         if not isinstance(selection, ReconstructionSourceSelection):
@@ -3653,6 +3724,7 @@ class ReconstructionPage(QWidget):
                 "Live statistics are presentation-only telemetry from the authoritative live runtime."
             )
             self._apply_runtime_presentation(present_live_state(self._live_state, stats))
+            self._refresh_failure_recovery_controls()
 
     def _on_offline_run_finished(self, _result: object) -> None:
         self._refresh_runtime_telemetry()
@@ -3673,9 +3745,19 @@ class ReconstructionPage(QWidget):
             self._stop_button.setEnabled(False)
             self._refresh_scene_interaction_controls()
             self._refresh_checkpoint_resume_controls()
+            self._refresh_failure_recovery_controls()
             return
 
         selection = controller.source_selection
+        self._refresh_failure_recovery_controls()
+        recovery_owns_retry = bool(
+            self._failure_recovery_presentation
+            and self._failure_recovery_presentation.state
+            in {
+                ReconstructionFailureRecoveryState.RETRY_AVAILABLE,
+                ReconstructionFailureRecoveryState.CANCELLED_RETRY_AVAILABLE,
+            }
+        )
         live_busy = self._live_state in {
             LiveCaptureRuntimeState.STARTING,
             LiveCaptureRuntimeState.RUNNING,
@@ -3694,6 +3776,7 @@ class ReconstructionPage(QWidget):
             and selection.ready
             and selection.workflow is not ReconstructionWorkflow.NONE
             and not busy
+            and not recovery_owns_retry
         )
         self._start_button.setEnabled(can_start)
 
@@ -3726,6 +3809,7 @@ class ReconstructionPage(QWidget):
         self._stop_button.setText("Cancel" if offline_busy else "Stop")
         self._refresh_scene_interaction_controls()
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
 
     def _clear_warning_if_possible(self) -> None:
         if self._controller is None or self._controller.is_shutdown:
@@ -3889,11 +3973,13 @@ class ReconstructionPage(QWidget):
             self._checkpoint_value.setText("No checkpoint")
             self._checkpoint_value.setToolTip("")
             self._refresh_checkpoint_resume_controls()
+            self._refresh_failure_recovery_controls()
             return
         path = Path(manifest_path).name if manifest_path else "Checkpoint ready"
         self._checkpoint_value.setText(path)
         self._checkpoint_value.setToolTip(str(manifest_path).strip() or str(getattr(checkpoint, "checkpoint_id", "")))
         self._refresh_checkpoint_resume_controls()
+        self._refresh_failure_recovery_controls()
 
     def set_error(self, message: str) -> None:
         text = str(message).strip()
@@ -3907,6 +3993,7 @@ class ReconstructionPage(QWidget):
         self._runtime_message.setText(text)
         self._runtime_message.setProperty("statusKind", "error")
         self._refresh_style(self._runtime_message)
+        self._refresh_failure_recovery_controls()
 
     def _refresh_session_label(self) -> None:
         controller = self._controller
