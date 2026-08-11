@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8G1.
+"""Reconstruction workspace through Phase 8.8G3.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -16,7 +16,8 @@ explicit canonical fallback without changing any reconstruction authority. G1
 composes the existing runtime/scene/checkpoint evidence into one generic session
 model without adding save/reload, resume, recovery, or domain-specific behavior. G2
 adds explicit idle-only persistent-scene load/save/reload interaction on top of
-the existing persistence controller; checkpoint resume remains deferred to G3.
+the existing persistence controller. G3 exposes integrity-checked whole-engine checkpoint loading
+and exact-context resume preparation without automatically launching resumed execution.
 """
 
 from __future__ import annotations
@@ -134,6 +135,10 @@ from app.reconstruction_session_interaction import (
     ReconstructionSceneInteractionPresentation,
     build_reconstruction_scene_interaction_presentation,
 )
+from app.reconstruction_checkpoint_resume import (
+    ReconstructionCheckpointResumePresentation,
+    build_reconstruction_checkpoint_resume_presentation,
+)
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.reconstruction_status import (
     ReconstructionStatusPresentation,
@@ -157,6 +162,7 @@ from app.widgets.reconstruction_appearance_preview import ReconstructionAppearan
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CameraIntrinsicsPolicy,
+    ENGINE_CHECKPOINT_MANIFEST,
     LiveCaptureRuntimeState,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
     ReconstructionCamera,
@@ -224,6 +230,7 @@ class ReconstructionPage(QWidget):
         self._appearance_fallback_reason = ""
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
+        self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -2059,6 +2066,30 @@ class ReconstructionPage(QWidget):
         self._session_reload_button.setEnabled(False)
         session_actions.addWidget(self._session_reload_button)
         session_layout.addLayout(session_actions)
+
+        self._session_resume_state_value = self._settings_value("Load reconstruction checkpoint")
+        self._add_status_row(session_layout, "Resume", self._session_resume_state_value)
+        resume_actions = QHBoxLayout()
+        resume_actions.setSpacing(6)
+        self._session_checkpoint_load_button = QPushButton("Load Checkpoint")
+        self._session_checkpoint_load_button.setObjectName("reconstructionRuntimeAction")
+        self._session_checkpoint_load_button.setToolTip(
+            "Load the existing whole-engine reconstruction checkpoint manifest with SHA-256 "
+            "integrity verification. Loading alone does not start or resume reconstruction."
+        )
+        self._session_checkpoint_load_button.clicked.connect(self._load_engine_checkpoint_interaction)
+        self._session_checkpoint_load_button.setEnabled(False)
+        resume_actions.addWidget(self._session_checkpoint_load_button)
+        self._session_resume_button = QPushButton("Prepare Resume")
+        self._session_resume_button.setObjectName("reconstructionRuntimeAction")
+        self._session_resume_button.setToolTip(
+            "Prepare resume only after the current pipeline plan, providers, and payload references "
+            "pass the existing whole-engine compatibility contract. G3 does not launch the resumed engine."
+        )
+        self._session_resume_button.clicked.connect(self._prepare_engine_resume_interaction)
+        self._session_resume_button.setEnabled(False)
+        resume_actions.addWidget(self._session_resume_button)
+        session_layout.addLayout(resume_actions)
         layout.addWidget(session)
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
@@ -2647,6 +2678,9 @@ class ReconstructionPage(QWidget):
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
         controller.checkpoint_changed.connect(self.set_checkpoint)
+        controller.resume_compatibility_changed.connect(self._on_resume_compatibility_changed)
+        controller.resume_context_changed.connect(self._on_resume_context_changed)
+        controller.resume_preparation_changed.connect(self._on_resume_preparation_changed)
         controller.session_model_changed.connect(self.set_session_model)
         controller.error_occurred.connect(self.set_error)
 
@@ -2716,6 +2750,7 @@ class ReconstructionPage(QWidget):
             widget.setProperty("statusKind", status_kind)
             self._refresh_style(widget)
         self._refresh_scene_interaction_controls()
+        self._refresh_checkpoint_resume_controls()
         if model != previous:
             self.reconstruction_session_model_changed.emit(model)
 
@@ -2817,6 +2852,77 @@ class ReconstructionPage(QWidget):
             self.set_error(f"Could not reload persistent reconstruction scene: {exc}")
         finally:
             self._refresh_scene_interaction_controls()
+
+    @property
+    def checkpoint_resume_presentation(self) -> ReconstructionCheckpointResumePresentation | None:
+        return self._checkpoint_resume_presentation
+
+    def _refresh_checkpoint_resume_controls(self) -> None:
+        if not hasattr(self, "_session_checkpoint_load_button"):
+            return
+        controller = self._controller
+        presentation = build_reconstruction_checkpoint_resume_presentation(
+            self._reconstruction_session_model,
+            checkpoint=controller.engine_checkpoint if controller is not None else None,
+            compatibility=controller.resume_compatibility if controller is not None else None,
+            context_available=bool(controller and controller.engine_resume_context is not None),
+            prepared=bool(controller and controller.engine_resume_preparation is not None),
+            controller_active=bool(controller and controller.is_active),
+            controller_shutdown=bool(controller is None or controller.is_shutdown),
+        )
+        self._checkpoint_resume_presentation = presentation
+        self._session_resume_state_value.setText(presentation.text)
+        self._session_resume_state_value.setToolTip(presentation.details)
+        self._session_resume_state_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._session_resume_state_value)
+        self._session_checkpoint_load_button.setEnabled(presentation.can_load_checkpoint)
+        self._session_resume_button.setEnabled(presentation.can_prepare_resume)
+
+    def _load_engine_checkpoint_interaction(self) -> None:
+        controller = self._controller
+        if controller is None:
+            return
+        current = controller.engine_checkpoint_manifest
+        start_dir = str(current.parent if current is not None else Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Reconstruction Checkpoint",
+            start_dir,
+            (
+                f"Reconstruction checkpoint ({ENGINE_CHECKPOINT_MANIFEST});;"
+                "JSON files (*.json);;All files (*)"
+            ),
+        )
+        if not selected:
+            return
+        try:
+            controller.load_engine_checkpoint(Path(selected).expanduser().resolve())
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.set_error(f"Could not load reconstruction checkpoint: {exc}")
+        finally:
+            self._refresh_checkpoint_resume_controls()
+
+    def _prepare_engine_resume_interaction(self) -> None:
+        controller = self._controller
+        if controller is None:
+            return
+        try:
+            controller.prepare_loaded_engine_resume()
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self.set_error(f"Could not prepare reconstruction resume: {exc}")
+        finally:
+            self._refresh_checkpoint_resume_controls()
+
+    def _on_resume_compatibility_changed(self, _compatibility: object) -> None:
+        self._refresh_checkpoint_resume_controls()
+
+    def _on_resume_context_changed(self, _context: object) -> None:
+        self._refresh_checkpoint_resume_controls()
+
+    def _on_resume_preparation_changed(self, _preparation: object) -> None:
+        self._refresh_checkpoint_resume_controls()
 
     def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
         if not isinstance(selection, ReconstructionSourceSelection):
@@ -3566,6 +3672,7 @@ class ReconstructionPage(QWidget):
             self._pause_button.setEnabled(False)
             self._stop_button.setEnabled(False)
             self._refresh_scene_interaction_controls()
+            self._refresh_checkpoint_resume_controls()
             return
 
         selection = controller.source_selection
@@ -3618,6 +3725,7 @@ class ReconstructionPage(QWidget):
         )
         self._stop_button.setText("Cancel" if offline_busy else "Stop")
         self._refresh_scene_interaction_controls()
+        self._refresh_checkpoint_resume_controls()
 
     def _clear_warning_if_possible(self) -> None:
         if self._controller is None or self._controller.is_shutdown:
@@ -3779,9 +3887,13 @@ class ReconstructionPage(QWidget):
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
         if checkpoint is None:
             self._checkpoint_value.setText("No checkpoint")
+            self._checkpoint_value.setToolTip("")
+            self._refresh_checkpoint_resume_controls()
             return
         path = Path(manifest_path).name if manifest_path else "Checkpoint ready"
         self._checkpoint_value.setText(path)
+        self._checkpoint_value.setToolTip(str(manifest_path).strip() or str(getattr(checkpoint, "checkpoint_id", "")))
+        self._refresh_checkpoint_resume_controls()
 
     def set_error(self, message: str) -> None:
         text = str(message).strip()

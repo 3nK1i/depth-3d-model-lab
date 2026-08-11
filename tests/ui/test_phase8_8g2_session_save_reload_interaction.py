@@ -77,7 +77,7 @@ def test_g2_initial_session_actions_are_load_only(window) -> None:
     assert not page._session_reload_button.isEnabled()
     assert page.scene_interaction_presentation is not None
     assert page.scene_interaction_presentation.state is ReconstructionSceneInteractionState.LOAD_ONLY
-    assert not hasattr(page, "_session_resume_button")
+    assert hasattr(page, "_session_resume_button")  # G3 ownership; G2 scene actions remain separate
 
 
 def test_g2_loaded_scene_enables_save_reload_and_keeps_compact_session_ui(window, qtbot) -> None:

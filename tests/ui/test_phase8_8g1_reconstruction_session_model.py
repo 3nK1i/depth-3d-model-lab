@@ -100,7 +100,7 @@ def test_g1_existing_session_group_gains_compact_context_and_evidence_rows(windo
     assert page._session_evidence_value.text() == "Runtime/session metadata only"
     assert hasattr(page, "_session_save_button")  # G2 ownership
     assert hasattr(page, "_session_reload_button")  # G2 ownership
-    assert not hasattr(page, "_session_resume_button")
+    assert hasattr(page, "_session_resume_button")  # G3 ownership
 
 
 def test_g1_scene_and_checkpoint_render_as_one_consistent_generic_session(window, qtbot) -> None:

@@ -8,8 +8,9 @@ scene and G2 checkpoint/resume contracts. Phase 8.8A5 hardens resource
 interlocks, result admission, cancellation/restart, and shutdown. Phase 8.8B2
 adds dependency-light source/workflow selection. Phase 8.8B3 adds state-driven
 runtime launch/pause/resume/stop helpers while Reconstruction navigation remains
-disabled. Phase 8.8G2 exposes explicit persistent-scene load/save/reload interaction
-without adding a second persistence format or checkpoint-resume behavior.
+disabled. Phase 8.8G2 exposes explicit persistent-scene load/save/reload interaction.
+Phase 8.8G3 adds explicit checkpoint loading and validated resume preparation without
+launching resumed execution or changing the existing whole-engine checkpoint format.
 """
 
 from __future__ import annotations
@@ -35,9 +36,11 @@ from app.offline_reconstruction_controller import (
     build_offline_reconstruction_command,
 )
 from app.reconstruction_session_model import (
+    ReconstructionSessionIdentityStatus,
     ReconstructionSessionModel,
     build_reconstruction_session_model,
 )
+from app.reconstruction_checkpoint_resume import ReconstructionResumeContext
 from app.reconstruction_persistence_controller import (
     ReconstructionPersistenceController,
     ReconstructionResumePreparation,
@@ -202,6 +205,8 @@ class ReconstructionController(QObject):
     persistent_scene_changed = pyqtSignal(object, str)
     checkpoint_changed = pyqtSignal(object, str)
     resume_compatibility_changed = pyqtSignal(object)
+    resume_context_changed = pyqtSignal(object)
+    resume_preparation_changed = pyqtSignal(object)
     source_selection_changed = pyqtSignal(object)  # ReconstructionSourceSelection
     session_model_changed = pyqtSignal(object)  # ReconstructionSessionModel
     error_occurred = pyqtSignal(str)
@@ -223,6 +228,8 @@ class ReconstructionController(QObject):
         self._offline_start_guard: ReconstructionStartGuard | None = None
         self._live_session_id: str | None = None
         self._source_selection = ReconstructionSourceSelection.none()
+        self._engine_resume_context: ReconstructionResumeContext | None = None
+        self._engine_resume_preparation: ReconstructionResumePreparation | None = None
         self._live_slam_controller = LiveSlamCaptureController(
             application_controller,
             self,
@@ -343,6 +350,14 @@ class ReconstructionController(QObject):
     @property
     def resume_compatibility(self) -> ReconstructionResumeCompatibilityResult | None:
         return self._persistence_controller.resume_compatibility
+
+    @property
+    def engine_resume_context(self) -> ReconstructionResumeContext | None:
+        return self._engine_resume_context
+
+    @property
+    def engine_resume_preparation(self) -> ReconstructionResumePreparation | None:
+        return self._engine_resume_preparation
 
     @property
     def session_model(self) -> ReconstructionSessionModel:
@@ -851,7 +866,38 @@ class ReconstructionController(QObject):
 
     def load_engine_checkpoint(self, path: str | Path) -> ReconstructionEngineCheckpoint:
         self._require_idle_for_persistence("load a reconstruction checkpoint")
-        return self._persistence_controller.load_checkpoint(path)
+        checkpoint = self._persistence_controller.load_checkpoint(path)
+        self._set_engine_resume_preparation(None)
+        if self._engine_resume_context is not None:
+            self._validate_engine_resume_context()
+        return checkpoint
+
+    def set_engine_resume_context(
+        self,
+        *,
+        plan: ReconstructionPipelinePlan,
+        providers: Sequence[ReconstructionProviderDescriptor],
+        available_payload_refs: Collection[str],
+    ) -> ReconstructionResumeCompatibilityResult | None:
+        """Register the current generic pipeline identity for bounded G3 resume validation."""
+
+        self._require_idle_for_persistence("set reconstruction resume context")
+        self._set_engine_resume_context(
+            ReconstructionResumeContext(
+                plan=plan,
+                providers=providers,
+                available_payload_refs=available_payload_refs,
+            )
+        )
+        self._set_engine_resume_preparation(None)
+        if self.engine_checkpoint is None:
+            return None
+        return self._validate_engine_resume_context()
+
+    def clear_engine_resume_context(self) -> None:
+        self._require_idle_for_persistence("clear reconstruction resume context")
+        self._set_engine_resume_context(None)
+        self._set_engine_resume_preparation(None)
 
     def check_engine_resume_compatibility(
         self,
@@ -861,11 +907,15 @@ class ReconstructionController(QObject):
         available_payload_refs: Collection[str],
     ) -> ReconstructionResumeCompatibilityResult:
         self._require_idle_for_persistence("check reconstruction resume compatibility")
-        return self._persistence_controller.check_resume_compatibility(
-            plan=plan,
-            providers=providers,
-            available_payload_refs=available_payload_refs,
+        self._set_engine_resume_context(
+            ReconstructionResumeContext(
+                plan=plan,
+                providers=providers,
+                available_payload_refs=available_payload_refs,
+            )
         )
+        self._set_engine_resume_preparation(None)
+        return self._validate_engine_resume_context()
 
     def prepare_engine_resume(
         self,
@@ -875,15 +925,70 @@ class ReconstructionController(QObject):
         available_payload_refs: Collection[str],
     ) -> ReconstructionResumePreparation:
         self._require_idle_for_persistence("prepare reconstruction resume")
-        return self._persistence_controller.prepare_resume(
+        self._set_engine_resume_context(
+            ReconstructionResumeContext(
+                plan=plan,
+                providers=providers,
+                available_payload_refs=available_payload_refs,
+            )
+        )
+        preparation = self._persistence_controller.prepare_resume(
             plan=plan,
             providers=providers,
             available_payload_refs=available_payload_refs,
+        )
+        self._set_engine_resume_preparation(preparation)
+        return preparation
+
+    def prepare_loaded_engine_resume(self) -> ReconstructionResumePreparation:
+        """Prepare the loaded checkpoint from the last validated current context."""
+
+        self._require_idle_for_persistence("prepare reconstruction resume")
+        context = self._engine_resume_context
+        if context is None:
+            raise ReconstructionValidationError(
+                "No current reconstruction resume context is registered."
+            )
+        if self.session_model.identity_status is ReconstructionSessionIdentityStatus.CONFLICT:
+            raise ReconstructionValidationError(
+                "Cannot prepare reconstruction resume while session identity evidence conflicts."
+            )
+        return self.prepare_engine_resume(
+            plan=context.plan,
+            providers=context.providers,
+            available_payload_refs=context.available_payload_refs,
         )
 
     def clear_engine_checkpoint(self) -> None:
         self._require_idle_for_persistence("clear the reconstruction checkpoint")
         self._persistence_controller.clear_checkpoint()
+        self._set_engine_resume_preparation(None)
+
+    def _validate_engine_resume_context(self) -> ReconstructionResumeCompatibilityResult:
+        context = self._engine_resume_context
+        if context is None:
+            raise ReconstructionValidationError(
+                "No current reconstruction resume context is registered."
+            )
+        return self._persistence_controller.check_resume_compatibility(
+            plan=context.plan,
+            providers=context.providers,
+            available_payload_refs=context.available_payload_refs,
+        )
+
+    def _set_engine_resume_context(self, context: ReconstructionResumeContext | None) -> None:
+        if context == self._engine_resume_context:
+            return
+        self._engine_resume_context = context
+        self.resume_context_changed.emit(context)
+
+    def _set_engine_resume_preparation(
+        self, preparation: ReconstructionResumePreparation | None
+    ) -> None:
+        if preparation is self._engine_resume_preparation:
+            return
+        self._engine_resume_preparation = preparation
+        self.resume_preparation_changed.emit(preparation)
 
     def _emit_session_model_changed(self, *_args: object) -> None:
         # Cache the public state carried by ``live_state_changed`` before composing

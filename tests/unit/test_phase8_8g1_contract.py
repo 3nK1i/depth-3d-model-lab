@@ -92,7 +92,7 @@ def test_g1_context_rows_remain_passive_as_g2_adds_scene_actions() -> None:
     assert 'QPushButton("Load Scene")' in group
     assert 'QPushButton("Save Scene")' in group
     assert 'QPushButton("Reload")' in group
-    assert "_session_resume_button" not in group
+    assert 'QPushButton("Prepare Resume")' in group  # G3 ownership
 
 
 def test_g1_controller_exposes_computed_model_and_change_signal_only() -> None:
