@@ -63,7 +63,7 @@ def test_e2_page_adds_one_compact_measurement_group_without_new_selector() -> No
     source = PAGE.read_text(encoding="utf-8")
     assert source.count('self._settings_group("RECONSTRUCTION MEASUREMENTS")') == 1
     start = source.index('self._reconstruction_measurement_group = self._settings_group("RECONSTRUCTION MEASUREMENTS")')
-    end = source.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = source.index('self._measurement_validity_group = self._settings_group("MEASUREMENT VALIDITY")', start)
     group = source[start:end]
     assert "QComboBox(" not in group
     assert "QPushButton(" not in group

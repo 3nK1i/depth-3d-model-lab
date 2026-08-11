@@ -1,11 +1,12 @@
-"""Reconstruction workspace through Phase 8.8E4.
+"""Reconstruction workspace through Phase 8.8E5.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
 the active scene/object inspection target. E2 presents already-computed
 measurement values. E3 presents source-authored measurement validity and
-uncertainty. E4 presents existing authoritative inspection/QC reports without
-running registration/QC or pulling the E5 reference-comparison workflow forward.
+uncertainty. E4 presents authoritative inspection/QC reports. E5 adds the
+reference-comparison workflow around an explicit reference identity and existing
+Phase 8.7C comparison evidence without rerunning registration or tolerances.
 """
 
 from __future__ import annotations
@@ -77,6 +78,14 @@ from app.reconstruction_inspection_qc_presentation import (
     build_reconstruction_inspection_qc_presentation,
     empty_reconstruction_inspection_qc_text,
 )
+from app.reconstruction_reference_comparison import (
+    ReconstructionReferenceComparisonPresentation,
+    ReconstructionReferenceDescriptor,
+    build_reconstruction_reference_comparison_presentation,
+    empty_reference_comparison_text,
+    load_reference_descriptor_json,
+    reference_descriptor_from_payload,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -116,6 +125,7 @@ class ReconstructionPage(QWidget):
     reconstruction_measurement_changed = pyqtSignal(object)
     reconstruction_measurement_validity_changed = pyqtSignal(object)
     reconstruction_inspection_qc_changed = pyqtSignal(object)
+    reconstruction_reference_comparison_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -149,6 +159,8 @@ class ReconstructionPage(QWidget):
         self._reconstruction_measurement_validity_presentation: ReconstructionMeasurementValidityPresentation | None = None
         self._reconstruction_inspection_qc_reports: dict[str, tuple[object, str]] = {}
         self._reconstruction_inspection_qc_presentation: ReconstructionInspectionQcPresentation | None = None
+        self._reconstruction_reference_descriptors: dict[str, ReconstructionReferenceDescriptor] = {}
+        self._reconstruction_reference_comparison_presentation: ReconstructionReferenceComparisonPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1204,6 +1216,131 @@ class ReconstructionPage(QWidget):
 
         if changed:
             self.reconstruction_inspection_qc_changed.emit(presentation)
+        self._refresh_reconstruction_reference_comparison_presentation()
+
+    @property
+    def reconstruction_reference_comparison_presentation(self) -> ReconstructionReferenceComparisonPresentation | None:
+        return self._reconstruction_reference_comparison_presentation
+
+    def set_reconstruction_reference_comparison_reference(
+        self,
+        reference: object,
+        *,
+        source: str = "phase8_7c.reference_assembly",
+    ) -> None:
+        """Attach an explicit E5 reference identity to the active E1 scene.
+
+        The reference is only validated/presented here. E5 does not build a
+        reference assembly, parse CAD geometry, run registration, or apply
+        tolerances. Existing Phase 8.7C report evidence is paired only when its
+        session and reference_id match exactly.
+        """
+
+        selection = self._inspection_selection
+        if not selection.has_scene:
+            raise ValueError("E5 reference comparison requires an active reconstruction scene.")
+        session_key = str(selection.session_id or selection.scene_id).strip()
+        descriptor = (
+            reference
+            if isinstance(reference, ReconstructionReferenceDescriptor)
+            else reference_descriptor_from_payload(reference, provenance=source)
+        )
+        self._reconstruction_reference_descriptors[session_key] = descriptor
+        self._refresh_reconstruction_reference_comparison_presentation()
+
+    def load_reconstruction_reference_comparison_json(self, path: str | Path) -> None:
+        """Attach metadata from an existing Phase 8.7C ReferenceAssembly JSON artifact."""
+
+        selection = self._inspection_selection
+        if not selection.has_scene:
+            raise ValueError("E5 reference comparison requires an active reconstruction scene.")
+        descriptor = load_reference_descriptor_json(path)
+        session_key = str(selection.session_id or selection.scene_id).strip()
+        self._reconstruction_reference_descriptors[session_key] = descriptor
+        self._refresh_reconstruction_reference_comparison_presentation()
+
+    def clear_reconstruction_reference_comparison(self) -> None:
+        """Clear all E5 reference bindings without deleting E4 source reports."""
+
+        self._reconstruction_reference_descriptors.clear()
+        self._refresh_reconstruction_reference_comparison_presentation()
+
+    def _choose_reconstruction_reference_json(self) -> None:
+        selection = self._inspection_selection
+        if not selection.has_scene:
+            QMessageBox.information(
+                self,
+                "Reference Comparison",
+                "Select or load a reconstruction scene before attaching a reference.",
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Phase 8.7C Reference Assembly",
+            str(Path.home()),
+            "Reference JSON (*.json);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            self.load_reconstruction_reference_comparison_json(path)
+        except (OSError, TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Reference Comparison", str(exc))
+
+    def _clear_active_reconstruction_reference(self) -> None:
+        selection = self._inspection_selection
+        session_key = str(selection.session_id or selection.scene_id).strip() if selection.has_scene else ""
+        if session_key:
+            self._reconstruction_reference_descriptors.pop(session_key, None)
+        self._refresh_reconstruction_reference_comparison_presentation()
+
+    def _refresh_reconstruction_reference_comparison_presentation(self) -> None:
+        selection = self._inspection_selection
+        session_key = str(selection.session_id or selection.scene_id).strip() if selection.has_scene else ""
+        reference = self._reconstruction_reference_descriptors.get(session_key) if session_key else None
+        attached_report = self._reconstruction_inspection_qc_reports.get(session_key) if session_key else None
+        presentation = None
+        if reference is not None:
+            report = attached_report[0] if attached_report is not None else None
+            report_source = attached_report[1] if attached_report is not None else "phase8_7c.inspection_report"
+            presentation = build_reconstruction_reference_comparison_presentation(
+                selection, reference, report, report_source=report_source
+            )
+        changed = presentation != self._reconstruction_reference_comparison_presentation
+        self._reconstruction_reference_comparison_presentation = presentation
+
+        if not hasattr(self, "_reference_comparison_target_value"):
+            return
+        if presentation is None:
+            target, reference_text, structure, registration, deviations, scale, state, authority = (
+                empty_reference_comparison_text(selection)
+            )
+            self._reference_comparison_target_value.setText(target)
+            self._reference_comparison_reference_value.setText(reference_text)
+            self._reference_comparison_reference_value.setToolTip("")
+            self._reference_comparison_structure_value.setText(structure)
+            self._reference_comparison_registration_value.setText(registration)
+            self._reference_comparison_deviations_value.setText(deviations)
+            self._reference_comparison_evidence_value.setText("—")
+            self._reference_comparison_scale_value.setText(scale)
+            self._reference_comparison_state_value.setText(state)
+            self._reference_comparison_authority_value.setText(authority)
+        else:
+            self._reference_comparison_target_value.setText(presentation.target_text)
+            self._reference_comparison_reference_value.setText(presentation.reference.reference_text)
+            self._reference_comparison_reference_value.setToolTip(presentation.provenance_tooltip)
+            self._reference_comparison_structure_value.setText(presentation.reference.structure_text)
+            self._reference_comparison_registration_value.setText(presentation.registration_text)
+            self._reference_comparison_deviations_value.setText(presentation.deviations_text)
+            self._reference_comparison_evidence_value.setText(presentation.evidence_text)
+            self._reference_comparison_scale_value.setText(presentation.scale_text)
+            self._reference_comparison_state_value.setText(presentation.state_text)
+            self._reference_comparison_authority_value.setText(presentation.authority_text)
+
+        self._reference_comparison_clear_button.setEnabled(reference is not None)
+        self._reference_comparison_load_button.setEnabled(selection.has_scene)
+        if changed:
+            self.reconstruction_reference_comparison_changed.emit(presentation)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1542,6 +1679,50 @@ class ReconstructionPage(QWidget):
             "E4 displays existing Phase 8.7C inspection/QC decisions only. It does not infer decisions from semantics/measurements, rerun registration, or implement the E5 reference-comparison workflow."
         )
         layout.addWidget(self._inspection_qc_group)
+
+        # E5 makes reference identity explicit and pairs it with the exact
+        # existing Phase 8.7C report for the current scene. It does not parse
+        # CAD geometry, rerun registration, apply tolerance rules, or promote
+        # an arbitrary reconstruction to metric/certified authority.
+        self._reference_comparison_group = self._settings_group("REFERENCE COMPARISON")
+        reference_layout = self._reference_comparison_group.layout()
+        self._reference_comparison_target_value = self._settings_value("No target")
+        self._reference_comparison_reference_value = self._settings_value("No reference attached")
+        self._reference_comparison_structure_value = self._settings_value("—")
+        self._reference_comparison_registration_value = self._settings_value("—")
+        self._reference_comparison_deviations_value = self._settings_value("—")
+        self._reference_comparison_evidence_value = self._settings_value("—")
+        self._reference_comparison_scale_value = self._settings_value("—")
+        self._reference_comparison_state_value = self._settings_value("Waiting for reconstruction target")
+        self._reference_comparison_authority_value = self._settings_value(
+            "Reference workflow only • E5 does not register/apply tolerances"
+        )
+        self._add_status_row(reference_layout, "Target", self._reference_comparison_target_value)
+        self._add_status_row(reference_layout, "Reference", self._reference_comparison_reference_value)
+        self._add_status_row(reference_layout, "Structure", self._reference_comparison_structure_value)
+        self._add_status_row(reference_layout, "Registration", self._reference_comparison_registration_value)
+        self._add_status_row(reference_layout, "Deviation", self._reference_comparison_deviations_value)
+        self._add_status_row(reference_layout, "Evidence", self._reference_comparison_evidence_value)
+        self._add_status_row(reference_layout, "Scale", self._reference_comparison_scale_value)
+        self._add_status_row(reference_layout, "State", self._reference_comparison_state_value)
+        self._add_status_row(reference_layout, "Authority", self._reference_comparison_authority_value)
+        self._reference_comparison_authority_value.setToolTip(
+            "E5 loads ReferenceAssembly JSON metadata and presents exact matching Phase 8.7C comparison evidence. Registration, deviations, and tolerance decisions are source-authored; E5 does not compute them or certify metrology."
+        )
+        reference_buttons = QHBoxLayout()
+        reference_buttons.setSpacing(6)
+        self._reference_comparison_load_button = QPushButton("Load JSON")
+        self._reference_comparison_clear_button = QPushButton("Clear")
+        for button in (self._reference_comparison_load_button, self._reference_comparison_clear_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            reference_buttons.addWidget(button)
+        self._reference_comparison_load_button.setEnabled(False)
+        self._reference_comparison_clear_button.setEnabled(False)
+        self._reference_comparison_load_button.clicked.connect(self._choose_reconstruction_reference_json)
+        self._reference_comparison_clear_button.clicked.connect(self._clear_active_reconstruction_reference)
+        reference_layout.addLayout(reference_buttons)
+        layout.addWidget(self._reference_comparison_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -2038,6 +2219,7 @@ class ReconstructionPage(QWidget):
         self._last_runtime_error = ""
         self.clear_reconstruction_measurement_evidence()
         self.clear_reconstruction_inspection_qc_evidence()
+        self.clear_reconstruction_reference_comparison()
         self._reset_semantic_presentation()
         if workflow is ReconstructionWorkflow.LIVE_SOURCE:
             self._live_pose_count = 0
@@ -2584,6 +2766,7 @@ class ReconstructionPage(QWidget):
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()
             self.clear_reconstruction_inspection_qc_evidence()
+            self.clear_reconstruction_reference_comparison()
             self._reset_semantic_presentation()
             self._refresh_inspection_selection()
             return

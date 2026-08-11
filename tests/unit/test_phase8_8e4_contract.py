@@ -82,7 +82,7 @@ def test_e4_ui_has_one_read_only_group_and_no_reference_picker() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert page.count('self._settings_group("INSPECTION / QC")') == 1
     start = page.index('self._inspection_qc_group = self._settings_group("INSPECTION / QC")')
-    end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = page.index('self._reference_comparison_group = self._settings_group("REFERENCE COMPARISON")', start)
     group = page[start:end]
     for token in ("QComboBox(", "QFileDialog", "QPushButton(", "QTableWidget"):
         assert token not in group

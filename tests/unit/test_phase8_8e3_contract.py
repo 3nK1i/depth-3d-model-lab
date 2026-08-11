@@ -90,7 +90,7 @@ def test_e3_production_logic_remains_object_agnostic_and_ui_has_no_new_selector(
     page = PAGE.read_text(encoding="utf-8")
     assert page.count('self._settings_group("MEASUREMENT VALIDITY")') == 1
     start = page.index('self._measurement_validity_group = self._settings_group("MEASUREMENT VALIDITY")')
-    end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = page.index('self._inspection_qc_group = self._settings_group("INSPECTION / QC")', start)
     group = page[start:end]
     assert "QComboBox(" not in group
     assert "QPushButton(" not in group
