@@ -137,10 +137,12 @@ class MainWindow(QMainWindow):
         self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
         self._inspection_controller = MeasurementInspectionController(Path(__file__).resolve().parents[1], self)
         self._inspection_export_controller = InspectionExportController(Path(__file__).resolve().parents[1], self)
-        # Phase 8.8A5: bind dormant Reconstruction starts to the application's
-        # existing long-running job ownership rules. Live reconstruction may
-        # share capture/inference; offline reconstruction additionally requires
-        # idle inference and releases any resident depth model before PyCOLMAP.
+        # Phase 8.8A5 established Reconstruction-side start guards. Phase 8.8H2
+        # keeps that ownership model and closes the reciprocal application boundary:
+        # other long-running GPU/process jobs must also refuse to start while
+        # Reconstruction owns resources. Live reconstruction may still share the
+        # existing capture/inference path; offline reconstruction additionally
+        # requires idle inference and releases any resident depth model before PyCOLMAP.
         self._reconstruction_controller.configure_start_guards(
             live=self._reconstruction_live_start_guard,
             offline=self._reconstruction_offline_start_guard,
@@ -368,6 +370,21 @@ class MainWindow(QMainWindow):
             return "Inspection export is running; finish it before starting Reconstruction."
         return None
 
+    def _reconstruction_conflict_for_application_job(self, job_label: str) -> str:
+        """Return a fail-closed reason when Reconstruction owns long-running resources.
+
+        A5 already prevents Reconstruction from starting over Benchmark, Snapshot,
+        Stable Video, inspection, or export. H2 makes that ownership reciprocal at
+        the application entry points rather than relying only on navigation locking.
+        Persistent scenes, static appearance previews, and prepared resume metadata
+        do not count as active resource owners.
+        """
+
+        if not self._reconstruction_controller.is_active:
+            return ""
+        label = str(job_label).strip() or "this application job"
+        return f"Reconstruction is active; stop it before starting {label}."
+
     def _reconstruction_live_start_guard(self) -> str | None:
         """Live SLAM may share capture/inference but not another long-running mode job."""
 
@@ -416,6 +433,11 @@ class MainWindow(QMainWindow):
             or self._inspection_export_controller.is_running
         )
         self._mode_tabs.set_navigation_locked(locked)
+        # Keep the other mode-specific readiness surfaces synchronized with the
+        # same ownership decision. This is advisory UI state; the start handlers
+        # below remain the authoritative admission boundary.
+        self._refresh_benchmark_safety()
+        self._refresh_stable_video_context()
 
     # -- Primary application modes ---------------------------------------
 
@@ -470,6 +492,11 @@ class MainWindow(QMainWindow):
         self._inspection_page.set_captured_frame(self._inspection_frame)
 
     def _inspection_jobs_conflict(self) -> str:
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Measure & Inspect"
+        )
+        if reconstruction_conflict:
+            return reconstruction_conflict
         if self._benchmark_controller.is_running:
             return "Stop the active Benchmark before measurement inspection."
         if self._snapshot_controller.is_running:
@@ -546,6 +573,12 @@ class MainWindow(QMainWindow):
             self._mode_tabs.set_navigation_locked(False)
 
     def _export_inspection(self, scope: str) -> None:
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "inspection export"
+        )
+        if reconstruction_conflict:
+            self._inspection_page.show_export_failure(reconstruction_conflict)
+            return
         if self._inspection_export_controller.is_running:
             self._inspection_page.show_export_failure("An inspection export is already running.")
             return
@@ -597,8 +630,12 @@ class MainWindow(QMainWindow):
             self._settings_panel.selected_model_label,
             native_temporal=descriptor.capabilities.stateful_sequence,
         )
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Stable Video"
+        )
         eligible = (
-            self._controller.active_source is not None
+            not reconstruction_conflict
+            and self._controller.active_source is not None
             and self._controller.is_stream_source
             and self._inference_controller.current_state in {
                 ApplicationState.SOURCE_READY,
@@ -606,13 +643,22 @@ class MainWindow(QMainWindow):
                 ApplicationState.RESULT_READY,
             }
         )
-        reason = "" if eligible else (
-            "Connect a Video, USB Camera, or RTSP source in Live 3D first. "
-            "Static images belong in Snapshot Mode."
-        )
+        if reconstruction_conflict:
+            reason = reconstruction_conflict
+        else:
+            reason = "" if eligible else (
+                "Connect a Video, USB Camera, or RTSP source in Live 3D first. "
+                "Static images belong in Snapshot Mode."
+            )
         self._stable_video_page.set_source_eligible(eligible, reason)
 
     def _start_stable_video(self) -> None:
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Stable Video"
+        )
+        if reconstruction_conflict:
+            self._stable_video_page.append_log(reconstruction_conflict)
+            return
         if self._benchmark_controller.is_running or self._snapshot_controller.is_running:
             self._stable_video_page.append_log(
                 "Stop the active Benchmark or Snapshot job before Stable Video."
@@ -708,6 +754,12 @@ class MainWindow(QMainWindow):
         self._snapshot_page.set_captured_frame(self._snapshot_frame)
 
     def _run_snapshot(self) -> None:
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Snapshot"
+        )
+        if reconstruction_conflict:
+            self._snapshot_page.append_log(reconstruction_conflict)
+            return
         if self._snapshot_frame is None:
             self._snapshot_page.append_log("Capture a frame before running Snapshot Mode.")
             return
@@ -741,6 +793,13 @@ class MainWindow(QMainWindow):
     def _on_benchmark_run_requested(
         self, configuration: BenchmarkRunConfiguration
     ) -> None:
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Benchmark"
+        )
+        if reconstruction_conflict:
+            self._benchmark_page.append_log(reconstruction_conflict)
+            self._refresh_benchmark_safety()
+            return
         if self._inference_controller.state_machine.state is not ApplicationState.DISCONNECTED:
             self._refresh_benchmark_safety()
             return
@@ -763,9 +822,18 @@ class MainWindow(QMainWindow):
 
     def _refresh_benchmark_safety(self, *_args: object) -> None:
         state = self._inference_controller.state_machine.state
-        safe = state is ApplicationState.DISCONNECTED and not self._benchmark_controller.is_running
+        reconstruction_conflict = self._reconstruction_conflict_for_application_job(
+            "Benchmark"
+        )
+        safe = (
+            not reconstruction_conflict
+            and state is ApplicationState.DISCONNECTED
+            and not self._benchmark_controller.is_running
+        )
         reason = ""
-        if state is not ApplicationState.DISCONNECTED:
+        if reconstruction_conflict:
+            reason = reconstruction_conflict
+        elif state is not ApplicationState.DISCONNECTED:
             reason = (
                 "Benchmarking requires an idle GPU runtime. Return to Live 3D, "
                 "Stop inference, and Disconnect the active source first."
