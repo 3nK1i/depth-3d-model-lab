@@ -96,7 +96,7 @@ def test_f1_builds_generic_gaussian_and_nerf_entries_from_persisted_scene() -> N
     assert presentation.missing_kinds == ()
     assert presentation.canonical_geometry_authoritative is True
     assert presentation.certified_metrology is False
-    assert "visualization deferred to F2/F3" in presentation.state_text
+    assert "visualization available in F2/F3" in presentation.state_text
     assert presentation.authority_text == "Appearance only • canonical geometry remains authoritative"
 
 

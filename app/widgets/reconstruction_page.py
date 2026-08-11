@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8F2.
+"""Reconstruction workspace through Phase 8.8F3.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -9,8 +9,8 @@ reference-comparison workflow around an explicit reference identity and existing
 Phase 8.7C comparison evidence without rerunning registration or tolerances. F1
 adds metadata-only appearance-representation controls over persisted Gaussian/NeRF
 artifacts. F2 adds static visualization of an already-produced backend Gaussian
-preview without executing the isolated Gaussian runtime; NeRF visualization
-remains F3 and whole-representation switching remains F4.
+preview. F3 adds the corresponding backend-authored NeRF preview without
+executing its isolated runtime; whole-representation switching remains F4.
 """
 
 from __future__ import annotations
@@ -101,6 +101,11 @@ from app.reconstruction_gaussian_visualization import (
     build_gaussian_visualization_presentation,
     empty_gaussian_visualization_text,
 )
+from app.reconstruction_nerf_visualization import (
+    NerfVisualizationPresentation,
+    build_nerf_visualization_presentation,
+    empty_nerf_visualization_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -144,6 +149,7 @@ class ReconstructionPage(QWidget):
     reconstruction_reference_comparison_changed = pyqtSignal(object)
     appearance_representation_changed = pyqtSignal(object)
     gaussian_visualization_changed = pyqtSignal(object)
+    nerf_visualization_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -183,6 +189,8 @@ class ReconstructionPage(QWidget):
         self._selected_appearance_artifact_id = ""
         self._gaussian_visualization_presentation: GaussianVisualizationPresentation | None = None
         self._gaussian_preview_visible = False
+        self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
+        self._nerf_preview_visible = False
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1385,15 +1393,20 @@ class ReconstructionPage(QWidget):
         artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
         self._selected_appearance_artifact_id = artifact_id
         self._refresh_appearance_representation_values()
-        # F2 never lets a Gaussian preview remain visible after metadata selection
-        # moves to another representation. This is stale-view prevention, not the
-        # whole-representation switching workflow owned by F4.
+        # F2/F3 never let an appearance preview remain visible after metadata
+        # selection moves to another representation. This is stale-view
+        # prevention, not the whole-representation switching workflow owned by F4.
+        selected = self.selected_appearance_representation
         if self._gaussian_preview_visible and (
-            self.selected_appearance_representation is None
-            or self.selected_appearance_representation.representation_kind != "gaussian_scene"
+            selected is None or selected.representation_kind != "gaussian_scene"
         ):
             self._hide_gaussian_preview()
+        if self._nerf_preview_visible and (
+            selected is None or selected.representation_kind != "nerf_scene"
+        ):
+            self._hide_nerf_preview()
         self._refresh_gaussian_visualization_controls()
+        self._refresh_nerf_visualization_controls()
         self.appearance_representation_changed.emit(self.selected_appearance_representation)
 
     def _refresh_appearance_representation_controls(self) -> None:
@@ -1564,6 +1577,8 @@ class ReconstructionPage(QWidget):
         ):
             self._gaussian_state_value.setText("Gaussian preview cannot be shown for the current selection")
             return
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
         try:
             self._appearance_preview.set_preview(
                 presentation.preview_path,
@@ -1593,7 +1608,8 @@ class ReconstructionPage(QWidget):
             return
         presentation = self._gaussian_visualization_presentation
         selected = self.selected_appearance_representation
-        self._appearance_preview.hide()
+        if self._gaussian_preview_visible:
+            self._appearance_preview.hide()
         self._gaussian_preview_visible = False
         if hasattr(self, "_gaussian_hide_button"):
             self._gaussian_hide_button.setEnabled(False)
@@ -1616,6 +1632,145 @@ class ReconstructionPage(QWidget):
             and selected.representation_kind == "gaussian_scene"
         ):
             self._gaussian_state_value.setText(presentation.state_text)
+        self._refresh_viewport_state()
+
+    @property
+    def nerf_visualization_presentation(self) -> NerfVisualizationPresentation | None:
+        return self._nerf_visualization_presentation
+
+    @property
+    def nerf_preview_visible(self) -> bool:
+        return bool(self._nerf_preview_visible and not self._appearance_preview.isHidden())
+
+    def _refresh_nerf_visualization_controls(self) -> None:
+        values = empty_nerf_visualization_text()
+        previous = self._nerf_visualization_presentation
+        try:
+            presentation = build_nerf_visualization_presentation(self._persistent_scene)
+        except (OSError, TypeError, ValueError) as exc:
+            presentation = None
+            self._nerf_provider_value.setText(values["provider"])
+            self._nerf_scene_value.setText(values["scene"])
+            self._nerf_preview_value.setText("Preview metadata rejected")
+            self._nerf_preview_value.setToolTip(str(exc))
+            self._nerf_scale_value.setText(values["scale"])
+            self._nerf_state_value.setText("NeRF visualization unavailable")
+            self._nerf_state_value.setToolTip(str(exc))
+            self._nerf_authority_value.setText(values["authority"])
+            self._nerf_show_button.setEnabled(False)
+            self._nerf_hide_button.setEnabled(False)
+            self._hide_nerf_preview()
+            self._nerf_visualization_presentation = None
+            if previous is not None:
+                self.nerf_visualization_changed.emit(None)
+            return
+
+        self._nerf_visualization_presentation = presentation
+        selected = self.selected_appearance_representation
+        nerf_selected = bool(
+            selected is not None and selected.representation_kind == "nerf_scene"
+        )
+        if presentation is None:
+            self._nerf_provider_value.setText(values["provider"])
+            self._nerf_scene_value.setText(values["scene"])
+            self._nerf_preview_value.setText(values["preview"])
+            self._nerf_scale_value.setText(values["scale"])
+            self._nerf_state_value.setText(values["state"])
+            self._nerf_authority_value.setText(values["authority"])
+            self._nerf_show_button.setEnabled(False)
+            self._nerf_hide_button.setEnabled(False)
+            self._hide_nerf_preview()
+        else:
+            self._nerf_provider_value.setText(presentation.provider_text)
+            self._nerf_scene_value.setText(presentation.scene_text)
+            self._nerf_preview_value.setText(presentation.preview_text)
+            self._nerf_preview_value.setToolTip(presentation.preview_path or presentation.state_text)
+            self._nerf_scale_value.setText(presentation.scale_text)
+            if presentation.ready and not nerf_selected:
+                self._nerf_state_value.setText(
+                    "NeRF preview ready • select NeRF above to visualize"
+                )
+            else:
+                self._nerf_state_value.setText(presentation.state_text)
+            self._nerf_state_value.setToolTip(
+                "F3 displays an existing backend-authored static NeRF render only. "
+                "Whole-representation switching remains F4; resource/fallback UX remains F5."
+            )
+            self._nerf_authority_value.setText(presentation.authority_text)
+            self._nerf_show_button.setEnabled(bool(presentation.ready and nerf_selected))
+            self._nerf_hide_button.setEnabled(self.nerf_preview_visible)
+            if not nerf_selected and self._nerf_preview_visible:
+                self._hide_nerf_preview()
+
+        if presentation != previous:
+            self.nerf_visualization_changed.emit(presentation)
+
+    def _show_nerf_preview(self) -> None:
+        presentation = self._nerf_visualization_presentation
+        selected = self.selected_appearance_representation
+        if (
+            presentation is None
+            or not presentation.ready
+            or not presentation.preview_path
+            or selected is None
+            or selected.representation_kind != "nerf_scene"
+            or selected.artifact_id != presentation.artifact_id
+        ):
+            self._nerf_state_value.setText("NeRF preview cannot be shown for the current selection")
+            return
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        try:
+            self._appearance_preview.set_preview(
+                presentation.preview_path,
+                title="NERF PREVIEW • APPEARANCE ONLY",
+            )
+        except (OSError, ValueError) as exc:
+            self._nerf_state_value.setText("NeRF preview image could not be displayed")
+            self._nerf_state_value.setToolTip(str(exc))
+            self._nerf_show_button.setEnabled(False)
+            return
+        self._appearance_preview.show()
+        self._nerf_preview_visible = True
+        self._viewport_placeholder.setVisible(False)
+        self._viewport_state.setText("NeRF preview • appearance only")
+        self._viewport_state.setToolTip(
+            "Backend-authored static NeRF render. Canonical geometry remains authoritative; "
+            "F3 performs no NeRF rendering in the application process."
+        )
+        self._nerf_state_value.setText("NeRF backend preview visible • static F3 visualization")
+        self._nerf_show_button.setEnabled(False)
+        self._nerf_hide_button.setEnabled(True)
+
+    def _hide_nerf_preview(self) -> None:
+        if not hasattr(self, "_appearance_preview"):
+            return
+        presentation = self._nerf_visualization_presentation
+        selected = self.selected_appearance_representation
+        if self._nerf_preview_visible:
+            self._appearance_preview.hide()
+        self._nerf_preview_visible = False
+        if hasattr(self, "_nerf_hide_button"):
+            self._nerf_hide_button.setEnabled(False)
+        if hasattr(self, "_nerf_show_button"):
+            self._nerf_show_button.setEnabled(
+                bool(
+                    presentation is not None
+                    and presentation.ready
+                    and selected is not None
+                    and selected.representation_kind == "nerf_scene"
+                )
+            )
+        if (
+            hasattr(self, "_nerf_state_value")
+            and self._nerf_state_value.text()
+            == "NeRF backend preview visible • static F3 visualization"
+            and presentation is not None
+            and presentation.ready
+            and selected is not None
+            and selected.representation_kind == "nerf_scene"
+        ):
+            self._nerf_state_value.setText(presentation.state_text)
         self._refresh_viewport_state()
 
     def _build_settings_panel(self) -> QFrame:
@@ -2095,6 +2250,47 @@ class ReconstructionPage(QWidget):
         gaussian_layout.addLayout(gaussian_buttons)
         layout.addWidget(self._gaussian_visualization_group)
         self._refresh_gaussian_visualization_controls()
+
+        # F3 presents only an already-produced NeRF render from the persisted
+        # appearance artifact. It does not parse checkpoints, launch a neural
+        # backend, or implement the whole-representation switching owned by F4.
+        self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")
+        nerf_layout = self._nerf_visualization_group.layout()
+        self._nerf_provider_value = self._settings_value("—")
+        self._nerf_scene_value = self._settings_value("—")
+        self._nerf_preview_value = self._settings_value("—")
+        self._nerf_scale_value = self._settings_value("—")
+        self._nerf_state_value = self._settings_value("No persistent NeRF representation")
+        self._nerf_authority_value = self._settings_value(
+            "Appearance only • canonical geometry remains authoritative"
+        )
+        self._nerf_authority_value.setMinimumHeight(
+            self._nerf_authority_value.fontMetrics().lineSpacing() * 3
+        )
+        self._add_status_row(nerf_layout, "Provider", self._nerf_provider_value)
+        self._add_status_row(nerf_layout, "Scene", self._nerf_scene_value)
+        self._add_status_row(nerf_layout, "Preview", self._nerf_preview_value)
+        self._add_status_row(nerf_layout, "Scale", self._nerf_scale_value)
+        self._add_status_row(nerf_layout, "State", self._nerf_state_value)
+        self._add_status_row(nerf_layout, "Authority", self._nerf_authority_value)
+        nerf_buttons = QHBoxLayout()
+        nerf_buttons.setSpacing(6)
+        self._nerf_show_button = QPushButton("Show preview")
+        self._nerf_show_button.setObjectName("reconstructionNerfPreviewAction")
+        self._nerf_show_button.setToolTip(
+            "Show the existing backend-authored NeRF preview image. No NeRF runtime is launched."
+        )
+        self._nerf_show_button.clicked.connect(self._show_nerf_preview)
+        self._nerf_hide_button = QPushButton("Hide")
+        self._nerf_hide_button.setObjectName("reconstructionNerfPreviewAction")
+        self._nerf_hide_button.clicked.connect(self._hide_nerf_preview)
+        for button in (self._nerf_show_button, self._nerf_hide_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            nerf_buttons.addWidget(button)
+        nerf_layout.addLayout(nerf_buttons)
+        layout.addWidget(self._nerf_visualization_group)
+        self._refresh_nerf_visualization_controls()
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -2885,6 +3081,9 @@ class ReconstructionPage(QWidget):
             self.set_error(f"Reconstruction viewport update rejected: {exc}")
 
     def _refresh_viewport_state(self) -> None:
+        if self.nerf_preview_visible:
+            self._viewport_state.setText("NeRF preview • appearance only")
+            return
         if self.gaussian_preview_visible:
             self._viewport_state.setText("Gaussian Splatting preview • appearance only")
             return
@@ -3137,9 +3336,11 @@ class ReconstructionPage(QWidget):
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
         self._hide_gaussian_preview()
+        self._hide_nerf_preview()
         self._persistent_scene = scene
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
+        self._refresh_nerf_visualization_controls()
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()

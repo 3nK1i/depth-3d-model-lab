@@ -51,7 +51,7 @@ def test_f2_ui_has_one_gaussian_visualization_group_with_explicit_preview_action
     start = page.index(
         'self._gaussian_visualization_group = self._settings_group("GAUSSIAN SPLATTING VISUALIZATION")'
     )
-    end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = page.index('self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")', start)
     group = page[start:end]
     assert 'QPushButton("Show preview")' in group
     assert 'QPushButton("Hide")' in group
