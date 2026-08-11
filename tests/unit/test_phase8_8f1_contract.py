@@ -47,7 +47,7 @@ def test_f1_ui_has_one_metadata_control_group_and_no_render_actions() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert page.count('self._settings_group("APPEARANCE REPRESENTATIONS")') == 1
     start = page.index('self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")')
-    end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
+    end = page.index('self._gaussian_visualization_group = self._settings_group("GAUSSIAN SPLATTING VISUALIZATION")', start)
     group = page[start:end]
     assert "QComboBox()" in group
     assert "QPushButton(" not in group

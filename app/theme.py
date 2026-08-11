@@ -1361,6 +1361,27 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         background-color: transparent;
     }}
 
+    QFrame#reconstructionAppearancePreview {{
+        background-color: rgba(7, 9, 12, 246);
+        border: 1px solid {p.viewport_border};
+        border-radius: 4px;
+    }}
+    QLabel#reconstructionAppearancePreviewTitle {{
+        color: {p.viewport_text};
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.35px;
+    }}
+    QLabel#reconstructionAppearancePreviewImage {{
+        background-color: #07090c;
+        border: none;
+    }}
+    QLabel#reconstructionAppearancePreviewFooter {{
+        color: {p.viewport_text_dim};
+        font-size: 9px;
+        font-weight: 650;
+    }}
+
     QFrame#reconstructionViewportTools {{
         background-color: rgba(13, 16, 20, 214);
         border: 1px solid {p.viewport_border};

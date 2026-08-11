@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8F1.
+"""Reconstruction workspace through Phase 8.8F2.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -8,7 +8,9 @@ uncertainty. E4 presents authoritative inspection/QC reports. E5 adds the
 reference-comparison workflow around an explicit reference identity and existing
 Phase 8.7C comparison evidence without rerunning registration or tolerances. F1
 adds metadata-only appearance-representation controls over persisted Gaussian/NeRF
-artifacts; visualization remains deferred to F2/F3 and switching to F4.
+artifacts. F2 adds static visualization of an already-produced backend Gaussian
+preview without executing the isolated Gaussian runtime; NeRF visualization
+remains F3 and whole-representation switching remains F4.
 """
 
 from __future__ import annotations
@@ -94,6 +96,11 @@ from app.reconstruction_appearance_presentation import (
     build_reconstruction_appearance_presentation,
     empty_appearance_representation_text,
 )
+from app.reconstruction_gaussian_visualization import (
+    GaussianVisualizationPresentation,
+    build_gaussian_visualization_presentation,
+    empty_gaussian_visualization_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -117,6 +124,7 @@ from app.theme import (
 from app.widgets.icon_button import IconButton
 from app.widgets.reconstruction_diagnostics_hud import ReconstructionDiagnosticsHud
 from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientationGizmo
+from app.widgets.reconstruction_appearance_preview import ReconstructionAppearancePreview
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CameraIntrinsicsPolicy,
@@ -135,6 +143,7 @@ class ReconstructionPage(QWidget):
     reconstruction_inspection_qc_changed = pyqtSignal(object)
     reconstruction_reference_comparison_changed = pyqtSignal(object)
     appearance_representation_changed = pyqtSignal(object)
+    gaussian_visualization_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -172,6 +181,8 @@ class ReconstructionPage(QWidget):
         self._reconstruction_reference_comparison_presentation: ReconstructionReferenceComparisonPresentation | None = None
         self._appearance_presentation: ReconstructionAppearancePresentation | None = None
         self._selected_appearance_artifact_id = ""
+        self._gaussian_visualization_presentation: GaussianVisualizationPresentation | None = None
+        self._gaussian_preview_visible = False
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -411,6 +422,12 @@ class ReconstructionPage(QWidget):
         center.addWidget(detail)
         center.addStretch(1)
         grid.addWidget(self._viewport_placeholder, 0, 0)
+
+        # F2 uses a reusable, backend-free image overlay for the already-produced
+        # Gaussian preview render. It does not parse the Gaussian scene payload or
+        # execute any Gaussian backend in the UI process. F3 can reuse the same overlay.
+        self._appearance_preview = ReconstructionAppearancePreview(host)
+        grid.addWidget(self._appearance_preview, 0, 0)
 
         tools = QFrame()
         tools.setObjectName("reconstructionViewportTools")
@@ -1368,6 +1385,15 @@ class ReconstructionPage(QWidget):
         artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
         self._selected_appearance_artifact_id = artifact_id
         self._refresh_appearance_representation_values()
+        # F2 never lets a Gaussian preview remain visible after metadata selection
+        # moves to another representation. This is stale-view prevention, not the
+        # whole-representation switching workflow owned by F4.
+        if self._gaussian_preview_visible and (
+            self.selected_appearance_representation is None
+            or self.selected_appearance_representation.representation_kind != "gaussian_scene"
+        ):
+            self._hide_gaussian_preview()
+        self._refresh_gaussian_visualization_controls()
         self.appearance_representation_changed.emit(self.selected_appearance_representation)
 
     def _refresh_appearance_representation_controls(self) -> None:
@@ -1453,6 +1479,144 @@ class ReconstructionPage(QWidget):
         self._appearance_authority_value.setToolTip(
             "F1 inspects persisted appearance metadata only. Gaussian/NeRF do not become canonical geometry, measurement, inspection/QC, reference, or certified-metrology authority."
         )
+
+    @property
+    def gaussian_visualization_presentation(self) -> GaussianVisualizationPresentation | None:
+        return self._gaussian_visualization_presentation
+
+    @property
+    def gaussian_preview_visible(self) -> bool:
+        return bool(self._gaussian_preview_visible and not self._appearance_preview.isHidden())
+
+    def _refresh_gaussian_visualization_controls(self) -> None:
+        values = empty_gaussian_visualization_text()
+        previous = self._gaussian_visualization_presentation
+        try:
+            presentation = build_gaussian_visualization_presentation(self._persistent_scene)
+        except (OSError, TypeError, ValueError) as exc:
+            presentation = None
+            self._gaussian_provider_value.setText(values["provider"])
+            self._gaussian_scene_value.setText(values["scene"])
+            self._gaussian_preview_value.setText("Preview metadata rejected")
+            self._gaussian_preview_value.setToolTip(str(exc))
+            self._gaussian_scale_value.setText(values["scale"])
+            self._gaussian_state_value.setText("Gaussian visualization unavailable")
+            self._gaussian_state_value.setToolTip(str(exc))
+            self._gaussian_authority_value.setText(values["authority"])
+            self._gaussian_show_button.setEnabled(False)
+            self._gaussian_hide_button.setEnabled(False)
+            self._hide_gaussian_preview()
+            self._gaussian_visualization_presentation = None
+            if previous is not None:
+                self.gaussian_visualization_changed.emit(None)
+            return
+
+        self._gaussian_visualization_presentation = presentation
+        selected = self.selected_appearance_representation
+        gaussian_selected = bool(
+            selected is not None and selected.representation_kind == "gaussian_scene"
+        )
+        if presentation is None:
+            self._gaussian_provider_value.setText(values["provider"])
+            self._gaussian_scene_value.setText(values["scene"])
+            self._gaussian_preview_value.setText(values["preview"])
+            self._gaussian_scale_value.setText(values["scale"])
+            self._gaussian_state_value.setText(values["state"])
+            self._gaussian_authority_value.setText(values["authority"])
+            self._gaussian_show_button.setEnabled(False)
+            self._gaussian_hide_button.setEnabled(False)
+            self._hide_gaussian_preview()
+        else:
+            self._gaussian_provider_value.setText(presentation.provider_text)
+            self._gaussian_scene_value.setText(presentation.scene_text)
+            self._gaussian_preview_value.setText(presentation.preview_text)
+            self._gaussian_preview_value.setToolTip(presentation.preview_path or presentation.state_text)
+            self._gaussian_scale_value.setText(presentation.scale_text)
+            if presentation.ready and not gaussian_selected:
+                self._gaussian_state_value.setText(
+                    "Gaussian preview ready • select Gaussian above to visualize"
+                )
+            else:
+                self._gaussian_state_value.setText(presentation.state_text)
+            self._gaussian_state_value.setToolTip(
+                "F2 displays a backend-authored static Gaussian preview image only. "
+                "Interactive representation switching remains F4; resource/fallback UX remains F5."
+            )
+            self._gaussian_authority_value.setText(presentation.authority_text)
+            self._gaussian_show_button.setEnabled(bool(presentation.ready and gaussian_selected))
+            self._gaussian_hide_button.setEnabled(self.gaussian_preview_visible)
+            if not gaussian_selected and self._gaussian_preview_visible:
+                self._hide_gaussian_preview()
+
+        if presentation != previous:
+            self.gaussian_visualization_changed.emit(presentation)
+
+    def _show_gaussian_preview(self) -> None:
+        presentation = self._gaussian_visualization_presentation
+        selected = self.selected_appearance_representation
+        if (
+            presentation is None
+            or not presentation.ready
+            or not presentation.preview_path
+            or selected is None
+            or selected.representation_kind != "gaussian_scene"
+            or selected.artifact_id != presentation.artifact_id
+        ):
+            self._gaussian_state_value.setText("Gaussian preview cannot be shown for the current selection")
+            return
+        try:
+            self._appearance_preview.set_preview(
+                presentation.preview_path,
+                title="GAUSSIAN SPLATTING PREVIEW • APPEARANCE ONLY",
+            )
+        except (OSError, ValueError) as exc:
+            self._gaussian_state_value.setText("Gaussian preview image could not be displayed")
+            self._gaussian_state_value.setToolTip(str(exc))
+            self._gaussian_show_button.setEnabled(False)
+            return
+        # The overlay was inserted after the canvas but before the normal viewport
+        # tools/HUD/gizmo, so showing it preserves those controls above the image.
+        self._appearance_preview.show()
+        self._gaussian_preview_visible = True
+        self._viewport_placeholder.setVisible(False)
+        self._viewport_state.setText("Gaussian Splatting preview • appearance only")
+        self._viewport_state.setToolTip(
+            "Backend-authored static Gaussian render. Canonical geometry remains authoritative; "
+            "F2 performs no Gaussian rendering in the application process."
+        )
+        self._gaussian_state_value.setText("Gaussian backend preview visible • static F2 visualization")
+        self._gaussian_show_button.setEnabled(False)
+        self._gaussian_hide_button.setEnabled(True)
+
+    def _hide_gaussian_preview(self) -> None:
+        if not hasattr(self, "_appearance_preview"):
+            return
+        presentation = self._gaussian_visualization_presentation
+        selected = self.selected_appearance_representation
+        self._appearance_preview.hide()
+        self._gaussian_preview_visible = False
+        if hasattr(self, "_gaussian_hide_button"):
+            self._gaussian_hide_button.setEnabled(False)
+        if hasattr(self, "_gaussian_show_button"):
+            self._gaussian_show_button.setEnabled(
+                bool(
+                    presentation is not None
+                    and presentation.ready
+                    and selected is not None
+                    and selected.representation_kind == "gaussian_scene"
+                )
+            )
+        if (
+            hasattr(self, "_gaussian_state_value")
+            and self._gaussian_state_value.text()
+            == "Gaussian backend preview visible • static F2 visualization"
+            and presentation is not None
+            and presentation.ready
+            and selected is not None
+            and selected.representation_kind == "gaussian_scene"
+        ):
+            self._gaussian_state_value.setText(presentation.state_text)
+        self._refresh_viewport_state()
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1890,6 +2054,47 @@ class ReconstructionPage(QWidget):
         self._add_status_row(appearance_layout, "Authority", self._appearance_authority_value)
         layout.addWidget(self._appearance_group)
         self._refresh_appearance_representation_controls()
+
+        # F2 visualizes the backend-authored Gaussian preview image only. It does
+        # not parse scene.pt/point_cloud.ply, import Gaussian runtimes, retrain,
+        # register geometry, or perform global representation switching.
+        self._gaussian_visualization_group = self._settings_group("GAUSSIAN SPLATTING VISUALIZATION")
+        gaussian_layout = self._gaussian_visualization_group.layout()
+        self._gaussian_provider_value = self._settings_value("—")
+        self._gaussian_scene_value = self._settings_value("—")
+        self._gaussian_preview_value = self._settings_value("—")
+        self._gaussian_scale_value = self._settings_value("—")
+        self._gaussian_state_value = self._settings_value("No persistent Gaussian representation")
+        self._gaussian_authority_value = self._settings_value(
+            "Appearance only • canonical geometry remains authoritative"
+        )
+        self._gaussian_authority_value.setMinimumHeight(
+            self._gaussian_authority_value.fontMetrics().lineSpacing() * 3
+        )
+        self._add_status_row(gaussian_layout, "Provider", self._gaussian_provider_value)
+        self._add_status_row(gaussian_layout, "Scene", self._gaussian_scene_value)
+        self._add_status_row(gaussian_layout, "Preview", self._gaussian_preview_value)
+        self._add_status_row(gaussian_layout, "Scale", self._gaussian_scale_value)
+        self._add_status_row(gaussian_layout, "State", self._gaussian_state_value)
+        self._add_status_row(gaussian_layout, "Authority", self._gaussian_authority_value)
+        gaussian_buttons = QHBoxLayout()
+        gaussian_buttons.setSpacing(6)
+        self._gaussian_show_button = QPushButton("Show preview")
+        self._gaussian_show_button.setObjectName("reconstructionGaussianPreviewAction")
+        self._gaussian_show_button.setToolTip(
+            "Show the existing backend-authored Gaussian preview image. No Gaussian runtime is launched."
+        )
+        self._gaussian_show_button.clicked.connect(self._show_gaussian_preview)
+        self._gaussian_hide_button = QPushButton("Hide")
+        self._gaussian_hide_button.setObjectName("reconstructionGaussianPreviewAction")
+        self._gaussian_hide_button.clicked.connect(self._hide_gaussian_preview)
+        for button in (self._gaussian_show_button, self._gaussian_hide_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            gaussian_buttons.addWidget(button)
+        gaussian_layout.addLayout(gaussian_buttons)
+        layout.addWidget(self._gaussian_visualization_group)
+        self._refresh_gaussian_visualization_controls()
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -2680,6 +2885,9 @@ class ReconstructionPage(QWidget):
             self.set_error(f"Reconstruction viewport update rejected: {exc}")
 
     def _refresh_viewport_state(self) -> None:
+        if self.gaussian_preview_visible:
+            self._viewport_state.setText("Gaussian Splatting preview • appearance only")
+            return
         if self._scene_availability is ReconstructionSceneAvailability.READY:
             self._viewport_state.setText("Scene ready")
             return
@@ -2928,8 +3136,10 @@ class ReconstructionPage(QWidget):
         self._refresh_viewport_state()
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
+        self._hide_gaussian_preview()
         self._persistent_scene = scene
         self._refresh_appearance_representation_controls()
+        self._refresh_gaussian_visualization_controls()
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()
