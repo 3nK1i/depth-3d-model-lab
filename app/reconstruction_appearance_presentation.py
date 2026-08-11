@@ -136,7 +136,7 @@ class ReconstructionAppearancePresentation:
         if self.missing_kinds:
             missing = ", ".join(_APPEARANCE_KIND_LABELS.get(value, _humanize(value)) for value in self.missing_kinds)
             return f"Appearance metadata available • {missing} missing"
-        return "Appearance metadata ready • visualization available in F2/F3"
+        return "Appearance metadata ready • viewport switching available in F4"
 
     @property
     def authority_text(self) -> str:

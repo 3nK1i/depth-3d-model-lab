@@ -72,7 +72,7 @@ def test_f2_uses_backend_authored_preview_not_gaussian_scene_payload() -> None:
     assert "scene.pt" not in module
     assert "point_cloud.ply" not in module
     assert "F2 performs no Gaussian rendering" in page
-    assert "whole-representation switching remains F4" in PAGE.read_text(encoding="utf-8")
+    assert "F4 coordinates switching between qualified appearance views" in PAGE.read_text(encoding="utf-8")
 
 
 def test_f2_is_object_agnostic_and_preserves_appearance_authority() -> None:

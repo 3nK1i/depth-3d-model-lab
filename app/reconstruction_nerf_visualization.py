@@ -3,8 +3,8 @@
 F3 visualizes an already-produced NeRF preview render from a persisted Phase
 8.7 appearance artifact. It deliberately does not import or execute a NeRF
 runtime, parse checkpoints/configuration for rendering, retrain, or promote
-appearance to canonical geometry. Whole-representation switching remains Phase
-8.8F4 and resource/fallback policy remains Phase 8.8F5.
+appearance to canonical geometry. Phase 8.8F4 may coordinate this qualified
+preview with the F2 Gaussian preview; resource/fallback policy remains Phase 8.8F5.
 """
 
 from __future__ import annotations

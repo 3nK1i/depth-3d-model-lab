@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8F3.
+"""Reconstruction workspace through Phase 8.8F4.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -10,7 +10,8 @@ Phase 8.7C comparison evidence without rerunning registration or tolerances. F1
 adds metadata-only appearance-representation controls over persisted Gaussian/NeRF
 artifacts. F2 adds static visualization of an already-produced backend Gaussian
 preview. F3 adds the corresponding backend-authored NeRF preview without
-executing its isolated runtime; whole-representation switching remains F4.
+executing its isolated runtime. F4 coordinates user-driven switching between
+those qualified appearance views while canonical geometry remains authoritative.
 """
 
 from __future__ import annotations
@@ -106,6 +107,11 @@ from app.reconstruction_nerf_visualization import (
     build_nerf_visualization_presentation,
     empty_nerf_visualization_text,
 )
+from app.reconstruction_representation_switching import (
+    RepresentationSwitchTarget,
+    build_representation_switch_target,
+    canonical_view_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -150,6 +156,7 @@ class ReconstructionPage(QWidget):
     appearance_representation_changed = pyqtSignal(object)
     gaussian_visualization_changed = pyqtSignal(object)
     nerf_visualization_changed = pyqtSignal(object)
+    representation_switching_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -191,6 +198,7 @@ class ReconstructionPage(QWidget):
         self._gaussian_preview_visible = False
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
+        self._representation_switch_target: RepresentationSwitchTarget | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -1393,9 +1401,9 @@ class ReconstructionPage(QWidget):
         artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
         self._selected_appearance_artifact_id = artifact_id
         self._refresh_appearance_representation_values()
-        # F2/F3 never let an appearance preview remain visible after metadata
-        # selection moves to another representation. This is stale-view
-        # prevention, not the whole-representation switching workflow owned by F4.
+        # F2/F3 still clear stale imagery on metadata changes. F4 performs the
+        # actual user-driven switch only from QComboBox.activated, so programmatic
+        # scene refresh/selection restoration never launches a view implicitly.
         selected = self.selected_appearance_representation
         if self._gaussian_preview_visible and (
             selected is None or selected.representation_kind != "gaussian_scene"
@@ -1407,6 +1415,7 @@ class ReconstructionPage(QWidget):
             self._hide_nerf_preview()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
+        self._refresh_representation_switching_controls()
         self.appearance_representation_changed.emit(self.selected_appearance_representation)
 
     def _refresh_appearance_representation_controls(self) -> None:
@@ -1494,6 +1503,87 @@ class ReconstructionPage(QWidget):
         )
 
     @property
+    def representation_switch_target(self) -> RepresentationSwitchTarget | None:
+        return self._representation_switch_target
+
+    @property
+    def active_view_representation(self) -> str:
+        if self.gaussian_preview_visible:
+            return "gaussian_scene"
+        if self.nerf_preview_visible:
+            return "nerf_scene"
+        return "canonical_geometry"
+
+    def _refresh_representation_switching_controls(self) -> None:
+        previous = self._representation_switch_target
+        target = build_representation_switch_target(
+            self.selected_appearance_representation,
+            gaussian_presentation=self._gaussian_visualization_presentation,
+            nerf_presentation=self._nerf_visualization_presentation,
+        )
+        self._representation_switch_target = target
+        if not hasattr(self, "_appearance_viewport_value"):
+            return
+
+        active = self.active_view_representation
+        if active == "gaussian_scene":
+            text = "Gaussian appearance • appearance only"
+            tooltip = "F4 is showing the already-qualified F2 Gaussian preview. Canonical geometry remains authoritative."
+        elif active == "nerf_scene":
+            text = "NeRF appearance • appearance only"
+            tooltip = "F4 is showing the already-qualified F3 NeRF preview. Canonical geometry remains authoritative."
+        elif target is not None and not target.ready:
+            text = target.unavailable_text
+            tooltip = (
+                "The selected appearance preview is unavailable, so F4 keeps the canonical Reconstruction viewport. "
+                "No alternate representation or resource fallback is chosen here; F5 owns fallback policy."
+            )
+        else:
+            text = canonical_view_text()
+            tooltip = (
+                "Canonical Reconstruction view is active. Re-select/activate Gaussian or NeRF to show an existing "
+                "qualified appearance preview; no backend is launched."
+            )
+        self._appearance_viewport_value.setText(text)
+        self._appearance_viewport_value.setToolTip(tooltip)
+        if target != previous:
+            self.representation_switching_changed.emit(target)
+
+    def _on_appearance_representation_activated(self, combo_index: int) -> None:
+        # ``activated`` is user-driven, unlike currentIndexChanged during internal
+        # state restoration. This keeps F4 switching explicit and deterministic.
+        artifact_id = str(self._appearance_representation_combo.itemData(combo_index) or "").strip()
+        if artifact_id and artifact_id != self._selected_appearance_artifact_id:
+            self._selected_appearance_artifact_id = artifact_id
+            self._refresh_appearance_representation_values()
+            self._refresh_gaussian_visualization_controls()
+            self._refresh_nerf_visualization_controls()
+        self._activate_selected_appearance_representation()
+
+    def _activate_selected_appearance_representation(self) -> None:
+        self._refresh_representation_switching_controls()
+        target = self._representation_switch_target
+        if target is None:
+            self._hide_active_appearance_preview()
+            self._refresh_representation_switching_controls()
+            return
+        if not target.ready:
+            self._hide_active_appearance_preview()
+            self._refresh_representation_switching_controls()
+            return
+        if target.representation_kind == "gaussian_scene":
+            self._show_gaussian_preview()
+        elif target.representation_kind == "nerf_scene":
+            self._show_nerf_preview()
+        self._refresh_representation_switching_controls()
+
+    def _hide_active_appearance_preview(self) -> None:
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
+
+    @property
     def gaussian_visualization_presentation(self) -> GaussianVisualizationPresentation | None:
         return self._gaussian_visualization_presentation
 
@@ -1552,8 +1642,8 @@ class ReconstructionPage(QWidget):
             else:
                 self._gaussian_state_value.setText(presentation.state_text)
             self._gaussian_state_value.setToolTip(
-                "F2 displays a backend-authored static Gaussian preview image only. "
-                "Interactive representation switching remains F4; resource/fallback UX remains F5."
+                "F2 supplies the backend-authored static Gaussian preview. "
+                "F4 coordinates switching between qualified appearance views; resource/fallback UX remains F5."
             )
             self._gaussian_authority_value.setText(presentation.authority_text)
             self._gaussian_show_button.setEnabled(bool(presentation.ready and gaussian_selected))
@@ -1602,6 +1692,7 @@ class ReconstructionPage(QWidget):
         self._gaussian_state_value.setText("Gaussian backend preview visible • static F2 visualization")
         self._gaussian_show_button.setEnabled(False)
         self._gaussian_hide_button.setEnabled(True)
+        self._refresh_representation_switching_controls()
 
     def _hide_gaussian_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
@@ -1633,6 +1724,7 @@ class ReconstructionPage(QWidget):
         ):
             self._gaussian_state_value.setText(presentation.state_text)
         self._refresh_viewport_state()
+        self._refresh_representation_switching_controls()
 
     @property
     def nerf_visualization_presentation(self) -> NerfVisualizationPresentation | None:
@@ -1693,8 +1785,8 @@ class ReconstructionPage(QWidget):
             else:
                 self._nerf_state_value.setText(presentation.state_text)
             self._nerf_state_value.setToolTip(
-                "F3 displays an existing backend-authored static NeRF render only. "
-                "Whole-representation switching remains F4; resource/fallback UX remains F5."
+                "F3 supplies an existing backend-authored static NeRF render. "
+                "F4 coordinates switching between qualified appearance views; resource/fallback UX remains F5."
             )
             self._nerf_authority_value.setText(presentation.authority_text)
             self._nerf_show_button.setEnabled(bool(presentation.ready and nerf_selected))
@@ -1741,6 +1833,7 @@ class ReconstructionPage(QWidget):
         self._nerf_state_value.setText("NeRF backend preview visible • static F3 visualization")
         self._nerf_show_button.setEnabled(False)
         self._nerf_hide_button.setEnabled(True)
+        self._refresh_representation_switching_controls()
 
     def _hide_nerf_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
@@ -1772,6 +1865,7 @@ class ReconstructionPage(QWidget):
         ):
             self._nerf_state_value.setText(presentation.state_text)
         self._refresh_viewport_state()
+        self._refresh_representation_switching_controls()
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -2155,10 +2249,9 @@ class ReconstructionPage(QWidget):
         reference_layout.addLayout(reference_buttons)
         layout.addWidget(self._reference_comparison_group)
 
-        # F1 controls persisted neural appearance metadata only. The selector
-        # chooses which appearance artifact metadata is inspected; it does not
-        # render or switch the viewport. Gaussian visualization starts in F2,
-        # NeRF visualization in F3, and whole-view switching in F4.
+        # F1 supplies persisted neural appearance metadata. F2/F3 supply the
+        # qualified static previews. F4 reuses this selector as the explicit
+        # user-driven viewport switch without launching either backend.
         self._appearance_group = self._settings_group("APPEARANCE REPRESENTATIONS")
         appearance_layout = self._appearance_group.layout()
         appearance_selector = QHBoxLayout()
@@ -2177,10 +2270,13 @@ class ReconstructionPage(QWidget):
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
         self._appearance_representation_combo.setToolTip(
-            "Inspect persisted appearance artifact metadata. F1 does not render or switch the Reconstruction viewport."
+            "Inspect persisted appearance metadata. In F4, activating Gaussian or NeRF switches the viewport to its existing qualified preview without launching a backend."
         )
         self._appearance_representation_combo.currentIndexChanged.connect(
             self._on_appearance_representation_selected
+        )
+        self._appearance_representation_combo.activated.connect(
+            self._on_appearance_representation_activated
         )
         appearance_selector.addWidget(self._appearance_representation_combo, stretch=1)
         appearance_layout.addLayout(appearance_selector)
@@ -2193,6 +2289,7 @@ class ReconstructionPage(QWidget):
         self._appearance_authority_value = self._settings_value(
             "Appearance only • canonical geometry remains authoritative"
         )
+        self._appearance_viewport_value = self._settings_value(canonical_view_text())
         # Keep the complete authority statement visibly readable at the
         # minimum Reconstruction sidebar width. QLabel height-for-width can
         # otherwise under-allocate this final wrapped row inside the scroll
@@ -2206,13 +2303,15 @@ class ReconstructionPage(QWidget):
         self._add_status_row(appearance_layout, "Render", self._appearance_render_value)
         self._add_status_row(appearance_layout, "Scale", self._appearance_scale_value)
         self._add_status_row(appearance_layout, "State", self._appearance_state_value)
+        self._add_status_row(appearance_layout, "Viewport", self._appearance_viewport_value)
         self._add_status_row(appearance_layout, "Authority", self._appearance_authority_value)
         layout.addWidget(self._appearance_group)
         self._refresh_appearance_representation_controls()
+        self._refresh_representation_switching_controls()
 
         # F2 visualizes the backend-authored Gaussian preview image only. It does
-        # not parse scene.pt/point_cloud.ply, import Gaussian runtimes, retrain,
-        # register geometry, or perform global representation switching.
+        # not parse heavy scene payloads, import Gaussian runtimes, retrain, or
+        # register geometry. F4 only coordinates this already-qualified preview.
         self._gaussian_visualization_group = self._settings_group("GAUSSIAN SPLATTING VISUALIZATION")
         gaussian_layout = self._gaussian_visualization_group.layout()
         self._gaussian_provider_value = self._settings_value("—")
@@ -2252,8 +2351,8 @@ class ReconstructionPage(QWidget):
         self._refresh_gaussian_visualization_controls()
 
         # F3 presents only an already-produced NeRF render from the persisted
-        # appearance artifact. It does not parse checkpoints, launch a neural
-        # backend, or implement the whole-representation switching owned by F4.
+        # appearance artifact. It does not parse checkpoints or launch a neural
+        # backend. F4 only coordinates this already-qualified preview.
         self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")
         nerf_layout = self._nerf_visualization_group.layout()
         self._nerf_provider_value = self._settings_value("—")
@@ -3341,6 +3440,7 @@ class ReconstructionPage(QWidget):
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
+        self._refresh_representation_switching_controls()
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()

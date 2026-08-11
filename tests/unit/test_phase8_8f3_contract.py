@@ -69,7 +69,7 @@ def test_f3_uses_backend_authored_images_not_nerf_scene_runtime_payload() -> Non
     assert "config.yml" not in module
     assert ".ckpt" not in module
     assert "F3 performs no NeRF rendering" in page
-    assert "whole-representation switching remains F4" in PAGE.read_text(encoding="utf-8")
+    assert "F4 coordinates switching between qualified appearance views" in PAGE.read_text(encoding="utf-8")
 
 
 def test_f3_is_object_agnostic_and_preserves_appearance_authority() -> None:

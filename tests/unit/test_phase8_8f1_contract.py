@@ -78,13 +78,13 @@ def test_f1_is_object_agnostic_and_representation_metadata_driven() -> None:
     assert "render_capable" in MODULE.read_text(encoding="utf-8")
 
 
-def test_f1_preserves_authority_and_defers_visualization_switching() -> None:
+def test_f1_preserves_authority_as_f4_adds_viewport_switching() -> None:
     module = MODULE.read_text(encoding="utf-8")
     page = PAGE.read_text(encoding="utf-8")
     assert "Appearance only • canonical geometry remains authoritative" in module
-    assert "visualization available in F2/F3" in module
-    assert "whole-view switching in F4" in page
-    assert "F1 does not render or switch" in page
+    assert "viewport switching available in F4" in module
+    assert "F4 reuses this selector as the explicit" in page
+    assert "F1 inspects persisted appearance metadata only" in page
     assert "certified metrology" in module.lower()
 
 
