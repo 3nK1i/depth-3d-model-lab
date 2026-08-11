@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8F5.
+"""Reconstruction workspace through Phase 8.8G1.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -12,7 +12,9 @@ artifacts. F2 adds static visualization of an already-produced backend Gaussian
 preview. F3 adds the corresponding backend-authored NeRF preview without
 executing its isolated runtime. F4 coordinates user-driven switching between
 those qualified appearance views. F5 exposes bounded resource state and an
-explicit canonical fallback without changing any reconstruction authority.
+explicit canonical fallback without changing any reconstruction authority. G1
+composes the existing runtime/scene/checkpoint evidence into one generic session
+model without adding save/reload, resume, recovery, or domain-specific behavior.
 """
 
 from __future__ import annotations
@@ -122,6 +124,10 @@ from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
 )
+from app.reconstruction_session_model import (
+    ReconstructionSessionIdentityStatus,
+    ReconstructionSessionModel,
+)
 from app.reconstruction_persistence_controller import ReconstructionSceneAvailability
 from app.reconstruction_status import (
     ReconstructionStatusPresentation,
@@ -164,6 +170,7 @@ class ReconstructionPage(QWidget):
     nerf_visualization_changed = pyqtSignal(object)
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
+    reconstruction_session_model_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -208,6 +215,7 @@ class ReconstructionPage(QWidget):
         self._representation_switch_target: RepresentationSwitchTarget | None = None
         self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
         self._appearance_fallback_reason = ""
+        self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -2000,10 +2008,14 @@ class ReconstructionPage(QWidget):
         session = self._settings_group("SESSION & PERSISTENCE")
         session_layout = session.layout()
         self._session_value = self._settings_value("No active session")
+        self._session_context_value = self._settings_value("No session context")
+        self._session_evidence_value = self._settings_value("Runtime/session metadata only")
         self._checkpoint_value = self._settings_value("No checkpoint")
         self._scene_manifest_value = self._settings_value("No persistent scene")
         self._telemetry_value = self._settings_value("No runtime telemetry")
         self._add_status_row(session_layout, "Session", self._session_value)
+        self._add_status_row(session_layout, "Context", self._session_context_value)
+        self._add_status_row(session_layout, "Evidence", self._session_evidence_value)
         self._add_status_row(session_layout, "Scene", self._scene_manifest_value)
         self._add_status_row(session_layout, "Checkpoint", self._checkpoint_value)
         self._add_status_row(session_layout, "Telemetry", self._telemetry_value)
@@ -2595,8 +2607,10 @@ class ReconstructionPage(QWidget):
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
         controller.checkpoint_changed.connect(self.set_checkpoint)
+        controller.session_model_changed.connect(self.set_session_model)
         controller.error_occurred.connect(self.set_error)
 
+        self.set_session_model(controller.session_model)
         self.set_live_state(controller.live_state)
         self.set_offline_state(controller.offline_state)
         self.set_source_selection(controller.source_selection)
@@ -2608,6 +2622,61 @@ class ReconstructionPage(QWidget):
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
         self._telemetry_timer.start()
         self._refresh_runtime_telemetry()
+
+    @property
+    def reconstruction_session_model(self) -> ReconstructionSessionModel | None:
+        return self._reconstruction_session_model
+
+    def set_session_model(self, model: ReconstructionSessionModel) -> None:
+        """Present the passive G1 composition; no session action is executed here."""
+
+        if not isinstance(model, ReconstructionSessionModel):
+            raise TypeError("model must be ReconstructionSessionModel.")
+        previous = self._reconstruction_session_model
+        self._reconstruction_session_model = model
+        self._session_value.setText(model.short_session_id or "No active session")
+        self._session_value.setToolTip(model.identity_details)
+        self._session_context_value.setText(model.context_text)
+        context_details = [
+            f"Focus: {model.focus.value}",
+            f"Lifecycle: {model.lifecycle.value}",
+            f"Workflow: {model.workflow or 'none'}",
+        ]
+        if model.selected_source_label:
+            context_details.append(f"Selected source: {model.selected_source_label}")
+        if model.selected_source_path:
+            context_details.append(f"Selected path: {model.selected_source_path}")
+        self._session_context_value.setToolTip("\n".join(context_details))
+        self._session_evidence_value.setText(model.evidence_text)
+        self._session_evidence_value.setToolTip(model.evidence_details)
+        self._scene_manifest_value.setText(
+            Path(model.scene_manifest).name
+            if model.scene_manifest
+            else "Persistent scene linked"
+            if model.scene_id
+            else "No persistent scene"
+        )
+        self._scene_manifest_value.setToolTip(model.scene_manifest or model.scene_id)
+        self._checkpoint_value.setText(
+            Path(model.checkpoint_manifest).name
+            if model.checkpoint_manifest
+            else "Checkpoint linked"
+            if model.checkpoint_id
+            else "No checkpoint"
+        )
+        self._checkpoint_value.setToolTip(model.checkpoint_manifest or model.checkpoint_id)
+        status_kind = (
+            "warning"
+            if model.identity_status is ReconstructionSessionIdentityStatus.CONFLICT
+            else "ready"
+            if model.has_session
+            else "neutral"
+        )
+        for widget in (self._session_value, self._session_context_value):
+            widget.setProperty("statusKind", status_kind)
+            self._refresh_style(widget)
+        if model != previous:
+            self.reconstruction_session_model_changed.emit(model)
 
     def set_source_selection(self, selection: ReconstructionSourceSelection) -> None:
         if not isinstance(selection, ReconstructionSourceSelection):
@@ -2781,7 +2850,8 @@ class ReconstructionPage(QWidget):
                 session_id = controller.start_selected_offline()
             else:
                 raise RuntimeError("Choose a Reconstruction workflow before starting.")
-            self._session_value.setText(session_id)
+            self._session_value.setText(str(session_id)[:8])
+            self._session_value.setToolTip(str(session_id))
             output_dir = controller.offline_output_dir
             if output_dir is not None:
                 self._runtime_output_value.setText(output_dir.name)
@@ -3588,24 +3658,7 @@ class ReconstructionPage(QWidget):
         controller = self._controller
         if controller is None:
             return
-        workflow = controller.source_selection.workflow
-        if self._offline_state in {
-            OfflineReconstructionRunState.STARTING,
-            OfflineReconstructionRunState.RUNNING,
-            OfflineReconstructionRunState.CANCELLING,
-        } or workflow in {ReconstructionWorkflow.IMAGE_SEQUENCE, ReconstructionWorkflow.RECORDED_VIDEO}:
-            session_id = controller.offline_session_id
-        elif self._live_state in {
-            LiveCaptureRuntimeState.STARTING,
-            LiveCaptureRuntimeState.RUNNING,
-            LiveCaptureRuntimeState.PAUSED,
-            LiveCaptureRuntimeState.RECOVERING,
-            LiveCaptureRuntimeState.STOPPING,
-        } or workflow is ReconstructionWorkflow.LIVE_SOURCE:
-            session_id = controller.live_session_id
-        else:
-            session_id = controller.offline_session_id or controller.live_session_id
-        self._session_value.setText(session_id or "No active session")
+        self.set_session_model(controller.session_model)
         output_dir = controller.offline_output_dir
         if output_dir is not None:
             self._runtime_output_value.setText(output_dir.name)

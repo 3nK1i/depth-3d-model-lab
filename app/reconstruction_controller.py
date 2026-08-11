@@ -33,6 +33,10 @@ from app.offline_reconstruction_controller import (
     OfflineReconstructionSourceKind,
     build_offline_reconstruction_command,
 )
+from app.reconstruction_session_model import (
+    ReconstructionSessionModel,
+    build_reconstruction_session_model,
+)
 from app.reconstruction_persistence_controller import (
     ReconstructionPersistenceController,
     ReconstructionResumePreparation,
@@ -198,6 +202,7 @@ class ReconstructionController(QObject):
     checkpoint_changed = pyqtSignal(object, str)
     resume_compatibility_changed = pyqtSignal(object)
     source_selection_changed = pyqtSignal(object)  # ReconstructionSourceSelection
+    session_model_changed = pyqtSignal(object)  # ReconstructionSessionModel
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -224,6 +229,12 @@ class ReconstructionController(QObject):
         self._live_slam_controller.state_changed.connect(self.live_state_changed.emit)
         self._live_slam_controller.observation_ready.connect(self.live_observation_ready.emit)
         self._live_slam_controller.error_occurred.connect(self.error_occurred.emit)
+        # G1 keeps the last controller-level live state separately from the runtime
+        # object. Older UI/backward tests intentionally use compact runtime doubles
+        # that expose telemetry but no ``state`` attribute; session composition must
+        # remain driven by the public live-state signal rather than require additional
+        # private runtime structure.
+        self._session_live_state = self._live_slam_controller.state
         application_controller.source_type_changed.connect(self._on_application_source_changed)
         application_controller.source_status_changed.connect(self._on_application_source_changed)
 
@@ -250,6 +261,18 @@ class ReconstructionController(QObject):
         self._offline_controller.result_ready.connect(self._on_offline_result_ready)
         self._offline_controller.run_finished.connect(self.offline_run_finished.emit)
         self._offline_controller.error_occurred.connect(self.error_occurred.emit)
+
+        # G1 exposes one computed, application-level session model without taking
+        # ownership from the existing live/offline/session/persistence contracts.
+        for signal in (
+            self.live_state_changed,
+            self.offline_state_changed,
+            self.source_selection_changed,
+            self.scene_availability_changed,
+            self.persistent_scene_changed,
+            self.checkpoint_changed,
+        ):
+            signal.connect(self._emit_session_model_changed)
 
     @property
     def live_slam_controller(self) -> LiveSlamCaptureController:
@@ -319,6 +342,23 @@ class ReconstructionController(QObject):
     @property
     def resume_compatibility(self) -> ReconstructionResumeCompatibilityResult | None:
         return self._persistence_controller.resume_compatibility
+
+    @property
+    def session_model(self) -> ReconstructionSessionModel:
+        """Return the current G1 composition without creating new persistence state."""
+
+        return build_reconstruction_session_model(
+            source_selection=self._source_selection,
+            live_session_id=self._live_session_id,
+            offline_session_id=self._offline_controller.session_id,
+            live_state=self._session_live_state,
+            offline_state=self._offline_controller.state,
+            scene_availability=self._persistence_controller.scene_availability,
+            scene=self._persistence_controller.scene,
+            scene_manifest=self._persistence_controller.scene_manifest,
+            checkpoint=self._persistence_controller.checkpoint,
+            checkpoint_manifest=self._persistence_controller.checkpoint_manifest,
+        )
 
     @property
     def is_active(self) -> bool:
@@ -695,6 +735,7 @@ class ReconstructionController(QObject):
                 camera_intrinsics_policy=camera_intrinsics_policy,
             )
         self._live_session_id = sid
+        self._emit_session_model_changed()
         return sid
 
     def pause_live(self) -> bool:
@@ -730,7 +771,9 @@ class ReconstructionController(QObject):
                 "Live reconstruction is active; stop it before starting offline reconstruction."
             )
         self._run_start_guard(self._offline_start_guard, operation="offline reconstruction")
-        return self._offline_controller.start(configuration, session_id=session_id)
+        sid = self._offline_controller.start(configuration, session_id=session_id)
+        self._emit_session_model_changed()
+        return sid
 
     def cancel_offline(self) -> bool:
         if self._shutdown_started:
@@ -824,6 +867,14 @@ class ReconstructionController(QObject):
     def clear_engine_checkpoint(self) -> None:
         self._require_idle_for_persistence("clear the reconstruction checkpoint")
         self._persistence_controller.clear_checkpoint()
+
+    def _emit_session_model_changed(self, *_args: object) -> None:
+        # Cache the public state carried by ``live_state_changed`` before composing
+        # the G1 model. This preserves backward compatibility with compact runtime
+        # doubles that do not implement the full LiveCaptureSlamRuntime surface.
+        if _args and isinstance(_args[0], LiveCaptureRuntimeState):
+            self._session_live_state = _args[0]
+        self.session_model_changed.emit(self.session_model)
 
     def _run_start_guard(
         self,
