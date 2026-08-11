@@ -1,10 +1,10 @@
-"""Reconstruction workspace through Phase 8.8E1.
+"""Reconstruction workspace through Phase 8.8E2.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
-the active reconstruction scene plus the existing D5 object selection into one
-generic downstream inspection target without evaluating measurement, QC, or
-reference comparison.
+the active scene/object inspection target. E2 presents already-computed
+measurement evidence for that target without recomputing measurements or
+exposing E3 validity/confidence, E4 QC, or E5 reference comparison.
 """
 
 from __future__ import annotations
@@ -61,6 +61,11 @@ from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
 )
+from app.reconstruction_measurement_presentation import (
+    ReconstructionMeasurementPresentation,
+    build_reconstruction_measurement_presentation,
+    empty_reconstruction_measurement_text,
+)
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
@@ -97,6 +102,7 @@ class ReconstructionPage(QWidget):
     """Professional Reconstruction workspace shell with passive state binding."""
 
     inspection_target_changed = pyqtSignal(object)
+    reconstruction_measurement_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -120,6 +126,10 @@ class ReconstructionPage(QWidget):
         self._scene_availability = ReconstructionSceneAvailability.NONE
         self._persistent_scene = None
         self._inspection_selection = build_reconstruction_inspection_selection()
+        self._reconstruction_measurement_presentations: dict[
+            tuple[str, str], ReconstructionMeasurementPresentation
+        ] = {}
+        self._reconstruction_measurement_presentation: ReconstructionMeasurementPresentation | None = None
         self._viewport_shutdown = False
         self._pending_visual_pose: np.ndarray | None = None
         self._pending_sparse_landmarks: tuple[np.ndarray, int, int] | None = None
@@ -943,8 +953,72 @@ class ReconstructionPage(QWidget):
             self._inspection_state_value.setText(selection.state_text)
             self._inspection_authority_value.setText(selection.authority_text)
 
+        self._refresh_reconstruction_measurement_presentation()
         if changed:
             self.inspection_target_changed.emit(selection)
+
+    @property
+    def reconstruction_measurement_presentation(self) -> ReconstructionMeasurementPresentation | None:
+        return self._reconstruction_measurement_presentation
+
+    def set_reconstruction_measurement_evidence(
+        self,
+        measurement_object: object,
+        *,
+        source: str = "phase7_5_measurement",
+    ) -> None:
+        """Attach already-computed measurement evidence to the active E1 object.
+
+        The caller owns correspondence between the selected persistent semantic
+        object and the Phase 7.5 measurement observation. E2 never guesses that
+        association from class names, roles, or geometry.
+        """
+
+        presentation = build_reconstruction_measurement_presentation(
+            self._inspection_selection,
+            measurement_object,
+            source=source,
+        )
+        key = (presentation.session_id, presentation.target_object_id)
+        self._reconstruction_measurement_presentations[key] = presentation
+        self._refresh_reconstruction_measurement_presentation()
+
+    def clear_reconstruction_measurement_evidence(self) -> None:
+        self._reconstruction_measurement_presentations.clear()
+        self._refresh_reconstruction_measurement_presentation()
+
+    def _refresh_reconstruction_measurement_presentation(self) -> None:
+        selection = self._inspection_selection
+        session_key = selection.session_id or selection.scene_id
+        key = (session_key, selection.object_id) if selection.has_object else None
+        presentation = (
+            self._reconstruction_measurement_presentations.get(key)
+            if key is not None
+            else None
+        )
+        changed = presentation != self._reconstruction_measurement_presentation
+        self._reconstruction_measurement_presentation = presentation
+
+        if not hasattr(self, "_measurement_target_value"):
+            return
+        if presentation is None:
+            target, source, values, state, authority = empty_reconstruction_measurement_text(selection)
+            self._measurement_target_value.setText(target)
+            self._measurement_source_value.setText(source)
+            self._measurement_source_value.setToolTip("")
+            self._measurement_values_value.setText(values)
+            self._measurement_state_value.setText(state)
+            self._measurement_authority_value.setText(authority)
+        else:
+            self._measurement_target_value.setText(presentation.target_label)
+            self._measurement_source_value.setText(presentation.source)
+            self._measurement_source_value.setToolTip(presentation.provenance_tooltip)
+            self._measurement_values_value.setText(presentation.values_text)
+            self._measurement_state_value.setText(presentation.state_text)
+            self._measurement_authority_value.setText(presentation.authority_text)
+
+        if changed:
+            self.reconstruction_measurement_changed.emit(presentation)
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -1202,6 +1276,28 @@ class ReconstructionPage(QWidget):
             "E1 establishes target selection only. Measurement, confidence, inspection/QC, and reference comparison remain E2-E5 responsibilities."
         )
         layout.addWidget(self._inspection_target_group)
+
+        # E2 is deliberately presentation-only. Existing Phase 7.5 measurement
+        # evidence can be attached to the active E1 object target; no depth,
+        # fitting, measurement, uncertainty, QC, or reference algorithm runs here.
+        self._reconstruction_measurement_group = self._settings_group("RECONSTRUCTION MEASUREMENTS")
+        measurement_layout = self._reconstruction_measurement_group.layout()
+        self._measurement_target_value = self._settings_value("No target")
+        self._measurement_source_value = self._settings_value("No measurement evidence")
+        self._measurement_values_value = self._settings_value("—")
+        self._measurement_state_value = self._settings_value("Waiting for reconstruction target")
+        self._measurement_authority_value = self._settings_value(
+            "Existing measurements only • E2 does not compute measurements"
+        )
+        self._add_status_row(measurement_layout, "Target", self._measurement_target_value)
+        self._add_status_row(measurement_layout, "Source", self._measurement_source_value)
+        self._add_status_row(measurement_layout, "Values", self._measurement_values_value)
+        self._add_status_row(measurement_layout, "State", self._measurement_state_value)
+        self._add_status_row(measurement_layout, "Authority", self._measurement_authority_value)
+        self._measurement_authority_value.setToolTip(
+            "E2 presents existing source-authored values only. Uncertainty, reliability, calibration/scale validity, rejection reasons, and confidence are Phase 8.8E3."
+        )
+        layout.addWidget(self._reconstruction_measurement_group)
 
         authority = self._settings_group("AUTHORITY & SAFETY")
         authority_layout = authority.layout()
@@ -1696,6 +1792,7 @@ class ReconstructionPage(QWidget):
         self._runtime_elapsed_frozen = 0.0
         self._active_runtime_kind = None
         self._last_runtime_error = ""
+        self.clear_reconstruction_measurement_evidence()
         self._reset_semantic_presentation()
         if workflow is ReconstructionWorkflow.LIVE_SOURCE:
             self._live_pose_count = 0
@@ -2240,6 +2337,7 @@ class ReconstructionPage(QWidget):
         self._persistent_scene = scene
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
+            self.clear_reconstruction_measurement_evidence()
             self._reset_semantic_presentation()
             self._refresh_inspection_selection()
             return
