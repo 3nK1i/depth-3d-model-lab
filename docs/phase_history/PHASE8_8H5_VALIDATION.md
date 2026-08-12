@@ -1,0 +1,13 @@
+# Phase 8.8H5 — Real Reconstruction UI Acceptance
+
+H5 is the final real-application acceptance gate before Phase 8.8 closure. It adds no Reconstruction feature, controller/backend behavior, persistence format, authority rule, model path, device threshold, or release tag.
+
+The authoritative H5 real acceptance runs the actual PyQt6 application at 1366×768, selects a real image sequence or recorded video through the existing Reconstruction controller, launches the already-qualified isolated PyCOLMAP workflow, waits for a terminal result, and validates the real sparse reconstruction presentation in the existing VisPy viewport. It verifies source/readiness presentation, runtime progress, registered-camera and sparse-landmark display, camera inspection/focus, session identity, UI resource release after completion, and the responsive settings sidebar with no horizontal scrolling.
+
+H5 does not fabricate a full persistent scene from a sparse-only PyCOLMAP result. Save/reload/checkpoint/resume and preserved-evidence recovery remain covered by the integrated H1/H3 workflow gates and the complete H4 regression. H5 records those as supporting acceptance rather than silently promoting sparse output to a persistent/canonical scene. Gaussian/NeRF switching is required only when qualified appearance artifacts are actually present; absence of such artifacts must leave the canonical/sparse presentation available without false authority claims.
+
+The real acceptance must preserve these boundaries: PyCOLMAP executes only in the isolated external interpreter; production `depth` must not import PyCOLMAP; sparse arbitrary-scale geometry is not certified metrology; canonical geometry authority is not invented; Gaussian/NeRF remain appearance-only; hardware profiling, endurance qualification, release-grade exports/reports, and real-scene production qualification remain Phase 8.9.
+
+Acceptance requires a known-good overlapping image sequence where possible. The COLMAP South Building sample is recommended because it contains 128 images and is an official SfM sample. An arbitrary user video may be used as an additional compatibility check, but a reconstruction failure caused by unsuitable content must not be misclassified as an application defect without inspecting the worker evidence.
+
+Before H5 is committed: H5 quick tests must pass, the real UI acceptance `summary.json` must report `pass=true`, the generated screenshots must be visually inspected, the actual application must close normally, `git diff --check` must be silent, and the H5 Git scope must contain validation artifacts only unless a real H5 defect is separately demonstrated and corrected.
