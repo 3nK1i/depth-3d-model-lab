@@ -113,6 +113,21 @@ from core.reconstruction.inspection_qc import (
     write_reference_assembly_json,
 )
 
+from core.reconstruction.export import (
+    RECONSTRUCTION_EXPORT_CHECKSUM,
+    RECONSTRUCTION_EXPORT_MANIFEST,
+    RECONSTRUCTION_EXPORT_SCHEMA,
+    CanonicalSurfaceMeshExportSource,
+    InspectionReportExportSource,
+    OfflineSparseExportSource,
+    ReconstructionExportFile,
+    ReconstructionExportRequest,
+    ReconstructionExportResult,
+    ReconstructionExportSource,
+    export_reconstruction_bundle,
+    verify_reconstruction_export_bundle,
+)
+
 
 from core.reconstruction.neural_scene import (
     NEURAL_SCENE_DATASET_SCHEMA_VERSION,
@@ -1340,4 +1355,16 @@ __all__ = [
     "ReconstructionEnduranceCycleEvidence",
     "ReconstructionEnduranceCampaignReport",
     "build_reconstruction_endurance_campaign",
+    "RECONSTRUCTION_EXPORT_CHECKSUM",
+    "RECONSTRUCTION_EXPORT_MANIFEST",
+    "RECONSTRUCTION_EXPORT_SCHEMA",
+    "CanonicalSurfaceMeshExportSource",
+    "InspectionReportExportSource",
+    "OfflineSparseExportSource",
+    "ReconstructionExportFile",
+    "ReconstructionExportRequest",
+    "ReconstructionExportResult",
+    "ReconstructionExportSource",
+    "export_reconstruction_bundle",
+    "verify_reconstruction_export_bundle",
 ]
