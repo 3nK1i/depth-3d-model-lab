@@ -1,4 +1,4 @@
-"""Reconstruction workspace through Phase 8.8G5.
+"""Reconstruction workspace through Phase 8.9A2.
 
 C1-C5 established the live viewer. D1-D5 added bounded offline sparse-SfM,
 camera/health/coverage inspection, and semantic-object presentation. E1 binds
@@ -21,6 +21,9 @@ and exact-context resume preparation without automatically launching resumed exe
 explicit failure/recovery guidance, observes bounded live auto-recovery, and offers only a guarded
 fresh retry from the current source; checkpoint execution remains outside G4. G5 adds compact
 progressive disclosure to the settings sidebar without changing any reconstruction behavior.
+Phase 8.9A2 adds a bounded product-export interaction over the already-qualified A1 export
+contract. It exports only materialized, session-matched reconstruction evidence and remains
+distinct from persistent-scene save/reload. QC report productization remains Phase 8.9B.
 """
 
 from __future__ import annotations
@@ -30,7 +33,8 @@ from time import monotonic
 
 import numpy as np
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -170,12 +174,18 @@ from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientati
 from app.widgets.reconstruction_appearance_preview import ReconstructionAppearancePreview
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
+    CanonicalSurfaceMeshExportSource,
     CameraIntrinsicsPolicy,
     ENGINE_CHECKPOINT_MANIFEST,
     LiveCaptureRuntimeState,
+    OfflineSparseExportSource,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
+    ReconstructionExportRequest,
+    ReconstructionExportSource,
     ReconstructionCamera,
+    export_reconstruction_bundle,
     load_live_camera_calibration,
+    verify_reconstruction_export_bundle,
 )
 
 
@@ -216,6 +226,10 @@ class ReconstructionPage(QWidget):
         self._last_runtime_error = ""
         self._scene_availability = ReconstructionSceneAvailability.NONE
         self._persistent_scene = None
+        self._offline_sparse_export_source: OfflineSparseExportSource | None = None
+        self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
+        self._reconstruction_export_source_error = ""
+        self._last_reconstruction_export_dir: Path | None = None
         self._inspection_selection = build_reconstruction_inspection_selection()
         self._reconstruction_measurement_presentations: dict[
             tuple[str, str], ReconstructionMeasurementPresentation
@@ -2093,6 +2107,51 @@ class ReconstructionPage(QWidget):
         session_actions.addWidget(self._session_reload_button)
         session_layout.addLayout(session_actions)
 
+        # Phase 8.9A2 keeps product export visibly separate from persistent-scene
+        # save/reload while preserving the locked Phase 8.8 sidebar information
+        # architecture. Export only packages already-materialized A1-qualified
+        # reconstruction evidence; it never reconstructs, persists, or promotes it.
+        self._reconstruction_export_state_value = self._settings_value(
+            "No materialized export evidence"
+        )
+        self._add_status_row(
+            session_layout, "Product export", self._reconstruction_export_state_value
+        )
+        export_actions = QHBoxLayout()
+        export_actions.setSpacing(6)
+        self._reconstruction_export_button = QPushButton("Export Bundle")
+        self._reconstruction_export_button.setObjectName("reconstructionRuntimeAction")
+        self._reconstruction_export_button.setToolTip(
+            "Export the currently materialized, session-matched reconstruction evidence through "
+            "the authority-aware Phase 8.9 contract. This is separate from Save Scene and does "
+            "not rerun reconstruction, copy a persistent-scene manifest, or promote appearance assets."
+        )
+        self._reconstruction_export_button.clicked.connect(
+            self._export_reconstruction_bundle_interaction
+        )
+        self._reconstruction_export_button.setEnabled(False)
+        export_actions.addWidget(self._reconstruction_export_button)
+        self._reconstruction_export_open_button = QPushButton("Open Export")
+        self._reconstruction_export_open_button.setObjectName("reconstructionRuntimeAction")
+        self._reconstruction_export_open_button.setToolTip(
+            "Open the most recent reconstruction product-export folder created in this application session."
+        )
+        self._reconstruction_export_open_button.clicked.connect(
+            self._open_reconstruction_export_interaction
+        )
+        self._reconstruction_export_open_button.setEnabled(False)
+        export_actions.addWidget(self._reconstruction_export_open_button)
+        for button in (
+            self._reconstruction_export_button,
+            self._reconstruction_export_open_button,
+        ):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
+        session_layout.addLayout(export_actions)
+
         self._session_resume_state_value = self._settings_value("Load reconstruction checkpoint")
         self._add_status_row(session_layout, "Resume", self._session_resume_state_value)
         resume_actions = QHBoxLayout()
@@ -2754,6 +2813,7 @@ class ReconstructionPage(QWidget):
         scene = controller.persistent_scene
         self.set_persistent_scene(scene, str(controller.persistent_scene_manifest or ""))
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
+        self._refresh_reconstruction_export_controls()
         self._telemetry_timer.start()
         self._refresh_runtime_telemetry()
 
@@ -2812,6 +2872,7 @@ class ReconstructionPage(QWidget):
         self._refresh_scene_interaction_controls()
         self._refresh_checkpoint_resume_controls()
         self._refresh_failure_recovery_controls()
+        self._refresh_reconstruction_export_controls()
         if model != previous:
             self.reconstruction_session_model_changed.emit(model)
 
@@ -2836,6 +2897,202 @@ class ReconstructionPage(QWidget):
         self._session_load_button.setEnabled(presentation.can_load)
         self._session_save_button.setEnabled(presentation.can_save)
         self._session_reload_button.setEnabled(presentation.can_reload)
+        self._refresh_reconstruction_export_controls()
+
+    @property
+    def last_reconstruction_export_dir(self) -> Path | None:
+        return self._last_reconstruction_export_dir
+
+    def set_reconstruction_canonical_surface_export_source(
+        self,
+        source: CanonicalSurfaceMeshExportSource | None,
+    ) -> None:
+        """Bind an already-qualified, materialized canonical surface for product export.
+
+        A2 intentionally accepts the A1 source contract rather than reconstructing a
+        ``SurfaceMeshResult`` from persistent-scene metadata. Persistent manifests do
+        not contain full mesh arrays, so a loaded scene must never manufacture a mesh
+        export that is not actually materialized in the current application session.
+        """
+
+        if source is not None and not isinstance(source, CanonicalSurfaceMeshExportSource):
+            raise TypeError("source must be CanonicalSurfaceMeshExportSource or None.")
+        self._canonical_surface_export_source = source
+        self._refresh_reconstruction_export_controls()
+
+    def _qualified_reconstruction_export_sources(
+        self,
+    ) -> tuple[ReconstructionExportSource, ...]:
+        sources = tuple(
+            source
+            for source in (
+                self._offline_sparse_export_source,
+                self._canonical_surface_export_source,
+            )
+            if source is not None
+        )
+        if not sources:
+            return ()
+        session_ids = {str(getattr(source, "session_id", "")).strip() for source in sources}
+        if "" in session_ids or len(session_ids) != 1:
+            return ()
+        model = self._reconstruction_session_model
+        if model is not None:
+            if model.identity_status is ReconstructionSessionIdentityStatus.CONFLICT:
+                return ()
+            if model.session_id and model.session_id not in session_ids:
+                return ()
+        return sources
+
+    def _refresh_reconstruction_export_controls(self) -> None:
+        if not hasattr(self, "_reconstruction_export_button"):
+            return
+        controller = self._controller
+        active = bool(controller and controller.is_active) or self._live_state in {
+            LiveCaptureRuntimeState.STARTING,
+            LiveCaptureRuntimeState.RUNNING,
+            LiveCaptureRuntimeState.PAUSED,
+            LiveCaptureRuntimeState.RECOVERING,
+            LiveCaptureRuntimeState.STOPPING,
+        } or self._offline_state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        }
+        shutdown = bool(controller is None or controller.is_shutdown)
+        raw_sources = tuple(
+            source
+            for source in (
+                self._offline_sparse_export_source,
+                self._canonical_surface_export_source,
+            )
+            if source is not None
+        )
+        sources = self._qualified_reconstruction_export_sources()
+        status_kind = "neutral"
+        details = (
+            "Product export is separate from persistent-scene Save/Reload and never changes "
+            "reconstruction authority."
+        )
+        if shutdown:
+            text = "Export unavailable"
+        elif active:
+            text = "Stop reconstruction before exporting"
+            status_kind = "running"
+        elif raw_sources and not sources:
+            text = "Export evidence session mismatch"
+            status_kind = "warning"
+            details = (
+                "Materialized export evidence does not resolve to one non-conflicting current "
+                "session, so export is blocked fail-closed."
+            )
+        elif sources:
+            has_sparse = any(isinstance(source, OfflineSparseExportSource) for source in sources)
+            has_canonical = any(
+                isinstance(source, CanonicalSurfaceMeshExportSource) for source in sources
+            )
+            if has_sparse and has_canonical:
+                text = "Canonical mesh + sparse SfM ready"
+                details = (
+                    "Canonical mesh exports with canonical-geometry authority; sparse SfM remains "
+                    "supporting geometry with arbitrary scale. Certified metrology remains false."
+                )
+            elif has_canonical:
+                text = "Canonical mesh ready"
+                details = (
+                    "Materialized canonical surface is available for authoritative geometry export. "
+                    "Certified metrology remains false."
+                )
+            else:
+                text = "Sparse SfM ready • arbitrary scale"
+                details = (
+                    "Completed sparse SfM can be exported as supporting geometry only. It is "
+                    "arbitrary-scale and is not canonical geometry or certified metrology."
+                )
+            status_kind = "ready"
+        elif self._reconstruction_export_source_error:
+            text = "Result is not export-qualified"
+            status_kind = "warning"
+            details = self._reconstruction_export_source_error
+        else:
+            text = "No materialized export evidence"
+        self._reconstruction_export_state_value.setText(text)
+        self._reconstruction_export_state_value.setToolTip(details)
+        self._reconstruction_export_state_value.setProperty("statusKind", status_kind)
+        self._refresh_style(self._reconstruction_export_state_value)
+        self._reconstruction_export_button.setEnabled(bool(sources) and not active and not shutdown)
+        self._reconstruction_export_open_button.setEnabled(
+            bool(self._last_reconstruction_export_dir and self._last_reconstruction_export_dir.is_dir())
+        )
+
+    def _export_reconstruction_bundle_interaction(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown or controller.is_active:
+            self._refresh_reconstruction_export_controls()
+            return
+        sources = self._qualified_reconstruction_export_sources()
+        if not sources:
+            self._refresh_reconstruction_export_controls()
+            return
+        start_dir = (
+            self._last_reconstruction_export_dir.parent
+            if self._last_reconstruction_export_dir is not None
+            else Path.home()
+        )
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select Reconstruction Export Parent Folder",
+            str(start_dir),
+        )
+        if not selected:
+            return
+        parent = Path(selected).expanduser().resolve()
+        session_id = str(getattr(sources[0], "session_id", "")).strip()
+        target = self._next_reconstruction_export_dir(parent, session_id)
+        try:
+            result = export_reconstruction_bundle(
+                ReconstructionExportRequest(output_dir=target, sources=sources)
+            )
+            verified = verify_reconstruction_export_bundle(result.export_dir)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._reconstruction_export_state_value.setText("Export failed")
+            self._reconstruction_export_state_value.setToolTip(str(exc))
+            self._reconstruction_export_state_value.setProperty("statusKind", "warning")
+            self._refresh_style(self._reconstruction_export_state_value)
+            self._reconstruction_export_button.setEnabled(True)
+            return
+        self._last_reconstruction_export_dir = result.export_dir
+        canonical = any(item.canonical_geometry_authoritative for item in verified)
+        authority = "canonical geometry included" if canonical else "supporting geometry only"
+        self._reconstruction_export_state_value.setText(
+            f"Export complete • {len(verified)} files"
+        )
+        self._reconstruction_export_state_value.setToolTip(
+            f"{result.export_dir}\n{authority} • certified metrology: false"
+        )
+        self._reconstruction_export_state_value.setProperty("statusKind", "ready")
+        self._refresh_style(self._reconstruction_export_state_value)
+        self._reconstruction_export_open_button.setEnabled(True)
+
+    def _open_reconstruction_export_interaction(self) -> None:
+        path = self._last_reconstruction_export_dir
+        if path is None or not path.is_dir():
+            self._reconstruction_export_open_button.setEnabled(False)
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    @staticmethod
+    def _next_reconstruction_export_dir(parent: Path, session_id: str) -> Path:
+        root = Path(parent).expanduser().resolve()
+        short_session = str(session_id).strip().replace("-", "")[:8] or "session"
+        base = root / f"reconstruction_export_{short_session}"
+        if not base.exists():
+            return base
+        for index in range(2, 1000):
+            candidate = root / f"reconstruction_export_{short_session}_{index:02d}"
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError("Could not allocate a unique reconstruction export folder.")
 
     def _load_persistent_scene_interaction(self) -> None:
         controller = self._controller
@@ -3405,6 +3662,10 @@ class ReconstructionPage(QWidget):
         self._runtime_elapsed_frozen = 0.0
         self._active_runtime_kind = None
         self._last_runtime_error = ""
+        self._offline_sparse_export_source = None
+        self._canonical_surface_export_source = None
+        self._reconstruction_export_source_error = ""
+        self._refresh_reconstruction_export_controls()
         self.clear_reconstruction_measurement_evidence()
         self.clear_reconstruction_inspection_qc_evidence()
         self.clear_reconstruction_reference_comparison()
@@ -3507,6 +3768,20 @@ class ReconstructionPage(QWidget):
     def _on_offline_result_ready(self, payload: object, _output_dir: str) -> None:
         if not isinstance(payload, dict):
             return
+        self._offline_sparse_export_source = None
+        self._reconstruction_export_source_error = ""
+        if (
+            str(payload.get("status", "")).strip().lower() == "completed"
+            and bool(payload.get("pass", False))
+        ):
+            try:
+                self._offline_sparse_export_source = OfflineSparseExportSource(payload)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                # Export qualification is ancillary to the completed reconstruction result.
+                # Do not downgrade the reconstruction lifecycle if its optional product-export
+                # evidence is missing or invalid; simply keep export disabled and explain why.
+                self._reconstruction_export_source_error = str(exc)
+        self._refresh_reconstruction_export_controls()
         sfm = payload.get("sfm_summary", {})
         if isinstance(sfm, dict):
             registered = sfm.get("registered_keyframes")
@@ -3956,6 +4231,7 @@ class ReconstructionPage(QWidget):
         self._refresh_session_label()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
+        self._refresh_reconstruction_export_controls()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
         self._scene_availability = availability
@@ -3976,6 +4252,7 @@ class ReconstructionPage(QWidget):
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""
         self._persistent_scene = scene
+        self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
