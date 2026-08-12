@@ -333,6 +333,7 @@ class LiveCaptureSlamRuntime:
     def _run(self) -> None:
         backend: LiveSlamBackend | None = None
         ring: LiveSharedMemoryFrameRing | None = None
+        terminal_failure = False
         context = BackendOperationContext(
             session_id=self._request.session_id,
             stage=ReconstructionStage.LIVE_TRACKING,
@@ -404,7 +405,13 @@ class LiveCaptureSlamRuntime:
             message = f"{type(exc).__name__}: {exc}"
             with self._stats_lock:
                 self._last_error = message
-            self._set_state(LiveCaptureRuntimeState.FAILED)
+            # H3 keeps the live runtime resource-owning until backend/shared-memory
+            # cleanup is complete.  Publishing FAILED here would make application
+            # resource guards see the runtime as idle while teardown was still
+            # releasing native/process resources.  STOPPING remains active; FAILED
+            # is emitted only after the finally block has completed cleanup.
+            terminal_failure = True
+            self._set_state(LiveCaptureRuntimeState.STOPPING)
             if self._error_callback is not None:
                 self._error_callback(message)
         finally:
@@ -426,8 +433,11 @@ class LiveCaptureSlamRuntime:
             with self._condition:
                 self._pending = None
                 self._thread = None
-                if self._state is not LiveCaptureRuntimeState.FAILED:
-                    self._set_state_locked(LiveCaptureRuntimeState.STOPPED)
+                self._set_state_locked(
+                    LiveCaptureRuntimeState.FAILED
+                    if terminal_failure
+                    else LiveCaptureRuntimeState.STOPPED
+                )
                 self._condition.notify_all()
 
     def _create_started_backend(
