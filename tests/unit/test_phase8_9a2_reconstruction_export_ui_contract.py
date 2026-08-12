@@ -23,13 +23,13 @@ def test_a2_wires_only_the_existing_a1_reconstruction_export_contract() -> None:
     for symbol in (
         "OfflineSparseExportSource",
         "CanonicalSurfaceMeshExportSource",
+        "InspectionReportExportSource",  # Added by the Phase 8.9B extension.
         "ReconstructionExportRequest",
         "ReconstructionExportSource",
         "export_reconstruction_bundle",
         "verify_reconstruction_export_bundle",
     ):
         assert symbol in page
-    assert "InspectionReportExportSource" not in page  # Productized QC export remains 8.9B.
     imports = _imports(PAGE)
     for heavy in ("pycolmap", "nerfstudio", "gsplat"):
         assert not any(value.startswith(heavy) for value in imports)

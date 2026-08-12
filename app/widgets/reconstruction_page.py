@@ -175,6 +175,7 @@ from app.widgets.reconstruction_appearance_preview import ReconstructionAppearan
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CanonicalSurfaceMeshExportSource,
+    InspectionReportExportSource,
     CameraIntrinsicsPolicy,
     ENGINE_CHECKPOINT_MANIFEST,
     LiveCaptureRuntimeState,
@@ -228,6 +229,7 @@ class ReconstructionPage(QWidget):
         self._persistent_scene = None
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
+        self._inspection_qc_export_source: InspectionReportExportSource | None = None
         self._reconstruction_export_source_error = ""
         self._last_reconstruction_export_dir: Path | None = None
         self._inspection_selection = build_reconstruction_inspection_selection()
@@ -1267,14 +1269,53 @@ class ReconstructionPage(QWidget):
         presentation = build_reconstruction_inspection_qc_presentation(
             self._inspection_selection, inspection_report, source=source
         )
+        export_source = self._inspection_qc_export_source
+        if export_source is not None and export_source.report is not inspection_report:
+            # Display-only E4 evidence must never silently replace the exact report bound
+            # to inspection-decision export authority.  Drop export qualification and
+            # require the caller to bind a fresh A1 InspectionReportExportSource.
+            self._inspection_qc_export_source = None
         self._reconstruction_inspection_qc_reports[presentation.session_id] = (
             inspection_report, str(source).strip()
         )
         self._refresh_reconstruction_inspection_qc_presentation()
+        self._refresh_reconstruction_export_controls()
+
+    def set_reconstruction_inspection_qc_export_source(
+        self,
+        source: InspectionReportExportSource | None,
+        *,
+        presentation_source: str = "phase8_7c.inspection_report",
+    ) -> None:
+        """Bind exact inspection-decision evidence to the existing product export.
+
+        B reuses the A1 authority contract and the existing E4 presentation path.
+        A plain mapping/report may still be displayed by E4, but it is not product-export
+        authority.  Product QC export therefore requires the typed A1 source carrying the
+        exact INSPECTION_REPORT pipeline artifact and its immutable InspectionReport.
+        """
+
+        if source is None:
+            self._inspection_qc_export_source = None
+            self._refresh_reconstruction_export_controls()
+            return
+        if not isinstance(source, InspectionReportExportSource):
+            raise TypeError("source must be InspectionReportExportSource or None.")
+        # Validate/bind the same report through the established E4 presentation contract
+        # before exposing it to product export.  Session mismatch therefore fails before
+        # mutating the export source.
+        self.set_reconstruction_inspection_qc_evidence(
+            source.report,
+            source=presentation_source,
+        )
+        self._inspection_qc_export_source = source
+        self._refresh_reconstruction_export_controls()
 
     def clear_reconstruction_inspection_qc_evidence(self) -> None:
         self._reconstruction_inspection_qc_reports.clear()
+        self._inspection_qc_export_source = None
         self._refresh_reconstruction_inspection_qc_presentation()
+        self._refresh_reconstruction_export_controls()
 
     def _refresh_reconstruction_inspection_qc_presentation(self) -> None:
         selection = self._inspection_selection
@@ -2928,6 +2969,7 @@ class ReconstructionPage(QWidget):
             for source in (
                 self._offline_sparse_export_source,
                 self._canonical_surface_export_source,
+                self._inspection_qc_export_source,
             )
             if source is not None
         )
@@ -2936,6 +2978,15 @@ class ReconstructionPage(QWidget):
         session_ids = {str(getattr(source, "session_id", "")).strip() for source in sources}
         if "" in session_ids or len(session_ids) != 1:
             return ()
+        if self._inspection_qc_export_source is not None:
+            selection = self._inspection_selection
+            active_session = (
+                str(selection.session_id or selection.scene_id).strip()
+                if selection.has_scene
+                else ""
+            )
+            if not active_session or active_session != self._inspection_qc_export_source.session_id:
+                return ()
         model = self._reconstruction_session_model
         if model is not None:
             if model.identity_status is ReconstructionSessionIdentityStatus.CONFLICT:
@@ -2965,6 +3016,7 @@ class ReconstructionPage(QWidget):
             for source in (
                 self._offline_sparse_export_source,
                 self._canonical_surface_export_source,
+                self._inspection_qc_export_source,
             )
             if source is not None
         )
@@ -2991,7 +3043,27 @@ class ReconstructionPage(QWidget):
             has_canonical = any(
                 isinstance(source, CanonicalSurfaceMeshExportSource) for source in sources
             )
-            if has_sparse and has_canonical:
+            has_qc = any(isinstance(source, InspectionReportExportSource) for source in sources)
+            if has_sparse and has_canonical and has_qc:
+                text = "Canonical mesh + sparse SfM + QC ready"
+                details = (
+                    "Canonical mesh exports with canonical-geometry authority; sparse SfM remains "
+                    "supporting geometry with arbitrary scale; QC exports only the attached "
+                    "inspection-decision report. Certified metrology remains false."
+                )
+            elif has_canonical and has_qc:
+                text = "Canonical mesh + QC report ready"
+                details = (
+                    "Materialized canonical surface and the exact authoritative inspection/QC report "
+                    "are ready for one bundle. QC does not become geometry or metrology authority."
+                )
+            elif has_sparse and has_qc:
+                text = "Sparse SfM + QC report ready"
+                details = (
+                    "Sparse SfM remains supporting arbitrary-scale geometry; QC exports only the "
+                    "attached inspection-decision report. Certified metrology remains false."
+                )
+            elif has_sparse and has_canonical:
                 text = "Canonical mesh + sparse SfM ready"
                 details = (
                     "Canonical mesh exports with canonical-geometry authority; sparse SfM remains "
@@ -3002,6 +3074,13 @@ class ReconstructionPage(QWidget):
                 details = (
                     "Materialized canonical surface is available for authoritative geometry export. "
                     "Certified metrology remains false."
+                )
+            elif has_qc:
+                text = "QC report ready"
+                details = (
+                    "The exact attached Phase 8.7C inspection report is bound to inspection-decision "
+                    "authority and can be exported without rerunning QC. Certified metrology "
+                    "remains false."
                 )
             else:
                 text = "Sparse SfM ready • arbitrary scale"
@@ -3063,7 +3142,22 @@ class ReconstructionPage(QWidget):
             return
         self._last_reconstruction_export_dir = result.export_dir
         canonical = any(item.canonical_geometry_authoritative for item in verified)
-        authority = "canonical geometry included" if canonical else "supporting geometry only"
+        has_qc = any(
+            item.authority.value == "inspection_decision" for item in verified
+        )
+        has_supporting = any(
+            item.authority.value == "supporting_geometry" for item in verified
+        )
+        if canonical and has_qc:
+            authority = "canonical geometry + inspection/QC included"
+        elif canonical:
+            authority = "canonical geometry included"
+        elif has_supporting and has_qc:
+            authority = "supporting geometry + inspection/QC included"
+        elif has_qc:
+            authority = "inspection/QC evidence included"
+        else:
+            authority = "supporting geometry only"
         self._reconstruction_export_state_value.setText(
             f"Export complete • {len(verified)} files"
         )
@@ -3664,6 +3758,7 @@ class ReconstructionPage(QWidget):
         self._last_runtime_error = ""
         self._offline_sparse_export_source = None
         self._canonical_surface_export_source = None
+        self._inspection_qc_export_source = None
         self._reconstruction_export_source_error = ""
         self._refresh_reconstruction_export_controls()
         self.clear_reconstruction_measurement_evidence()
