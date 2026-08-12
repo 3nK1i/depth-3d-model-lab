@@ -45,8 +45,8 @@ _REQUIRED_PROJECT_FILES = (
     "scripts/run_phase7_release.sh",
     "scripts/run_phase7_step4_tests.sh",
     "scripts/run_phase5_tests.sh",
-    "PHASE7_STEP4_VALIDATION.md",
-    "TEST_STRATEGY_PHASE7_RELEASE.md",
+    "docs/phase_history/PHASE7_STEP4_VALIDATION.md",
+    "docs/test_strategy/TEST_STRATEGY_PHASE7_RELEASE.md",
 )
 
 _BASE_DEPENDENCIES = (

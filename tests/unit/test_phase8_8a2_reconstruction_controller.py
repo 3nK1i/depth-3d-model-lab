@@ -42,10 +42,12 @@ def test_start_live_delegates_to_existing_bridge_and_records_session(
     camera = make_calibrated_live_camera()
     settings = _settings(tmp_path)
     calls: list[dict[str, object]] = []
+    returned_session_id = "11111111-1111-4111-8111-111111111111"
+    requested_session_id = "22222222-2222-4222-8222-222222222222"
 
     def fake_start(**kwargs):
         calls.append(kwargs)
-        return "recon-a2-session"
+        return returned_session_id
 
     monkeypatch.setattr(
         controller.live_slam_controller,
@@ -57,17 +59,17 @@ def test_start_live_delegates_to_existing_bridge_and_records_session(
         camera=camera,
         settings=settings,
         profile=ReconstructionQualityProfile.EFFICIENT,
-        session_id="requested-session",
+        session_id=requested_session_id,
     )
 
-    assert session_id == "recon-a2-session"
-    assert controller.live_session_id == "recon-a2-session"
+    assert session_id == returned_session_id
+    assert controller.live_session_id == returned_session_id
     assert calls == [
         {
             "camera": camera,
             "settings": settings,
             "profile": ReconstructionQualityProfile.EFFICIENT,
-            "session_id": "requested-session",
+            "session_id": requested_session_id,
         }
     ]
 
