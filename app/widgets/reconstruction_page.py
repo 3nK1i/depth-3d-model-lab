@@ -3375,10 +3375,25 @@ class ReconstructionPage(QWidget):
             if response != QMessageBox.StandardButton.Yes:
                 return
         try:
-            controller.save_persistent_scene(
-                output_dir,
-                camera_calibration_profile=self._selected_calibration_profile,
+            persisted_calibration = (
+                None
+                if self._persistent_authority_snapshot is None
+                else self._persistent_authority_snapshot.camera_calibration_profile
             )
+            if self._selected_calibration_profile is None and persisted_calibration is None:
+                # Preserve the Phase 8 G2 one-argument save boundary when there is
+                # no calibration authority to add or remove. This keeps legacy
+                # callers/monkeypatches compatible while the controller continues
+                # to preserve any existing metric-only authority sidecar itself.
+                controller.save_persistent_scene(output_dir)
+            else:
+                # Passing None explicitly is intentional when a loaded scene had a
+                # persisted calibration that the user has since cleared: the new
+                # sidecar must remove that calibration instead of silently retaining it.
+                controller.save_persistent_scene(
+                    output_dir,
+                    camera_calibration_profile=self._selected_calibration_profile,
+                )
             self._clear_warning_if_possible()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self.set_error(f"Could not save persistent reconstruction scene: {exc}")

@@ -92,3 +92,79 @@ def test_1h_loading_legacy_scene_clears_unrelated_selected_profile(qtbot, monkey
     assert page.selected_camera_calibration_profile is None
     assert page._metrology_value.text() == "Not certified"
     window.close()
+
+
+def test_1h_save_without_calibration_preserves_phase8_single_argument_boundary(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("app.application_controller.CameraEnumerator.start", lambda self: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = window._reconstruction_controller
+    page = window._reconstruction_page
+
+    _fixture, _providers, result, snapshots = run_f5_fixture(tmp_path / "run")
+    controller.adopt_pipeline_result(
+        result,
+        (tmp_path / "scene").resolve(),
+        payload_snapshots_by_kind=snapshots,
+    )
+    output = (tmp_path / "saved").resolve()
+    output.mkdir()
+    calls: list[Path] = []
+    monkeypatch.setattr(
+        "app.widgets.reconstruction_page.QFileDialog.getExistingDirectory",
+        lambda *_args, **_kwargs: str(output),
+    )
+    monkeypatch.setattr(controller, "save_persistent_scene", lambda path: calls.append(Path(path)))
+
+    page._session_save_button.click()
+    qtbot.wait(10)
+    assert calls == [output]
+    window.close()
+
+
+def test_1h_save_after_clearing_persisted_calibration_passes_explicit_none(
+    qtbot, monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("app.application_controller.CameraEnumerator.start", lambda self: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = window._reconstruction_controller
+    page = window._reconstruction_page
+
+    _fixture, _providers, result, snapshots = run_f5_fixture(tmp_path / "run")
+    scene = controller.adopt_pipeline_result(
+        result,
+        (tmp_path / "source").resolve(),
+        payload_snapshots_by_kind=snapshots,
+    )
+    authority = build_persistent_scene_authority_snapshot(
+        scene,
+        camera_calibration_profile=_profile(),
+        metric_qualification_evidence=_evidence(),
+    )
+    controller.persistence_controller.save_scene_with_authority(
+        (tmp_path / "loaded").resolve(),
+        authority_snapshot=authority,
+    )
+    assert page.selected_camera_calibration_profile is not None
+    page.clear_camera_calibration_profile()
+    assert page.selected_camera_calibration_profile is None
+
+    output = (tmp_path / "saved").resolve()
+    output.mkdir()
+    calls: list[tuple[Path, object]] = []
+    monkeypatch.setattr(
+        "app.widgets.reconstruction_page.QFileDialog.getExistingDirectory",
+        lambda *_args, **_kwargs: str(output),
+    )
+
+    def fake_save(path, *, camera_calibration_profile):
+        calls.append((Path(path), camera_calibration_profile))
+
+    monkeypatch.setattr(controller, "save_persistent_scene", fake_save)
+    page._session_save_button.click()
+    qtbot.wait(10)
+    assert calls == [(output, None)]
+    window.close()

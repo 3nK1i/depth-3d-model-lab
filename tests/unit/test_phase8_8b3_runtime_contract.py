@@ -58,13 +58,27 @@ def test_b3_production_ui_and_controller_have_no_heavy_backend_imports() -> None
 
 
 def test_b3_live_start_offers_calibrated_or_explicit_non_metric_test_mode() -> None:
-    page = (ROOT / "app/widgets/reconstruction_page.py").read_text(encoding="utf-8")
+    page_path = ROOT / "app/widgets/reconstruction_page.py"
+    page = page_path.read_text(encoding="utf-8")
     controller = (ROOT / "app/reconstruction_controller.py").read_text(encoding="utf-8")
     live_bridge = (ROOT / "app/live_slam_controller.py").read_text(encoding="utf-8")
-    assert "Use calibration file" in page
-    assert "Run Test Mode" in page
+
+    # Phase 9.1F replaced the historical text-only chooser labels with the shared
+    # Camera Calibration workspace. Preserve the Phase 8 B3 *behavioral* contract
+    # instead of pinning obsolete UI copy: the chooser must still expose an
+    # explicit non-metric Test Mode, and the legacy JSON calibration loader must
+    # remain available when no Phase 9 profile is selected.
+    mode_source = _method_source(page_path, "ReconstructionPage", "_choose_live_camera_mode")
+    calibration_source = _method_source(
+        page_path, "ReconstructionPage", "_choose_live_camera_calibration"
+    )
+    assert "CameraCalibrationDialog" in mode_source
+    assert "allow_test_mode=True" in mode_source
+    assert 'return "estimated"' in mode_source
+    assert 'return "calibrated"' in mode_source
+    assert "load_live_camera_calibration" in calibration_source
+    assert "QFileDialog.getOpenFileName" in calibration_source
     assert "TEST MODE • NON-METRIC" in page
-    assert "load_live_camera_calibration" in page
     assert "build_estimated_live_camera" in page
     assert "estimate_camera_geometry_from_horizontal_fov" in controller
     assert "CameraIntrinsicsPolicy.ALLOW_ESTIMATED" in page
