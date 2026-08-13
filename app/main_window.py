@@ -95,6 +95,12 @@ class MainWindow(QMainWindow):
             lambda: self._toggle_panel_focus("depth")
         )
         self._viewport_panel.fullscreen_requested.connect(self._toggle_viewport_focus)
+        self._reconstruction_page.viewport_fullscreen_requested.connect(
+            self._toggle_reconstruction_focus
+        )
+        self._reconstruction_page.viewport_escape_requested.connect(
+            self._exit_focus_mode
+        )
         self._sync_header_hardware()
 
         self._controller = ApplicationController(
@@ -850,6 +856,9 @@ class MainWindow(QMainWindow):
     def _toggle_viewport_focus(self) -> None:
         self._toggle_panel_focus("viewport")
 
+    def _toggle_reconstruction_focus(self) -> None:
+        self._toggle_panel_focus("reconstruction")
+
     def _exit_viewport_focus(self) -> None:
         """Backward-compatible alias retained for existing integrations."""
         self._exit_focus_mode()
@@ -863,23 +872,28 @@ class MainWindow(QMainWindow):
         self._set_focus_target("viewport" if enabled else None)
 
     def _set_focus_target(self, target: str | None) -> None:
-        """Focus Source, Depth, or 3D without recreating any render surface."""
-        if target not in {None, "source", "depth", "viewport"}:
+        """Focus a visual surface without recreating any render surface."""
+        if target not in {None, "source", "depth", "viewport", "reconstruction"}:
             raise ValueError(f"Unknown focus target: {target!r}")
+        if target == "reconstruction" and self._mode_stack.currentWidget() is not self._reconstruction_page:
+            return
         if target == self._focus_target:
             self._sync_focus_buttons()
             return
 
-        if self._focus_target is None and target is not None:
+        live_target = target in {"source", "depth", "viewport"}
+        if self._focus_target is None and live_target:
             self._saved_main_splitter_sizes = self._main_splitter.sizes()
             self._saved_left_splitter_sizes = self._left_splitter.sizes()
             self._saved_top_splitter_sizes = self._top_splitter.sizes()
 
-        # Restore the complete page first, then hide only what the selected
-        # focus mode does not need. This also supports switching directly
-        # between Source, Depth, and 3D focus modes.
+        # Restore both focus-capable pages first. This supports a deterministic
+        # Escape/close path without recreating the Live-3D or Reconstruction GL
+        # surfaces, and keeps the existing Live-3D focus contract unchanged.
         self._header.show()
         self._mode_tabs.show()
+        self._reconstruction_page.set_viewport_focus_mode(False)
+
         self._control_row.show()
         self._top_splitter.show()
         self._original_view.show()
@@ -895,6 +909,10 @@ class MainWindow(QMainWindow):
                 self._left_splitter.setSizes(self._saved_left_splitter_sizes)
             if self._saved_top_splitter_sizes:
                 self._top_splitter.setSizes(self._saved_top_splitter_sizes)
+        elif target == "reconstruction":
+            self._header.hide()
+            self._mode_tabs.hide()
+            self._reconstruction_page.set_viewport_focus_mode(True)
         else:
             self._header.hide()
             self._mode_tabs.hide()
@@ -928,6 +946,9 @@ class MainWindow(QMainWindow):
         self._original_view.set_fullscreen_active(self._focus_target == "source")
         self._depth_view.set_fullscreen_active(self._focus_target == "depth")
         self._viewport_panel.set_fullscreen_active(self._focus_target == "viewport")
+        self._reconstruction_page.set_viewport_fullscreen_active(
+            self._focus_target == "reconstruction"
+        )
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self._focus_target is not None and event.key() == Qt.Key.Key_Escape:

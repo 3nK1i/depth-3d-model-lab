@@ -205,6 +205,8 @@ class ReconstructionPage(QWidget):
     appearance_resource_fallback_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
+    viewport_fullscreen_requested = pyqtSignal()
+    viewport_escape_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -273,6 +275,8 @@ class ReconstructionPage(QWidget):
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
+        self._viewport_focus_mode = False
+        self._saved_body_splitter_sizes: list[int] | None = None
         self._build_ui()
         self._visual_pose_timer = QTimer(self)
         self._visual_pose_timer.setSingleShot(True)
@@ -294,6 +298,7 @@ class ReconstructionPage(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        self._page_layout = outer
         outer.setContentsMargins(
             PAGE_MARGIN_H,
             PAGE_MARGIN_TOP,
@@ -302,27 +307,35 @@ class ReconstructionPage(QWidget):
         )
         outer.setSpacing(PAGE_SPACING)
 
-        outer.addWidget(self._build_header_card())
+        self._header_card = self._build_header_card()
+        outer.addWidget(self._header_card)
 
         body = QSplitter(Qt.Orientation.Horizontal)
+        self._body_splitter = body
         body.setObjectName("reconstructionBodySplitter")
         body.setHandleWidth(SPLITTER_HANDLE)
         body.setChildrenCollapsible(False)
 
         main = QWidget()
+        self._main_host = main
         main_layout = QVBoxLayout(main)
+        self._main_layout = main_layout
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(PAGE_SPACING)
 
         top = QHBoxLayout()
         top.setSpacing(PAGE_SPACING)
-        top.addWidget(self._build_source_card(), stretch=1)
-        top.addWidget(self._build_runtime_card(), stretch=1)
+        self._source_card = self._build_source_card()
+        self._runtime_card = self._build_runtime_card()
+        top.addWidget(self._source_card, stretch=1)
+        top.addWidget(self._runtime_card, stretch=1)
         main_layout.addLayout(top)
-        main_layout.addWidget(self._build_viewport_card(), stretch=1)
+        self._viewport_card = self._build_viewport_card()
+        main_layout.addWidget(self._viewport_card, stretch=1)
 
+        self._settings_panel = self._build_settings_panel()
         body.addWidget(main)
-        body.addWidget(self._build_settings_panel())
+        body.addWidget(self._settings_panel)
         body.setStretchFactor(0, 1)
         body.setStretchFactor(1, 0)
         body.setSizes([1010, 320])
@@ -469,6 +482,9 @@ class ReconstructionPage(QWidget):
         grid.setSpacing(0)
 
         self._reconstruction_canvas = ReconstructionCanvas(self)
+        self._reconstruction_canvas.escape_pressed.connect(
+            self.viewport_escape_requested.emit
+        )
         grid.addWidget(self._reconstruction_canvas.native, 0, 0)
 
         self._viewport_placeholder = QWidget()
@@ -479,7 +495,9 @@ class ReconstructionPage(QWidget):
         center = QVBoxLayout(self._viewport_placeholder)
         center.setContentsMargins(24, 24, 24, 24)
         center.setSpacing(6)
-        center.addStretch(1)
+        # Keep the idle copy just below the world-origin triad: low enough to
+        # avoid overlap, but not so low that it feels detached from the scene.
+        center.addStretch(4)
         headline = QLabel("Reconstruction viewport")
         headline.setObjectName("reconstructionViewportHeadline")
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -491,7 +509,7 @@ class ReconstructionPage(QWidget):
         detail.setWordWrap(True)
         detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(detail)
-        center.addStretch(1)
+        center.addStretch(3)
         grid.addWidget(self._viewport_placeholder, 0, 0)
 
         # F2 uses a reusable, backend-free image overlay for the already-produced
@@ -529,6 +547,18 @@ class ReconstructionPage(QWidget):
         reset_button = IconButton("reset", size=28, icon_size=15, tooltip="Reset reconstruction view")
         reset_button.clicked.connect(self._reconstruction_canvas.reset_view)
         tool_row.addWidget(reset_button)
+        fullscreen_button = IconButton(
+            "fullscreen",
+            size=28,
+            icon_size=15,
+            tooltip="Maximize reconstruction viewport",
+            checkable=True,
+        )
+        fullscreen_button.clicked.connect(
+            lambda _checked: self.viewport_fullscreen_requested.emit()
+        )
+        self._viewport_tool_buttons["fullscreen"] = fullscreen_button
+        tool_row.addWidget(fullscreen_button)
         grid_button = IconButton("grid", size=28, icon_size=15, tooltip="Show or hide world grid", checkable=True)
         grid_button.setChecked(True)
         grid_button.toggled.connect(self._reconstruction_canvas.set_grid_visible)
@@ -645,6 +675,59 @@ class ReconstructionPage(QWidget):
 
     def _set_viewport_tool(self, mode: str) -> None:
         self._reconstruction_canvas.set_interaction_mode(mode)
+
+    def set_viewport_focus_mode(self, enabled: bool) -> None:
+        """Expand only the Reconstruction viewport without recreating its GL surface."""
+
+        enabled = bool(enabled)
+        if enabled == self._viewport_focus_mode:
+            self.set_viewport_fullscreen_active(enabled)
+            return
+
+        if enabled:
+            self._saved_body_splitter_sizes = self._body_splitter.sizes()
+            self._header_card.hide()
+            self._source_card.hide()
+            self._runtime_card.hide()
+            self._settings_panel.hide()
+            self._body_splitter.setSizes([1, 0])
+            self._page_layout.setContentsMargins(0, 0, 0, 0)
+            self._page_layout.setSpacing(0)
+            self._main_layout.setSpacing(0)
+        else:
+            self._header_card.show()
+            self._source_card.show()
+            self._runtime_card.show()
+            self._settings_panel.show()
+            if self._saved_body_splitter_sizes:
+                self._body_splitter.setSizes(self._saved_body_splitter_sizes)
+            self._page_layout.setContentsMargins(
+                PAGE_MARGIN_H,
+                PAGE_MARGIN_TOP,
+                PAGE_MARGIN_H,
+                PAGE_MARGIN_BOTTOM,
+            )
+            self._page_layout.setSpacing(PAGE_SPACING)
+            self._main_layout.setSpacing(PAGE_SPACING)
+
+        self._viewport_focus_mode = enabled
+        self.set_viewport_fullscreen_active(enabled)
+
+    def set_viewport_fullscreen_active(self, active: bool) -> None:
+        button = self._viewport_tool_buttons.get("fullscreen")
+        if button is None:
+            return
+        active = bool(active)
+        button.setChecked(active)
+        button.setToolTip(
+            "Restore Reconstruction workspace"
+            if active
+            else "Maximize reconstruction viewport"
+        )
+
+    @property
+    def viewport_focus_mode(self) -> bool:
+        return self._viewport_focus_mode
 
     def _sync_diagnostics_visibility(self, _checked: bool | None = None) -> None:
         if not hasattr(self, "_diagnostics_hud"):
