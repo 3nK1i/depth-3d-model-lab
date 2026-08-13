@@ -1,35 +1,32 @@
 # EIA TECH - Depth & 3D Model Lab
 
-A PyQt6 desktop application for live monocular geometry estimation and interactive 3D point-cloud visualization on Ubuntu 24.04.
+A PyQt6 desktop application for live monocular depth estimation, measurement and inspection, and persistent 3D reconstruction on Ubuntu 24.04.
 
 ## Current status
 
-Version `0.7.5` is the stable Phase 7.5 measurement and inspection release:
+The `phase8-reconstruction` branch is in final release preparation for target `v0.8.0` (Phase 8 Reconstruction). Until the final 8.9I release gate, runtime/package metadata intentionally remains `0.7.5` / `Phase 7.5 Stable` and no `v0.8.0` tag is created.
+
+The release candidate includes:
 
 - Live 3D for Image, Video, USB camera and RTSP sources
-- Interactive Benchmark mode backed by isolated registry-driven model processes
-- Snapshot mode with frozen-frame inference, depth/point-cloud inspection and atomic export
-- Stable Video mode with native temporal-model state or generic smoothing, backpressure and synchronized RGB/depth export
-- Process-isolated, model-agnostic inference runtime with bounded crash, timeout and OOM recovery
-- Registry-driven adapters, capabilities, dependencies, checkpoints, licensing and GPU profiles
-- Automatic RTX 2060 Efficient and RTX 5090 Ultra selection without code changes
+- Interactive Benchmark, Snapshot and Stable Video operational modes
+- Process-isolated, model-agnostic inference with bounded crash, timeout and OOM recovery
+- Automatic capability-driven GPU profiles from RTX 2060-class hardware through the qualified high-end path
 - MoGe-2, Depth Pro, UniDepthV2, Metric3D v2, Depth Anything V2, Video Depth Anything and Marigold
-- YOLO instance segmentation and prompted SAM2 refinement adapters
-- Depth/perception alignment and object-specific 3D point extraction
-- Robust AABB, camera-aligned and oriented 3D boxes
-- Width, height, depth, distance, centre, orientation and bounding-box volume
-- Explicit estimated uncertainty, reliability and rejection reasons
-- Temporal tracking and measurement stabilization
-- Dedicated Measure & Inspect page with mask correction and result locking
-- Selected/all-object exports with HTML/PDF reports and SHA-256 manifests
-- Explicit notices that measurements are engineering estimates, not certified metrology
-- Unit, UI, integration, stress and release gates with machine-readable release reports
+- YOLO instance segmentation, prompted SAM2 refinement, depth/perception alignment and object-specific 3D extraction
+- Estimated 3D boxes, measurements, uncertainty, temporal stabilization and Measure & Inspect workflows
+- Dedicated Reconstruction workspace with live SLAM and offline SfM workflows
+- Canonical geometry, geometry quality/uncertainty, surface reconstruction, semantic context and inspection/QC
+- Gaussian splatting and NeRF/Nerfacto appearance representations behind isolated external backend boundaries
+- Reconstruction session persistence, checkpoint/resume, representation switching, recovery and authority-aware export
+- Reconstruction fullscreen/focus interaction and responsive UI behavior across the existing operational modes
+- Final current-tree, backward-compatibility, RTSP and combined-UI qualification gates
 
-The real calibrated known-size measurement campaign is intentionally deferred until after Phase 8. Existing measurements remain explicitly estimated and uncalibrated unless a valid calibration source is provided.
+Measurements remain engineering estimates rather than certified metrology unless a separate qualified metric reference/calibration path is supplied. The calibrated known-size campaign is deliberately post-`v0.8.0` work.
 
 ## Deferred calibrated known-size validation
 
-The known-size benchmark tooling is retained for the calibrated validation campaign planned after Phase 8. It is not required to use the released Phase 7.5 engineering-estimate workflow.
+The known-size benchmark tooling is retained for a post-`v0.8.0` calibrated validation campaign. It is not required for the engineering-estimate measurement workflow, and its presence does not make the current product certified metrology.
 
 Create an editable benchmark manifest when that campaign begins:
 
@@ -148,6 +145,33 @@ Snapshot captures an independent copy of the latest source frame, runs one selec
 
 Stable Video supports Video, USB camera and RTSP. Temporal models preserve their native sequence state; stateless models use generic smoothing. Latest-frame backpressure prevents queue growth, Pause/Resume preserves the sequence, and Stop resets it. Finalized runs export synchronized RGB/depth MP4 files, per-frame performance CSV, a manifest and optional numerical depth frames.
 
+## Phase 8 Reconstruction
+
+Reconstruction is a dedicated application workspace rather than a separate top-level SfM/SLAM product. It coordinates live and offline reconstruction while preserving the existing Live 3D, Benchmark, Snapshot, Stable Video and Measure & Inspect workflows.
+
+- **Live SLAM:** continuous Video, USB camera and RTSP capture through an isolated native stella worker, with trajectory, sparse-map/keyframe and diagnostics presentation plus bounded recovery.
+- **Offline SfM:** image-sequence and recorded-video preparation with isolated PyCOLMAP execution, workspace contracts, resume support and reconstruction-quality inspection.
+- **Geometry:** camera-geometry and scale/reference abstractions, dense multi-view fusion, geometry quality/uncertainty, surface mesh generation and persistent canonical scene geometry.
+- **Semantics and QC:** semantic object context, reconstruction-side measurement presentation, measurement validity, inspection/QC and reference-comparison workflows.
+- **Appearance:** Gaussian splatting and NeRF/Nerfacto outputs are integrated as isolated appearance representations and can be persisted and switched alongside canonical geometry.
+- **Persistence and export:** reconstruction sessions, checkpoints, reload/reproducibility, product export bundles, QC reports and SHA-256-backed provenance.
+
+Depth Anything 3 is integrated through an isolated external provider for supporting depth/geometry workflows; heavy reconstruction, Gaussian and NeRF runtimes remain outside the production `depth` environment.
+
+### Reconstruction authority and limitations
+
+The release keeps explicit authority boundaries:
+
+- canonical geometry is the authoritative scene geometry
+- semantic geometry supplies semantic/object context but does not replace canonical geometry
+- measurement results remain measurement evidence with explicit uncertainty and rejection/validity state
+- inspection/QC remains the inspection authority
+- Gaussian and NeRF/Nerfacto outputs are **appearance only** and are never metric, canonical, measurement, QC or reference authority
+- `certified_metrology=false` remains the correct product posture unless a separate qualified calibration/reference process establishes otherwise
+- monocular live SLAM or monocular reconstruction may remain in arbitrary scale without a valid metric reference; camera intrinsics alone do not establish metric scale
+
+The target `v0.8.0` does not claim the future calibration/metric-qualification workflow, a broader custom Auto Segment workspace, a unified digital-twin workspace, or a fully interactive neural free-view renderer. Existing YOLO/SAM2 measurement adapters remain available, while those larger workflows are reserved for post-`v0.8.0` development.
+
 
 ## Viewport controls
 
@@ -160,7 +184,7 @@ The floating render card updates an already displayed static result without reru
 - **Density** resamples the cached point cloud immediately
 - **Reset View** restores and fits the camera
 
-**Mesh (Poisson)** remains disabled until the dedicated reconstruction phase adds threaded mesh generation. **VSync** is enabled when the VisPy canvas is created and is shown as a locked setting because changing the swap interval would require recreating the OpenGL surface.
+**Mesh (Poisson)** remains disabled in the shared Live 3D render card; Phase 8 surface-mesh processing belongs to the dedicated Reconstruction workflow and does not change that legacy control. **VSync** is enabled when the VisPy canvas is created and is shown as a locked setting because changing the swap interval would require recreating the OpenGL surface.
 
 The right sidebar's colormap, depth range, edge filtering, background removal, background color, grid, axes and point budget all apply immediately to the cached result. Temporal smoothing affects only consecutive video, camera and RTSP frames; static images are never temporally blended.
 
@@ -348,6 +372,15 @@ location and level without editing the repository.
 `full` keeps the regular development loop fast and excludes `tests/stress`. Use
 `stress` for the repeated process loops or `all` for the complete pack.
 
+The final Phase 8 pre-H release-candidate requalification is available as:
+
+```bash
+./scripts/run_phase8_9_pre_h_final_requalification_tests.sh quick
+./scripts/run_phase8_9_pre_h_final_requalification_tests.sh full
+```
+
+It composes the complete current-tree regression, backward-compatibility gate, bounded RTSP post-fix qualification and combined UI qualification without restarting the expensive real SfM/Gaussian/NeRF campaigns.
+
 ## Project structure
 
 ```text
@@ -357,9 +390,12 @@ core/inference/      Worker process and IPC manager
 core/models/         Registry, normalized contracts and model adapters
 core/benchmark/      Deterministic assets and benchmark/report engine
 core/geometry/       Depth, direct points, filtering and sampling
+core/reconstruction/ Reconstruction contracts, geometry, SLAM/SfM, persistence, QC and appearance orchestration
 core/runtime/        State, sessions, watchdog, logs and release diagnostics
-requirements/        Optional model dependency groups
+native/              Isolated native reconstruction workers
+requirements/        Optional model and reconstruction dependency groups
+docs/                Phase history and release/test strategy evidence
 tests/               Unit, UI, integration, stress and release tests
 ```
 
-Measurements are engineering estimates; calibrated known-size validation is deferred.
+Measurements are engineering estimates; calibrated known-size and metric qualification remains post-`v0.8.0` work.
