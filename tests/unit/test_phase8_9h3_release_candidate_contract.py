@@ -10,15 +10,14 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_release_candidate_is_not_presented_as_already_tagged_release() -> None:
+def test_h3_candidate_state_remains_historical_after_release_transition() -> None:
+    h3 = _read("docs/phase_history/PHASE8_9H3_RELEASE_CANDIDATE_QUALIFICATION.md")
     readme = _read("README.md")
     notes = _read("RELEASE_NOTES_v0.8.0.md")
-    assert "final release preparation for target `v0.8.0`" in readme
-    assert "runtime/package metadata intentionally remains `0.7.5`" in readme
-    assert "Release-preparation status" in notes
-    assert "the `v0.8.0` tag must remain absent" in notes
-    assert "8.9I" in readme
-    assert "8.9I" in notes
+    assert "release candidate" in h3.lower()
+    assert "local and remote `v0.8.0` tags remain absent" in h3
+    assert "Version `0.8.0` is the **Phase 8 Reconstruction Stable** release" in readme
+    assert "Release status" in notes
 
 
 def test_reconstruction_authority_and_metric_limits_are_explicit() -> None:
@@ -59,16 +58,16 @@ def test_backend_isolation_and_mesh_boundary_are_documented() -> None:
     assert "dedicated Reconstruction workflow" in readme
 
 
-def test_canonical_release_metadata_is_still_pre_release_075() -> None:
+def test_canonical_release_metadata_is_final_v080_identity() -> None:
     version_py = _read("core/version.py")
     pyproject = _read("pyproject.toml")
     app_yaml = _read("config/app.yaml")
-    assert '__version__ = "0.7.5"' in version_py
-    assert 'RELEASE_NAME = "Phase 7.5 Stable"' in version_py
-    assert "RELEASE_PHASE = 7.5" in version_py
-    assert 'version = "0.7.5"' in pyproject
-    assert 'version: "0.7.5"' in app_yaml
-    assert 'release: "Phase 7.5 Stable"' in app_yaml
+    assert '__version__ = "0.8.0"' in version_py
+    assert 'RELEASE_NAME = "Phase 8 Reconstruction Stable"' in version_py
+    assert "RELEASE_PHASE = 8.0" in version_py
+    assert 'version = "0.8.0"' in pyproject
+    assert 'version: "0.8.0"' in app_yaml
+    assert 'release: "Phase 8 Reconstruction Stable"' in app_yaml
 
 
 def test_h3_record_reserves_release_transition_for_i() -> None:

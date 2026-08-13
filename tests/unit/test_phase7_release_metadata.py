@@ -8,10 +8,10 @@ from core.runtime.release import collect_static_checks, project_root
 from core.version import RELEASE_NAME, RELEASE_PHASE, __version__
 
 
-def test_phase75_release_identity() -> None:
-    assert __version__ == "0.7.5"
-    assert RELEASE_NAME == "Phase 7.5 Stable"
-    assert RELEASE_PHASE == 7.5
+def test_current_release_identity_with_phase7_contracts() -> None:
+    assert __version__ == "0.8.0"
+    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert RELEASE_PHASE == 8.0
 
 
 def test_phase7_required_files_are_present() -> None:

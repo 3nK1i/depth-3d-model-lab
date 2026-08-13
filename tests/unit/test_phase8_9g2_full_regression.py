@@ -72,11 +72,11 @@ def test_g2_matrix_does_not_invoke_real_f_campaigns_or_backend_setup():
     assert all(token not in text for token in forbidden)
 
 
-def test_g2_non_strict_repository_preflight_preserves_release_and_isolation():
+def test_g2_historical_preflight_retains_old_release_gate_and_isolation():
     module = _module()
     snapshot = module._repository_snapshot(strict_git=False)
-    assert snapshot["pass"] is True
-    assert snapshot["checks"]["version_0_7_5"] is True
+    assert snapshot["pass"] is False
+    assert snapshot["checks"]["version_0_7_5"] is False
     assert snapshot["checks"]["no_direct_heavy_imports"] is True
     assert snapshot["direct_heavy_imports"] == []
 
@@ -87,12 +87,13 @@ def test_g2_pytest_count_parser_handles_pass_skip_and_error_forms():
     assert counts == {"passed": 120, "skipped": 2, "xfailed": 1, "errors": 1}
 
 
-def test_g2_plan_only_is_green_without_starting_execution(tmp_path):
+def test_g2_plan_only_remains_frozen_pre_release_evidence_after_v080(tmp_path):
     module = _module()
     payload = module.run_regression(tmp_path / "g2", strict_git=False, plan_only=True)
-    assert payload["pass"] is True
+    assert payload["pass"] is False
     assert payload["execution_started"] is False
     assert payload["groups"] == []
+    assert "repository_preflight:version_0_7_5" in payload["blockers"]
     assert payload["heavy_real_training_or_inference_started"] is False
 
 

@@ -20,15 +20,15 @@ from core.version import RELEASE_NAME, RELEASE_PHASE, __version__
 def test_repository_release_versions_are_consistent() -> None:
     result = version_consistency_check(project_root())
     assert result.passed, result.detail
-    assert __version__ == "0.7.5"
-    assert RELEASE_NAME == "Phase 7.5 Stable"
-    assert RELEASE_PHASE == 7.5
+    assert __version__ == "0.8.0"
+    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert RELEASE_PHASE == 8.0
 
 
 def test_version_check_reports_config_drift(tmp_path: Path) -> None:
     (tmp_path / "config").mkdir()
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "x"\nversion = "0.7.5"\n',
+        '[project]\nname = "x"\nversion = "0.8.0"\n',
         encoding="utf-8",
     )
     (tmp_path / "config" / "app.yaml").write_text(

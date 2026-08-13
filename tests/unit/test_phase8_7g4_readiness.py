@@ -22,10 +22,10 @@ def _import_roots(path: Path) -> set[str]:
     return roots
 
 
-def test_g4_preserves_v075_release_identity_until_release_phase() -> None:
-    assert __version__ == "0.7.5"
-    assert RELEASE_NAME == "Phase 7.5 Stable"
-    assert RELEASE_PHASE == 7.5
+def test_g4_preserves_current_release_identity_after_phase8_release() -> None:
+    assert __version__ == "0.8.0"
+    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert RELEASE_PHASE == 8.0
 
 
 def test_reconstruction_core_has_no_direct_heavy_backend_imports() -> None:

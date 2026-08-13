@@ -10,15 +10,12 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_readme_describes_phase8_release_candidate_without_claiming_release() -> None:
-    readme = _read("README.md")
-    assert "target `v0.8.0` (Phase 8 Reconstruction)" in readme
-    assert "runtime/package metadata intentionally remains `0.7.5`" in readme
-    assert "no `v0.8.0` tag is created" in readme
-    assert "## Phase 8 Reconstruction" in readme
-    assert "Version `0.7.5` is the stable Phase 7.5 measurement and inspection release" not in readme
-    assert "planned after Phase 8" not in readme
-    assert "post-`v0.8.0`" in readme
+def test_h2_candidate_state_is_preserved_as_historical_evidence() -> None:
+    h2 = _read("docs/phase_history/PHASE8_9H2_RELEASE_PREPARATION.md")
+    assert "Prepare truthful, release-facing Phase 8 documentation" in h2
+    assert "0.7.5 / Phase 7.5 Stable / 7.5" in h2
+    assert "v0.8.0 tag        -> absent" in h2
+    assert "reserved for 8.9I" in h2
 
 
 def test_readme_preserves_reconstruction_authority_boundaries() -> None:
@@ -36,31 +33,28 @@ def test_readme_preserves_reconstruction_authority_boundaries() -> None:
         assert phrase in readme
 
 
-def test_v080_release_notes_are_prepared_not_released() -> None:
+def test_v080_release_notes_are_finalized_after_h2_preparation() -> None:
     notes = _read("RELEASE_NOTES_v0.8.0.md")
-    assert "Release-preparation status" in notes
-    assert "the `v0.8.0` tag must remain absent" in notes
+    assert "Release status" in notes
+    assert "Release-preparation status" not in notes
+    assert "0.8.0` / `Phase 8 Reconstruction Stable" in notes
     assert "annotated `v0.8.0` tag" in notes
     assert "Gaussian and NeRF/Nerfacto representations are appearance only" in notes
     assert "Known limitations and deliberate exclusions" in notes
-    assert "8.9I" in notes
+    assert "8.9I2" in notes and "8.9I3" in notes
 
 
-def test_h2_does_not_bump_canonical_release_metadata() -> None:
+def test_current_metadata_has_transitioned_after_h2_history() -> None:
     version_py = _read("core/version.py")
     pyproject = _read("pyproject.toml")
     app_yaml = _read("config/app.yaml")
 
-    assert '__version__ = "0.7.5"' in version_py
-    assert 'RELEASE_NAME = "Phase 7.5 Stable"' in version_py
-    assert "RELEASE_PHASE = 7.5" in version_py
-    assert 'version = "0.7.5"' in pyproject
-    assert 'version: "0.7.5"' in app_yaml
-    assert 'release: "Phase 7.5 Stable"' in app_yaml
-
-    assert '__version__ = "0.8.0"' not in version_py
-    assert 'version = "0.8.0"' not in pyproject
-    assert 'version: "0.8.0"' not in app_yaml
+    assert '__version__ = "0.8.0"' in version_py
+    assert 'RELEASE_NAME = "Phase 8 Reconstruction Stable"' in version_py
+    assert "RELEASE_PHASE = 8.0" in version_py
+    assert 'version = "0.8.0"' in pyproject
+    assert 'version: "0.8.0"' in app_yaml
+    assert 'release: "Phase 8 Reconstruction Stable"' in app_yaml
 
 
 def test_h1_h2_phase_history_records_exist_and_define_release_boundary() -> None:

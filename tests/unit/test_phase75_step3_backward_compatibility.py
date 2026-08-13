@@ -24,7 +24,7 @@ def test_depth_registry_order_and_phase75_version_are_preserved():
         "marigold",
         "development-mock",
     )
-    assert __version__ == "0.7.5"
+    assert __version__ == "0.8.0"
 
 
 def test_geometry_and_ipc_positional_compatibility_are_unchanged():

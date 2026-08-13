@@ -9,7 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_g2_plan_only_cli_emits_frozen_non_heavy_matrix(tmp_path):
+def test_g2_plan_only_cli_preserves_frozen_pre_release_gate_after_v080_transition(tmp_path):
+    """The frozen G2 plan remains inspectable but must reject post-transition metadata."""
     out = tmp_path / "g2-plan"
     proc = subprocess.run(
         [
@@ -26,9 +27,25 @@ def test_g2_plan_only_cli_emits_frozen_non_heavy_matrix(tmp_path):
         stderr=subprocess.STDOUT,
         check=False,
     )
-    assert proc.returncode == 0, proc.stdout
     payload = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-    assert payload["pass"] is True
+
+    assert proc.returncode == 1, proc.stdout
+    assert payload["pass"] is False
+
+    blockers = set(payload["blockers"])
+    assert "repository_preflight:version_0_7_5" in blockers
+    assert blockers == {"repository_preflight:version_0_7_5"}
+
+    pre = payload["repository_pre"]
+    assert pre["checks"]["version_0_7_5"] is False
+    for name, passed in pre["checks"].items():
+        if name != "version_0_7_5":
+            assert passed is True, f"{name} unexpectedly failed"
+
+    release = pre["release"]
+    assert release["core_version"] == "0.8.0"
+    assert release["config_version"] == "0.8.0"
+
     assert payload["plan_only"] is True
     assert payload["execution_started"] is False
     assert [item["name"] for item in payload["matrix"]] == [

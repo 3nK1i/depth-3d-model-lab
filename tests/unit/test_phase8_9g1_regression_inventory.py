@@ -16,11 +16,12 @@ def _module():
     return module
 
 
-def test_g1_source_inventory_passes_without_git_enforcement():
+def test_g1_source_inventory_retains_historical_pre_release_gate():
     module = _module()
     payload = module.build_inventory(strict_git=False)
-    assert payload["pass"] is True
-    assert payload["blockers"] == []
+    assert payload["checks"]["release_version_still_0_7_5"] is False
+    assert payload["checks"]["no_direct_heavy_imports_in_core_reconstruction"] is True
+    assert payload["checks"]["legacy_backward_gate_inputs_present"] is True
 
 
 def test_g1_primary_test_suites_are_all_present_and_nonempty():
@@ -62,13 +63,13 @@ def test_g1_backward_inputs_cover_stable_release_layers():
     assert "backward" in legacy["phase8_8_h3"]
 
 
-def test_g1_release_version_stays_075_and_no_v080_tag_required():
+def test_g1_historical_runner_observes_current_v080_release_identity():
     module = _module()
     release = module._release_version()
-    assert release["core_version"] == "0.7.5"
-    assert release["config_version"] == "0.7.5"
-    # Reconstructed/offline test repositories may carry arbitrary local tags;
-    # the strict workstation preflight owns the actual v0.8.0-tag gate.
+    assert release["core_version"] == "0.8.0"
+    assert release["config_version"] == "0.8.0"
+    # G1 itself remains frozen as pre-release evidence; the current release
+    # identity is qualified by the dedicated 8.9I2 gate instead.
 
 
 def test_g1_no_direct_heavy_imports_in_core_reconstruction():

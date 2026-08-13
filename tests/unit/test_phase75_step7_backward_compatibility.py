@@ -9,7 +9,7 @@ def test_step7_imports_do_not_load_optional_frameworks():
     result=subprocess.run([sys.executable,'-c',code],check=True,capture_output=True,text=True)
     assert result.stdout.strip()==''
 
-def test_version_remains_phase75_stable():
+def test_current_release_identity_after_phase75():
     from core.version import __version__,RELEASE_NAME
-    assert __version__=='0.7.5'
-    assert RELEASE_NAME=='Phase 7.5 Stable'
+    assert __version__=='0.8.0'
+    assert RELEASE_NAME=='Phase 8 Reconstruction Stable'

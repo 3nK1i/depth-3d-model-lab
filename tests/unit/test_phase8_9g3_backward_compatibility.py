@@ -63,11 +63,11 @@ def test_g3_does_not_invoke_real_reconstruction_campaigns_or_external_setup():
     assert all(token not in text for token in forbidden)
 
 
-def test_g3_non_strict_repository_preflight_preserves_release_and_isolation():
+def test_g3_historical_preflight_retains_old_release_gate_and_isolation():
     module = _module()
     snapshot = module._repository_snapshot(strict_git=False)
-    assert snapshot["pass"] is True
-    assert snapshot["checks"]["version_0_7_5"] is True
+    assert snapshot["pass"] is False
+    assert snapshot["checks"]["version_0_7_5"] is False
     assert snapshot["checks"]["v0_8_0_absent"] is True
     assert snapshot["checks"]["no_direct_heavy_imports"] is True
     assert snapshot["checks"]["g2_evidence_present"] is True
@@ -80,12 +80,13 @@ def test_g3_pytest_count_parser_sums_multiple_legacy_subruns():
     assert counts == {"passed": 17, "skipped": 1, "errors": 2}
 
 
-def test_g3_plan_only_is_green_without_execution(tmp_path):
+def test_g3_plan_only_remains_frozen_pre_release_evidence_after_v080(tmp_path):
     module = _module()
     payload = module.run_gate(tmp_path / "g3", strict_git=False, plan_only=True)
-    assert payload["pass"] is True
+    assert payload["pass"] is False
     assert payload["execution_started"] is False
     assert payload["groups"] == []
+    assert "repository_preflight" in payload["blockers"]
     assert payload["production_code_changed_by_8_9g3"] is False
     assert payload["heavy_real_reconstruction_campaign_started_by_8_9g3"] is False
     assert payload["release_tag_created_by_8_9g3"] is False

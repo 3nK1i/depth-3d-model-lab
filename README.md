@@ -4,9 +4,9 @@ A PyQt6 desktop application for live monocular depth estimation, measurement and
 
 ## Current status
 
-The `phase8-reconstruction` branch is in final release preparation for target `v0.8.0` (Phase 8 Reconstruction). Until the final 8.9I release gate, runtime/package metadata intentionally remains `0.7.5` / `Phase 7.5 Stable` and no `v0.8.0` tag is created.
+Version `0.8.0` is the **Phase 8 Reconstruction Stable** release. The release commit is qualified before the annotated `v0.8.0` tag is created in the final 8.9I3 release step.
 
-The release candidate includes:
+The `v0.8.0` release includes:
 
 - Live 3D for Image, Video, USB camera and RTSP sources
 - Interactive Benchmark, Snapshot and Stable Video operational modes
@@ -170,7 +170,7 @@ The release keeps explicit authority boundaries:
 - `certified_metrology=false` remains the correct product posture unless a separate qualified calibration/reference process establishes otherwise
 - monocular live SLAM or monocular reconstruction may remain in arbitrary scale without a valid metric reference; camera intrinsics alone do not establish metric scale
 
-The target `v0.8.0` does not claim the future calibration/metric-qualification workflow, a broader custom Auto Segment workspace, a unified digital-twin workspace, or a fully interactive neural free-view renderer. Existing YOLO/SAM2 measurement adapters remain available, while those larger workflows are reserved for post-`v0.8.0` development.
+`v0.8.0` does not claim the future calibration/metric-qualification workflow, a broader custom Auto Segment workspace, a unified digital-twin workspace, or a fully interactive neural free-view renderer. Existing YOLO/SAM2 measurement adapters remain available, while those larger workflows are reserved for post-`v0.8.0` development.
 
 
 ## Viewport controls
@@ -372,14 +372,22 @@ location and level without editing the repository.
 `full` keeps the regular development loop fast and excludes `tests/stress`. Use
 `stress` for the repeated process loops or `all` for the complete pack.
 
-The final Phase 8 pre-H release-candidate requalification is available as:
+The final Phase 8 pre-H release-candidate requalification remains available as historical qualification evidence:
 
 ```bash
 ./scripts/run_phase8_9_pre_h_final_requalification_tests.sh quick
 ./scripts/run_phase8_9_pre_h_final_requalification_tests.sh full
 ```
 
-It composes the complete current-tree regression, backward-compatibility gate, bounded RTSP post-fix qualification and combined UI qualification without restarting the expensive real SfM/Gaussian/NeRF campaigns.
+The `v0.8.0` metadata transition is qualified by the dedicated final-release gate:
+
+```bash
+./scripts/run_phase8_9i2_tests.sh quick
+./scripts/run_phase8_9i2_tests.sh affected
+./scripts/run_phase8_9i2_tests.sh full
+```
+
+The final-release gate validates the coordinated `0.8.0` identity, documentation and authority boundaries, then runs the current unit/UI/integration/stress suites without restarting the expensive real SfM/Gaussian/NeRF campaigns.
 
 ## Project structure
 

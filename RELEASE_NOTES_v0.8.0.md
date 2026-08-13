@@ -1,6 +1,6 @@
 # EIA TECH Depth & 3D Model Lab — v0.8.0 Release Notes
 
-> **Release-preparation status:** these notes describe the target Phase 8 Reconstruction release candidate. During 8.9H, application/package metadata remains `0.7.5` / `Phase 7.5 Stable` and the `v0.8.0` tag must remain absent. The coordinated version transition and annotated tag belong only to the final 8.9I release gate.
+> **Release status:** the finalized source identity is `0.8.0` / `Phase 8 Reconstruction Stable`. The annotated `v0.8.0` tag is created only after the 8.9I2 release gate passes and the release commit is clean, pushed and synchronized in 8.9I3.
 
 ## Highlights
 
@@ -34,7 +34,7 @@ Heavy/native/neural reconstruction runtimes remain outside the production `depth
 
 ## Qualification evidence
 
-Phase 8 release preparation is backed by the repository's Phase 8.9 qualification chain:
+The Phase 8 release is backed by the repository's Phase 8.9 qualification chain:
 
 - real external-backend preflight
 - real SfM trajectory evidence plus isolated Depth Anything 3 supporting depth/geometry and canonical-geometry qualification
@@ -65,4 +65,4 @@ The Phase 8 work preserves the established Live 3D, Benchmark, Snapshot, Stable 
 
 ## Release procedure
 
-8.9H prepares and qualifies the documentation/release candidate without creating the release tag. After H3 passes from a clean, synchronized branch, 8.9I performs the coordinated metadata transition to `0.8.0`, runs the final release checks, commits and pushes the release state, creates the annotated `v0.8.0` tag, and pushes that tag.
+8.9H prepared and qualified the release documentation without creating a tag. 8.9I1 audited the clean release-candidate baseline. 8.9I2 performs the coordinated metadata transition to `0.8.0` and the final current-tree release gate. 8.9I3 commits and pushes the qualified release state, creates the annotated `v0.8.0` tag, pushes it, and verifies branch/tag synchronization.

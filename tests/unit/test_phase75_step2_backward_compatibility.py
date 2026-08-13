@@ -21,8 +21,8 @@ def test_ui_runtime_and_release_remain_unchanged():
     source = (root / 'app/widgets/mode_tabs.py').read_text()
     assert '_ENABLED_MODES = {AppMode.LIVE_3D, AppMode.INSPECTION, AppMode.STABLE_VIDEO, AppMode.SNAPSHOT, AppMode.BENCHMARK}' in source
     assert 'AppMode.RECONSTRUCTION' not in source.split('_ENABLED_MODES =', 1)[1].split('\n', 1)[0]
-    assert __version__ == '0.7.5'
-    assert RELEASE_NAME == 'Phase 7.5 Stable'
+    assert __version__ == '0.8.0'
+    assert RELEASE_NAME == 'Phase 8 Reconstruction Stable'
 
 def test_optional_ultralytics_imports_are_adapter_local():
     root = Path(__file__).resolve().parents[2]
