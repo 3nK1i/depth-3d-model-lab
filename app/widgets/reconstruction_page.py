@@ -218,6 +218,7 @@ class ReconstructionPage(QWidget):
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
     viewport_escape_requested = pyqtSignal()
+    camera_calibration_profile_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -3710,6 +3711,7 @@ class ReconstructionPage(QWidget):
             self._live_camera_mode = None
         self._refresh_camera_authority()
         self._refresh_live_camera_presentation()
+        self.camera_calibration_profile_changed.emit(profile)
 
     def clear_camera_calibration_profile(self) -> None:
         """Clear only the active Phase 9 selection; the reusable store is untouched."""
@@ -3722,22 +3724,30 @@ class ReconstructionPage(QWidget):
             self._live_camera_mode = None
         self._refresh_camera_authority()
         self._refresh_live_camera_presentation()
+        self.camera_calibration_profile_changed.emit(None)
 
     def _camera_calibration_dialog_context(self) -> tuple[str, str]:
-        source_label = "No live source selected"
+        source_label = "No source selected"
         resolution_text = "Resolution unavailable"
         controller = self._controller
         if controller is None:
             return source_label, resolution_text
-        selection = controller.source_selection
-        source_label = selection.display_name or source_label
-        if selection.workflow is ReconstructionWorkflow.LIVE_SOURCE and selection.ready:
-            try:
-                size = controller.current_live_image_size()
-                resolution_text = f"{size.width} × {size.height}"
-            except (RuntimeError, TypeError, ValueError):
-                resolution_text = "Waiting for live frame"
+        source_label = controller.current_application_source_label()
+        try:
+            size = controller.current_application_image_size()
+            resolution_text = f"{size.width} × {size.height}"
+        except (RuntimeError, TypeError, ValueError):
+            resolution_text = "Waiting for source frame"
         return source_label, resolution_text
+
+    def open_camera_calibration_workspace(self) -> None:
+        """Open the shared application calibration workspace.
+
+        Measure & Inspect and Reconstruction intentionally reuse this same profile
+        selection/store rather than creating parallel calibration state.
+        """
+
+        self._open_camera_calibration_workspace()
 
     def _open_camera_calibration_workspace(self) -> None:
         controller = self._controller

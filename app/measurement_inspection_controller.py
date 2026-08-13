@@ -13,6 +13,12 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal
 
+from core.reconstruction.calibration_profile import (
+    CameraCalibrationProfile,
+    CameraCalibrationValidationState,
+    save_camera_calibration_profile,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -73,12 +79,18 @@ class MeasurementInspectionController(QObject):
         perception_profile: str,
         max_objects: int,
         box_method: str = "auto",
+        calibration_profile: CameraCalibrationProfile | None = None,
     ) -> None:
         if self.is_running:
             raise RuntimeError("An inspection analysis is already running.")
         image = np.asarray(image_bgr, dtype=np.uint8)
         if image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("Inspection input must be an HxWx3 BGR image.")
+        if calibration_profile is not None:
+            if not isinstance(calibration_profile, CameraCalibrationProfile):
+                raise TypeError("calibration_profile must be CameraCalibrationProfile or None.")
+            if calibration_profile.validation_state is CameraCalibrationValidationState.REJECTED:
+                raise ValueError("Rejected camera-calibration profiles cannot be used for measurement inspection.")
         self._prepare_temp()
         assert self._temp_dir is not None
         input_path = self._temp_dir / "frame.npy"
@@ -97,6 +109,10 @@ class MeasurementInspectionController(QObject):
             "--max-objects", str(int(max_objects)),
             "--box-method", box_method,
         ]
+        if calibration_profile is not None:
+            calibration_path = self._temp_dir / "camera_calibration_profile.json"
+            save_camera_calibration_profile(calibration_profile, calibration_path)
+            args += ["--calibration-profile", str(calibration_path)]
         self._result_dir = output
         self._job_log_path = self._temp_dir / "job.log"
         self._start_process(args, InspectionControllerState.RUNNING)

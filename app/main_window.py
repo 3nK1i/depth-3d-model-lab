@@ -131,6 +131,9 @@ class MainWindow(QMainWindow):
         # a backend. Runtime actions continue to flow through the hardened
         # ReconstructionController boundary.
         self._reconstruction_page.bind_controller(self._reconstruction_controller)
+        self._reconstruction_page.camera_calibration_profile_changed.connect(
+            lambda _profile: self._refresh_inspection_context()
+        )
 
         self._benchmark_controller = BenchmarkController(self)
         self._benchmark_page.run_requested.connect(self._on_benchmark_run_requested)
@@ -172,6 +175,9 @@ class MainWindow(QMainWindow):
         self._snapshot_controller.log_received.connect(self._snapshot_page.append_log)
         self._snapshot_controller.result_ready.connect(self._snapshot_page.show_result)
         self._inspection_page.capture_requested.connect(self._capture_inspection_frame)
+        self._inspection_page.calibration_requested.connect(
+            self._reconstruction_page.open_camera_calibration_workspace
+        )
         self._inspection_page.analysis_requested.connect(self._start_inspection_analysis)
         self._inspection_page.cancel_requested.connect(self._inspection_controller.cancel)
         self._inspection_page.recompute_requested.connect(self._recompute_inspection)
@@ -481,6 +487,9 @@ class MainWindow(QMainWindow):
             depth_model_id=self._settings_panel.selected_model_id,
             depth_model_label=self._settings_panel.selected_model_label,
         )
+        self._inspection_page.set_camera_calibration_context(
+            self._reconstruction_page.selected_camera_calibration_profile
+        )
 
     def _capture_inspection_frame(self) -> None:
         frame = self._controller.latest_source_frame
@@ -535,6 +544,7 @@ class MainWindow(QMainWindow):
                 perception_profile=str(configuration["perception_profile"]),
                 max_objects=int(configuration["max_objects"]),
                 box_method=str(configuration.get("box_method", "auto")),
+                calibration_profile=self._reconstruction_page.selected_camera_calibration_profile,
             )
             self._mode_tabs.set_navigation_locked(True)
         except (OSError, RuntimeError, ValueError, KeyError) as exc:

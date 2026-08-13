@@ -82,6 +82,12 @@ def load_inspection_bundle(bundle_dir: str | Path) -> tuple[InspectionBundleSumm
         objects=tuple(objects),
         warnings=tuple(payload.get("warnings", ())),
         elapsed_seconds=float(payload.get("elapsed_seconds", 0.0)),
+        calibration_profile_id=str(payload.get("calibration_profile_id", "")),
+        calibration_record_id=str(payload.get("calibration_record_id", "")),
+        calibration_method=str(payload.get("calibration_method", "")),
+        calibration_validation_state=str(payload.get("calibration_validation_state", "")),
+        calibration_application_mode=str(payload.get("calibration_application_mode", "")),
+        calibration_rectified=bool(payload.get("calibration_rectified", False)),
     )
     if not summary.arrays_path.is_file():
         raise ContractValidationError(f"Inspection array archive is missing: {summary.arrays_path}")

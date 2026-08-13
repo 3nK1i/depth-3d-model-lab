@@ -117,6 +117,7 @@ def depth_input_from_inference_result(
     *,
     depth_space_id: str = "depth",
     model_provenance: ModelProvenance | None = None,
+    intrinsics_override: CameraIntrinsics | None = None,
 ) -> DepthAlignmentInput:
     """Convert the append-only Phase 6/7 IPC result without changing it."""
 
@@ -124,19 +125,21 @@ def depth_input_from_inference_result(
         raise ContractValidationError("InferenceResult does not match frame_reference.")
     if result.depth is None:
         raise ContractValidationError("InferenceResult has no depth map.")
-    if result.intrinsics is None:
+    if result.intrinsics is None and intrinsics_override is None:
         raise ContractValidationError("InferenceResult has no camera intrinsics.")
 
     try:
         depth_scale = DepthScale(result.depth_scale or ("metric" if result.is_metric else "unknown"))
     except ValueError as exc:
         raise ContractValidationError(f"Unknown depth scale: {result.depth_scale!r}.") from exc
-    try:
-        intrinsics_source = IntrinsicsSource(result.intrinsics_source or "none")
-    except ValueError as exc:
-        raise ContractValidationError(
-            f"Unknown intrinsics source: {result.intrinsics_source!r}."
-        ) from exc
+    intrinsics_source = None
+    if intrinsics_override is None:
+        try:
+            intrinsics_source = IntrinsicsSource(result.intrinsics_source or "none")
+        except ValueError as exc:
+            raise ContractValidationError(
+                f"Unknown intrinsics source: {result.intrinsics_source!r}."
+            ) from exc
     try:
         confidence_kind = ConfidenceKind(result.confidence_kind or "none")
     except ValueError as exc:
@@ -144,22 +147,32 @@ def depth_input_from_inference_result(
             f"Unknown confidence kind: {result.confidence_kind!r}."
         ) from exc
 
-    if intrinsics_source is IntrinsicsSource.CALIBRATED:
-        raise ContractValidationError(
-            "Step 3 cannot construct calibrated intrinsics without a calibration record."
-        )
-    calibration_status = (
-        CalibrationStatus.NOT_CALIBRATED
-        if intrinsics_source in {IntrinsicsSource.MODEL_PREDICTED, IntrinsicsSource.ESTIMATED}
-        else CalibrationStatus.UNKNOWN
-    )
     depth_space = make_depth_space(frame_reference, result.depth, space_id=depth_space_id)
-    intrinsics = CameraIntrinsics(
-        matrix=result.intrinsics,
-        pixel_space_id=depth_space.space_id,
-        source=intrinsics_source,
-        calibration_status=calibration_status,
-    )
+    if intrinsics_override is not None:
+        if not isinstance(intrinsics_override, CameraIntrinsics):
+            raise TypeError("intrinsics_override must be CameraIntrinsics or None.")
+        if intrinsics_override.pixel_space_id != depth_space.space_id:
+            raise ContractValidationError(
+                "intrinsics_override must reference the native depth pixel space."
+            )
+        intrinsics = intrinsics_override
+    else:
+        assert intrinsics_source is not None
+        if intrinsics_source is IntrinsicsSource.CALIBRATED:
+            raise ContractValidationError(
+                "Step 3 cannot construct calibrated intrinsics without a calibration record."
+            )
+        calibration_status = (
+            CalibrationStatus.NOT_CALIBRATED
+            if intrinsics_source in {IntrinsicsSource.MODEL_PREDICTED, IntrinsicsSource.ESTIMATED}
+            else CalibrationStatus.UNKNOWN
+        )
+        intrinsics = CameraIntrinsics(
+            matrix=result.intrinsics,
+            pixel_space_id=depth_space.space_id,
+            source=intrinsics_source,
+            calibration_status=calibration_status,
+        )
     provenance = model_provenance or ModelProvenance(
         model_id=result.model_id or "unknown-depth-model",
         display_name=result.model_name or result.model_id or "Unknown depth model",

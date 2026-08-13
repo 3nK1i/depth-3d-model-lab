@@ -158,6 +158,12 @@ class InspectionBundleSummary:
     objects: tuple[InspectionObjectSummary, ...]
     warnings: tuple[str, ...] = ()
     elapsed_seconds: float = 0.0
+    calibration_profile_id: str = ""
+    calibration_record_id: str = ""
+    calibration_method: str = ""
+    calibration_validation_state: str = ""
+    calibration_application_mode: str = ""
+    calibration_rectified: bool = False
 
     def __post_init__(self) -> None:
         directory = Path(self.bundle_dir)
@@ -175,6 +181,15 @@ class InspectionBundleSummary:
         object.__setattr__(self, "perception_model_id", require_nonempty(self.perception_model_id, field_name="perception_model_id"))
         object.__setattr__(self, "objects", tuple(self.objects))
         object.__setattr__(self, "warnings", tuple(str(value).strip() for value in self.warnings if str(value).strip()))
+        for name in (
+            "calibration_profile_id",
+            "calibration_record_id",
+            "calibration_method",
+            "calibration_validation_state",
+            "calibration_application_mode",
+        ):
+            object.__setattr__(self, name, str(getattr(self, name)).strip())
+        object.__setattr__(self, "calibration_rectified", bool(self.calibration_rectified))
 
     @property
     def arrays_path(self) -> Path:

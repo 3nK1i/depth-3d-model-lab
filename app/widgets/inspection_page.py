@@ -43,6 +43,7 @@ from core.inspection import (
     MaskEditMode,
 )
 from core.measurement.contracts import ReliabilityLevel
+from core.reconstruction.calibration_profile import CameraCalibrationProfile
 from core.perception.metadata import PerceptionTask
 from core.perception.registry import PERCEPTION_MODEL_REGISTRY
 
@@ -53,6 +54,7 @@ class InspectionPage(QWidget):
     cancel_requested = pyqtSignal()
     recompute_requested = pyqtSignal(dict)
     export_requested = pyqtSignal(str)
+    calibration_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -70,6 +72,7 @@ class InspectionPage(QWidget):
         self._source_available = False
         self._state = InspectionControllerState.IDLE
         self._export_running = False
+        self._camera_calibration_profile: CameraCalibrationProfile | None = None
         self._build_ui()
         self._populate_perception_models()
         self.set_controller_state(InspectionControllerState.IDLE)
@@ -244,6 +247,7 @@ class InspectionPage(QWidget):
         layout.addWidget(self._build_object_card())
         layout.addWidget(self._build_display_card())
         layout.addWidget(self._build_correction_card())
+        layout.addWidget(self._build_calibration_card())
         layout.addWidget(self._build_measurement_card())
         layout.addWidget(self._build_export_card())
         layout.addWidget(self._build_details_card())
@@ -365,6 +369,44 @@ class InspectionPage(QWidget):
         layout.addLayout(buttons)
         return frame
 
+    def _build_calibration_card(self) -> QFrame:
+        frame, layout = self._card("CAMERA CALIBRATION")
+        self._calibration_state = QLabel("Not selected")
+        self._calibration_state.setObjectName("inspectionWarningText")
+        self._calibration_state.setWordWrap(True)
+        layout.addWidget(self._calibration_state)
+        self._calibration_detail = QLabel(
+            "Model/estimated intrinsics will be used. Metric scale remains a separate authority."
+        )
+        self._calibration_detail.setObjectName("inspectionMuted")
+        self._calibration_detail.setWordWrap(True)
+        layout.addWidget(self._calibration_detail)
+        button = QPushButton("Manage Calibration")
+        button.setObjectName("inspectionSecondaryButton")
+        button.clicked.connect(self.calibration_requested.emit)
+        layout.addWidget(button)
+        return frame
+
+    def set_camera_calibration_context(
+        self, profile: CameraCalibrationProfile | None
+    ) -> None:
+        if profile is not None and not isinstance(profile, CameraCalibrationProfile):
+            raise TypeError("profile must be CameraCalibrationProfile or None.")
+        self._camera_calibration_profile = profile
+        if profile is None:
+            self._calibration_state.setText("Not selected")
+            self._calibration_detail.setText(
+                "Model/estimated intrinsics will be used. Metric scale remains a separate authority."
+            )
+            return
+        state = profile.validation_state.value.replace("_", " ").title()
+        self._calibration_state.setText(f"{state} • {profile.profile_id}")
+        size = profile.calibration_image_size
+        self._calibration_detail.setText(
+            f"{size.width} × {size.height} • {profile.method.value.replace('_', ' ').title()} • "
+            "applied safely at analysis time. Metric scale remains separate."
+        )
+
     def _build_measurement_card(self) -> QFrame:
         frame, layout = self._card("MEASUREMENTS")
         self._uncertainty_notice = QLabel("Estimated Uncertainty — Not Calibrated")
@@ -448,6 +490,12 @@ class InspectionPage(QWidget):
         previous = self._selected_id
         self._summary = summary
         self._arrays = {name: np.array(value, copy=True) for name, value in arrays.items()}
+        if summary.calibration_status == "calibrated":
+            self._uncertainty_notice.setText(
+                "Estimated Uncertainty — Calibrated camera geometry; depth/scale uncertainty still applies"
+            )
+        else:
+            self._uncertainty_notice.setText("Estimated Uncertainty — Not Calibrated")
         self._object_list.blockSignals(True)
         self._object_list.clear()
         for obj in summary.objects:
@@ -514,6 +562,11 @@ class InspectionPage(QWidget):
             f"Perception model: {self._summary.perception_model_name if self._summary else ''}",
             f"Intrinsics: {self._summary.intrinsics_source if self._summary else ''}",
             f"Calibration: {self._summary.calibration_status if self._summary else ''}",
+            f"Calibration profile: {self._summary.calibration_profile_id if self._summary and self._summary.calibration_profile_id else 'none'}",
+            f"Calibration record: {self._summary.calibration_record_id if self._summary and self._summary.calibration_record_id else 'none'}",
+            f"Calibration method: {self._summary.calibration_method if self._summary and self._summary.calibration_method else 'none'}",
+            f"Calibration application: {self._summary.calibration_application_mode if self._summary and self._summary.calibration_application_mode else 'none'}",
+            f"Distortion rectified: {'yes' if self._summary and self._summary.calibration_rectified else 'no'}",
             f"Depth scale: {self._summary.depth_scale if self._summary else ''}",
         ]
         counts = diagnostics.get("extraction_stage_counts", {})

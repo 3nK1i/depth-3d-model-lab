@@ -600,6 +600,37 @@ class ReconstructionController(QObject):
             camera_intrinsics_policy=camera_intrinsics_policy,
         )
 
+    def current_application_image_size(self) -> ImageSize:
+        """Return current capture size independent of Reconstruction workflow."""
+
+        latest = self._application_controller.latest_source_frame
+        if latest is not None:
+            return ImageSize(latest.width, latest.height)
+        source = self._application_controller.active_source
+        if (
+            isinstance(source, CameraSource)
+            and source.requested_width is not None
+            and source.requested_height is not None
+        ):
+            return ImageSize(source.requested_width, source.requested_height)
+        raise ReconstructionValidationError(
+            "Current source resolution is unavailable. Wait for the first source frame, then try again."
+        )
+
+    def current_application_source_label(self) -> str:
+        """Return a non-sensitive display label for the active application source."""
+
+        source = self._application_controller.active_source
+        if isinstance(source, CameraSource):
+            return f"USB camera {source.device_index}"
+        if isinstance(source, RtspSource):
+            return "RTSP stream"
+        if isinstance(source, VideoSource):
+            return source.path.name
+        if isinstance(source, ImageSource):
+            return "Static image source"
+        return "No source selected"
+
     def current_live_image_size(self) -> ImageSize:
         """Return the current live capture size without changing source ownership.
 
@@ -618,22 +649,13 @@ class ReconstructionController(QObject):
                 selection.detail or "The selected live source is not ready."
             )
 
-        latest = self._application_controller.latest_source_frame
-        if latest is not None:
-            return ImageSize(latest.width, latest.height)
-
-        source = self._application_controller.active_source
-        if (
-            isinstance(source, CameraSource)
-            and source.requested_width is not None
-            and source.requested_height is not None
-        ):
-            return ImageSize(source.requested_width, source.requested_height)
-
-        raise ReconstructionValidationError(
-            "Live camera resolution is not available yet. Wait for the first "
-            "Camera/RTSP/Video frame, then try again."
-        )
+        try:
+            return self.current_application_image_size()
+        except ReconstructionValidationError as exc:
+            raise ReconstructionValidationError(
+                "Live camera resolution is not available yet. Wait for the first "
+                "Camera/RTSP/Video frame, then try again."
+            ) from exc
 
     def build_estimated_live_camera(
         self,

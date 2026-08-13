@@ -33,7 +33,10 @@ from core.alignment import (
     declare_identity_transform,
     depth_input_from_inference_result,
     make_depth_space,
+    resample_boolean_mask,
+    transform_intrinsics,
 )
+from core.alignment.calibration import rectify_bgr_with_camera_calibration
 from core.contracts.common import FrameReference, ImageSize
 from core.contracts.spatial import PixelCoordinateSpace, PixelSpaceRole
 from core.inspection import ARRAYS_FILENAME, BUNDLE_FILENAME, STATE_FILENAME, InspectionBoxMethod
@@ -47,6 +50,7 @@ from core.models.metadata import DepthScale
 from core.models.registry import MODEL_REGISTRY
 from core.models.runtime_config import ModelRuntimeContext
 from core.models.validation import normalize_geometry_result
+from core.reconstruction.calibration_profile import load_camera_calibration_profile
 from core.runtime.messages import FrameRequest
 from core.object_geometry import (
     extract_object_point_clouds,
@@ -82,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True)
     parser.add_argument("--depth-model", default="depth-pro")
     parser.add_argument("--depth-config")
+    parser.add_argument("--calibration-profile", help="Phase 9 camera-calibration profile JSON")
     parser.add_argument("--perception-model", default="ultralytics-yolo-seg")
     parser.add_argument("--depth-profile", default="efficient")
     parser.add_argument("--perception-profile", default="efficient")
@@ -277,10 +282,59 @@ def _initial_analysis(args):
     bgr = np.ascontiguousarray(bgr, dtype=np.uint8)
     if bgr.ndim != 3 or bgr.shape[2] != 3:
         raise ValueError("Inspection input must be an HxWx3 BGR image.")
+
+    calibration_meta: dict[str, Any] = {
+        "calibration_profile_id": "",
+        "calibration_record_id": "",
+        "calibration_method": "",
+        "calibration_validation_state": "",
+        "calibration_application_mode": "",
+        "calibration_rectified": False,
+        "calibration_warnings": [],
+    }
+    rectification_support = None
+    applied_calibration = None
+    if args.calibration_profile:
+        profile = load_camera_calibration_profile(args.calibration_profile)
+        if profile.validation_state.value == "rejected":
+            raise ValueError("Rejected camera-calibration profiles cannot be used for measurement inspection.")
+        prepared = rectify_bgr_with_camera_calibration(
+            bgr,
+            profile,
+            allow_same_aspect_full_frame_resize=True,
+            target_pixel_space_id="rgb-rectified",
+        )
+        bgr = np.ascontiguousarray(prepared.image_bgr, dtype=np.uint8)
+        rectification_support = np.asarray(prepared.support_mask, dtype=np.bool_)
+        applied_calibration = prepared.application
+        calibration_meta.update({
+            "calibration_profile_id": profile.profile_id,
+            "calibration_record_id": profile.calibration_record_id,
+            "calibration_method": profile.method.value,
+            "calibration_validation_state": profile.validation_state.value,
+            "calibration_application_mode": prepared.application.mode.value,
+            "calibration_rectified": bool(prepared.rectified),
+            "calibration_warnings": list(prepared.warnings),
+        })
+        _event(
+            "calibration",
+            4,
+            "Applied camera calibration to the captured measurement frame",
+            profile_id=profile.profile_id,
+            validation_state=profile.validation_state.value,
+            application_mode=prepared.application.mode.value,
+            rectified=bool(prepared.rectified),
+        )
+
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     height, width = rgb.shape[:2]
     frame = FrameReference(1, 1, 0.0, ImageSize(width, height))
-    rgb_space = PixelCoordinateSpace("rgb", frame, frame.source_size, PixelSpaceRole.RGB)
+    rgb_space_id = (
+        applied_calibration.camera.intrinsics.pixel_space_id
+        if applied_calibration is not None
+        else "rgb"
+    )
+    rgb_space = PixelCoordinateSpace(rgb_space_id, frame, frame.source_size, PixelSpaceRole.RGB)
 
     _event("perception", 8, "Loading the perception model")
     perception = _run_perception(rgb, frame, rgb_space, args.perception_model, args.perception_profile)
@@ -305,25 +359,49 @@ def _initial_analysis(args):
     _event("depth", 30, "Perception released; loading the depth model", object_count=len(observations))
     depth_result = _run_depth_configured(bgr, args.depth_model, args.depth_profile, args.depth_config)
     inference = _to_inference_result(depth_result)
-    if inference.intrinsics is None:
+    depth_space = make_depth_space(frame, inference.depth)
+    transform = (
+        declare_identity_transform(rgb_space, depth_space)
+        if rgb_space.size == depth_space.size
+        else declare_full_frame_resize(rgb_space, depth_space)
+    )
+
+    calibrated_depth_intrinsics = None
+    if applied_calibration is not None:
+        calibrated_depth_intrinsics = transform_intrinsics(
+            applied_calibration.camera.intrinsics,
+            transform,
+        )
+    elif inference.intrinsics is None:
         depth_height, depth_width = inference.depth.shape
         inference = replace(
             inference,
             intrinsics=intrinsics_from_virtual_fov(depth_width, depth_height),
             intrinsics_source="estimated",
         )
-    depth_input = depth_input_from_inference_result(inference, frame)
-    depth_space = make_depth_space(frame, inference.depth)
-    transform = declare_identity_transform(rgb_space, depth_space) if rgb_space.size == depth_space.size else declare_full_frame_resize(rgb_space, depth_space)
+
+    depth_input = depth_input_from_inference_result(
+        inference,
+        frame,
+        intrinsics_override=calibrated_depth_intrinsics,
+    )
 
     _event("alignment", 55, "Aligning RGB, masks, depth and intrinsics")
     aligned = align_frame(AlignmentRequest(frame, rgb, rgb_space, depth_input, perception, (transform,)))
+    if rectification_support is not None:
+        aligned_support = resample_boolean_mask(rectification_support, transform)
+        aligned = replace(
+            aligned,
+            rgb_support_mask=np.logical_and(aligned.rgb_support_mask, aligned_support),
+            warnings=tuple(dict.fromkeys((*aligned.warnings, *calibration_meta["calibration_warnings"]))),
+        )
     preview = cv2.cvtColor(_depth_preview(inference.depth, inference.valid_mask), cv2.COLOR_BGR2RGB)
     return aligned, metadata, preview, {
         "depth_model_id": args.depth_model,
         "depth_model_name": aligned.depth_model_provenance.display_name,
         "perception_model_id": args.perception_model,
         "perception_model_name": perception.model_provenance[0].display_name if perception.model_provenance else args.perception_model,
+        **calibration_meta,
     }
 
 
@@ -454,7 +532,17 @@ def _write_bundle(output: Path, aligned, extraction, fitting, measurements, obse
         "objects": objects,
         "warnings": list(aligned.warnings) + list(measurements.warnings),
         "elapsed_seconds": elapsed,
-        "uncertainty_notice": "Estimated Uncertainty — Not Calibrated",
+        "uncertainty_notice": (
+            "Estimated Uncertainty — Calibrated camera geometry; depth/scale uncertainty still applies"
+            if aligned.intrinsics.calibration_status.value == "calibrated"
+            else "Estimated Uncertainty — Not Calibrated"
+        ),
+        "calibration_profile_id": str(models.get("calibration_profile_id", "")),
+        "calibration_record_id": str(models.get("calibration_record_id", "")),
+        "calibration_method": str(models.get("calibration_method", "")),
+        "calibration_validation_state": str(models.get("calibration_validation_state", "")),
+        "calibration_application_mode": str(models.get("calibration_application_mode", "")),
+        "calibration_rectified": bool(models.get("calibration_rectified", False)),
     }
     (output / BUNDLE_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
