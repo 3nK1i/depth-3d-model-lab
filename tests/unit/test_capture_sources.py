@@ -143,7 +143,12 @@ def test_rtsp_open_uses_timeout_and_sets_low_latency_after_open(monkeypatch) -> 
 
     assert calls[0][0] == "rtsp://camera/live"
     assert calls[0][1] == cv2.CAP_FFMPEG
-    assert calls[0][2] == [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4321]
+    assert calls[0][2] == [
+        cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+        4321,
+        cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+        1500,
+    ]
     assert (cv2.CAP_PROP_BUFFERSIZE, 1) in capture.set_calls
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == "rtsp_transport;tcp"
 

@@ -238,6 +238,7 @@ class LiveSlamCaptureController(QObject):
                     sanitized_url=source.sanitized_url,
                     source_fingerprint=source.source_fingerprint,
                     expected_image_size=camera.image_size,
+                    frame_rate_hz=source.native_fps,
                 ),
                 False,
             )
