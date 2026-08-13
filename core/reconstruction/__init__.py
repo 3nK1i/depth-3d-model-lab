@@ -471,6 +471,11 @@ from core.reconstruction.live_calibration import (
     live_camera_from_calibration_dict,
     load_live_camera_calibration,
 )
+from core.reconstruction.calibration_application import (
+    AppliedCameraCalibration,
+    CalibrationApplicationMode,
+    apply_camera_calibration_profile,
+)
 from core.reconstruction.calibration_profile import (
     CAMERA_CALIBRATION_PROFILE_SCHEMA_VERSION,
     CalibrationQualityMetrics,
@@ -1121,6 +1126,9 @@ __all__ = [
     "live_camera_calibration_dict",
     "live_camera_from_calibration_dict",
     "load_live_camera_calibration",
+    "AppliedCameraCalibration",
+    "CalibrationApplicationMode",
+    "apply_camera_calibration_profile",
     "CAMERA_CALIBRATION_PROFILE_SCHEMA_VERSION",
     "CalibrationQualityMetrics",
     "CalibrationSourceBinding",
