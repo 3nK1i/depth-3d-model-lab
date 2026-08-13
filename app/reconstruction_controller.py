@@ -600,6 +600,41 @@ class ReconstructionController(QObject):
             camera_intrinsics_policy=camera_intrinsics_policy,
         )
 
+    def current_live_image_size(self) -> ImageSize:
+        """Return the current live capture size without changing source ownership.
+
+        Phase 9.1F reuses the exact same resolution evidence as Test Mode so a
+        selected calibration profile can be safely applied before the existing
+        live-SLAM exact-resolution guard receives it.
+        """
+
+        selection = self._source_selection
+        if selection.workflow is not ReconstructionWorkflow.LIVE_SOURCE:
+            raise ReconstructionValidationError(
+                "Select the Live source workflow before resolving camera resolution."
+            )
+        if not selection.ready:
+            raise ReconstructionValidationError(
+                selection.detail or "The selected live source is not ready."
+            )
+
+        latest = self._application_controller.latest_source_frame
+        if latest is not None:
+            return ImageSize(latest.width, latest.height)
+
+        source = self._application_controller.active_source
+        if (
+            isinstance(source, CameraSource)
+            and source.requested_width is not None
+            and source.requested_height is not None
+        ):
+            return ImageSize(source.requested_width, source.requested_height)
+
+        raise ReconstructionValidationError(
+            "Live camera resolution is not available yet. Wait for the first "
+            "Camera/RTSP/Video frame, then try again."
+        )
+
     def build_estimated_live_camera(
         self,
         *,
@@ -617,32 +652,7 @@ class ReconstructionController(QObject):
         """
 
         selection = self._source_selection
-        if selection.workflow is not ReconstructionWorkflow.LIVE_SOURCE:
-            raise ReconstructionValidationError(
-                "Select the Live source workflow before estimating test intrinsics."
-            )
-        if not selection.ready:
-            raise ReconstructionValidationError(
-                selection.detail or "The selected live source is not ready."
-            )
-
-        latest = self._application_controller.latest_source_frame
-        if latest is not None:
-            image_size = ImageSize(latest.width, latest.height)
-        else:
-            source = self._application_controller.active_source
-            if (
-                isinstance(source, CameraSource)
-                and source.requested_width is not None
-                and source.requested_height is not None
-            ):
-                image_size = ImageSize(source.requested_width, source.requested_height)
-            else:
-                raise ReconstructionValidationError(
-                    "Estimated live intrinsics need the current capture resolution. "
-                    "Wait for the first Camera/RTSP/Video frame, then try Start again."
-                )
-
+        image_size = self.current_live_image_size()
         kind = selection.live_source_kind or "source"
         profile = estimate_camera_geometry_from_horizontal_fov(
             profile_id=f"phase8-8b3-test-{kind}-{image_size.width}x{image_size.height}",

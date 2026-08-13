@@ -1513,6 +1513,165 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
 
+    /* ---- Phase 9.1F camera calibration workspace ---- */
+
+    QDialog#cameraCalibrationDialog {{
+        background-color: {p.bg_root};
+        color: {p.text_primary};
+    }}
+
+    QFrame#cameraCalibrationHeader,
+    QFrame#cameraCalibrationStateCard {{
+        background-color: {p.bg_panel};
+        border: 1px solid {p.border};
+        border-radius: 7px;
+    }}
+
+    QLabel#cameraCalibrationTitle {{
+        color: {p.text_primary};
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }}
+
+    QLabel#cameraCalibrationSubtitle,
+    QLabel#cameraCalibrationHint {{
+        color: {p.text_secondary};
+        font-size: 10px;
+    }}
+
+    QLabel#cameraCalibrationCaution {{
+        color: {p.footer_status_amber_fg};
+        background-color: {p.footer_status_amber_bg};
+        border: 1px solid {p.footer_status_amber_border};
+        border-radius: 5px;
+        padding: 7px 9px;
+        font-size: 9px;
+        font-weight: 650;
+    }}
+
+    QFrame#cameraCalibrationSidebar {{
+        background-color: {p.settings_sidebar_bg};
+        border: 1px solid {p.settings_card_border};
+        border-radius: 7px;
+    }}
+
+    QLabel#cameraCalibrationSectionTitle,
+    QLabel#cameraCalibrationPageTitle,
+    QLabel#cameraCalibrationStateLabel {{
+        color: {p.settings_text_secondary};
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.55px;
+    }}
+
+    QLabel#cameraCalibrationStateValue {{
+        color: {p.text_primary};
+        font-size: 10px;
+        font-weight: 700;
+    }}
+    QLabel#cameraCalibrationStateValue[statusKind="ready"] {{
+        color: {p.footer_status_green_fg};
+    }}
+    QLabel#cameraCalibrationStateValue[statusKind="warning"] {{
+        color: {p.footer_status_amber_fg};
+    }}
+
+    QLabel#cameraCalibrationProfileSummary,
+    QLabel#cameraCalibrationFieldValue,
+    QLabel#cameraCalibrationResult {{
+        color: {p.text_primary};
+        background-color: {p.bg_input};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 5px;
+        padding: 7px 8px;
+        font-size: 9px;
+    }}
+
+    QLabel#cameraCalibrationFieldLabel {{
+        color: {p.text_secondary};
+        font-size: 10px;
+        font-weight: 650;
+    }}
+
+    QScrollArea#cameraCalibrationScroll,
+    QWidget#cameraCalibrationPageBody,
+    QStackedWidget#cameraCalibrationStack {{
+        background: transparent;
+        border: none;
+    }}
+
+    QComboBox#cameraCalibrationCombo,
+    QLineEdit#cameraCalibrationLineEdit,
+    QSpinBox#cameraCalibrationSpin,
+    QDoubleSpinBox#cameraCalibrationDoubleSpin {{
+        background-color: {p.bg_input};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 5px;
+        color: {p.text_primary};
+        min-height: 28px;
+        padding: 2px 8px;
+        font-size: 10px;
+    }}
+
+    QComboBox#cameraCalibrationCombo:hover,
+    QLineEdit#cameraCalibrationLineEdit:hover,
+    QSpinBox#cameraCalibrationSpin:hover,
+    QDoubleSpinBox#cameraCalibrationDoubleSpin:hover {{
+        border-color: {p.border_light};
+    }}
+
+    QComboBox#cameraCalibrationCombo::drop-down {{
+        border: none;
+        width: 22px;
+    }}
+
+    QPushButton#cameraCalibrationModeButton,
+    QPushButton#cameraCalibrationAction {{
+        background-color: {p.bg_input};
+        border: 1px solid {p.toolbar_card_border};
+        border-radius: 5px;
+        color: {p.text_secondary};
+        padding: 6px 9px;
+        font-size: 10px;
+        font-weight: 700;
+    }}
+
+    QPushButton#cameraCalibrationModeButton:hover,
+    QPushButton#cameraCalibrationAction:hover {{
+        background-color: {p.bg_panel_alt};
+        border-color: {p.border_light};
+        color: {p.text_primary};
+    }}
+
+    QPushButton#cameraCalibrationModeButton:checked,
+    QPushButton#cameraCalibrationAction[actionRole="primary"] {{
+        background-color: #2a1417;
+        border-color: {p.accent};
+        color: {p.accent};
+    }}
+
+    QPushButton#cameraCalibrationAction:disabled {{
+        background-color: transparent;
+        border-color: {p.toolbar_card_border};
+        color: {p.text_muted};
+    }}
+
+    QLabel#cameraCalibrationStatusMessage {{
+        color: {p.text_secondary};
+        font-size: 9px;
+    }}
+    QLabel#cameraCalibrationStatusMessage[statusKind="ready"] {{
+        color: {p.footer_status_green_fg};
+    }}
+    QLabel#cameraCalibrationStatusMessage[statusKind="warning"] {{
+        color: {p.footer_status_amber_fg};
+    }}
+    QLabel#cameraCalibrationStatusMessage[statusKind="error"] {{
+        color: {p.footer_status_red_fg};
+    }}
+
+
     /* ---- Performance footer ---- */
 
     QFrame#performanceFooter {{

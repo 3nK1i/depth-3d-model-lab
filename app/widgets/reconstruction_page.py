@@ -38,6 +38,7 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -53,6 +54,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.dialogs.camera_calibration_dialog import (
+    CameraCalibrationDialog,
+    default_camera_calibration_profile_root,
+)
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
 from app.offline_reconstruction_visualization import (
     OfflineSparseVisualization,
@@ -188,6 +193,12 @@ from core.reconstruction import (
     load_live_camera_calibration,
     verify_reconstruction_export_bundle,
 )
+from core.reconstruction.calibration_application import apply_camera_calibration_profile
+from core.reconstruction.calibration_management import CameraCalibrationProfileStore
+from core.reconstruction.calibration_profile import (
+    CameraCalibrationProfile,
+    CameraCalibrationValidationState,
+)
 
 
 class ReconstructionPage(QWidget):
@@ -218,6 +229,11 @@ class ReconstructionPage(QWidget):
         self._live_camera: ReconstructionCamera | None = None
         self._live_calibration_path: Path | None = None
         self._live_camera_mode: str | None = None
+        self._calibration_profile_store = CameraCalibrationProfileStore(
+            default_camera_calibration_profile_root()
+        )
+        self._selected_calibration_profile: CameraCalibrationProfile | None = None
+        self._live_calibration_application = None
         self._last_live_source_identity: tuple[str, str, str] | None = None
         self._last_workflow = ReconstructionWorkflow.NONE
         self._runtime_started_at: float | None = None
@@ -2822,10 +2838,35 @@ class ReconstructionPage(QWidget):
         authority_layout = authority.content_layout
         self._metric_scale_value = self._settings_value("Evidence-driven")
         self._camera_geometry_value = self._settings_value("Not selected")
+        self._calibration_profile_value = self._settings_value("No profile selected")
+        self._calibration_resolution_value = self._settings_value("—")
         self._metrology_value = self._settings_value("Not certified")
-        self._add_status_row(authority_layout, "Metric scale", self._metric_scale_value)
         self._add_status_row(authority_layout, "Calibration", self._camera_geometry_value)
+        self._add_status_row(authority_layout, "Profile", self._calibration_profile_value)
+        self._add_status_row(authority_layout, "Calib. resolution", self._calibration_resolution_value)
+        self._add_status_row(authority_layout, "Metric scale", self._metric_scale_value)
         self._add_status_row(authority_layout, "Metrology", self._metrology_value)
+        calibration_actions = QHBoxLayout()
+        calibration_actions.setSpacing(6)
+        self._calibration_manage_button = QPushButton("Manage Calibration")
+        self._calibration_manage_button.setObjectName("reconstructionRuntimeAction")
+        self._calibration_manage_button.setToolTip(
+            "Create, import, validate, save, or select a reusable camera calibration profile. "
+            "Camera calibration remains separate from metric-scale qualification."
+        )
+        self._calibration_manage_button.clicked.connect(self._open_camera_calibration_workspace)
+        self._calibration_clear_button = QPushButton("Clear")
+        self._calibration_clear_button.setObjectName("reconstructionRuntimeAction")
+        self._calibration_clear_button.setToolTip(
+            "Clear only the selected Phase 9 calibration profile. Saved profiles remain in the reusable library."
+        )
+        self._calibration_clear_button.setEnabled(False)
+        self._calibration_clear_button.clicked.connect(self.clear_camera_calibration_profile)
+        for button in (self._calibration_manage_button, self._calibration_clear_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            calibration_actions.addWidget(button)
+        authority_layout.addLayout(calibration_actions)
         self._add_settings_row(authority_layout, "Heavy backends", "Isolated workers")
         layout.addWidget(authority)
         layout.addStretch(1)
@@ -3652,32 +3693,98 @@ class ReconstructionPage(QWidget):
             self._refresh_source_controls()
             self._refresh_runtime_controls()
 
+    @property
+    def selected_camera_calibration_profile(self) -> CameraCalibrationProfile | None:
+        return self._selected_calibration_profile
+
+    def set_camera_calibration_profile(self, profile: CameraCalibrationProfile) -> None:
+        """Select one reusable Phase 9 calibration profile without starting a backend."""
+
+        if not isinstance(profile, CameraCalibrationProfile):
+            raise TypeError("profile must be a CameraCalibrationProfile.")
+        self._selected_calibration_profile = profile
+        self._live_camera = None
+        self._live_calibration_path = None
+        self._live_calibration_application = None
+        if self._live_camera_mode == "calibrated":
+            self._live_camera_mode = None
+        self._refresh_camera_authority()
+        self._refresh_live_camera_presentation()
+
+    def clear_camera_calibration_profile(self) -> None:
+        """Clear only the active Phase 9 selection; the reusable store is untouched."""
+
+        self._selected_calibration_profile = None
+        self._live_camera = None
+        self._live_calibration_path = None
+        self._live_calibration_application = None
+        if self._live_camera_mode == "calibrated":
+            self._live_camera_mode = None
+        self._refresh_camera_authority()
+        self._refresh_live_camera_presentation()
+
+    def _camera_calibration_dialog_context(self) -> tuple[str, str]:
+        source_label = "No live source selected"
+        resolution_text = "Resolution unavailable"
+        controller = self._controller
+        if controller is None:
+            return source_label, resolution_text
+        selection = controller.source_selection
+        source_label = selection.display_name or source_label
+        if selection.workflow is ReconstructionWorkflow.LIVE_SOURCE and selection.ready:
+            try:
+                size = controller.current_live_image_size()
+                resolution_text = f"{size.width} × {size.height}"
+            except (RuntimeError, TypeError, ValueError):
+                resolution_text = "Waiting for live frame"
+        return source_label, resolution_text
+
+    def _open_camera_calibration_workspace(self) -> None:
+        controller = self._controller
+        if controller is not None and controller.is_active:
+            QMessageBox.information(
+                self,
+                "Camera Calibration",
+                "Stop the active reconstruction runtime before changing camera calibration.",
+            )
+            return
+        source_label, resolution_text = self._camera_calibration_dialog_context()
+        dialog = CameraCalibrationDialog(
+            self,
+            profile_store=self._calibration_profile_store,
+            source_label=source_label,
+            target_resolution_text=resolution_text,
+            metric_status_text="Not qualified • scale evidence required",
+            initial_profile=self._selected_calibration_profile,
+            allow_test_mode=False,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_profile is not None:
+            self.set_camera_calibration_profile(dialog.selected_profile)
+
     def _choose_live_camera_mode(self) -> str | None:
-        dialog = QMessageBox(self)
-        dialog.setWindowTitle("Live Reconstruction Camera Geometry")
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setText("Choose how to provide camera intrinsics for live reconstruction.")
-        dialog.setInformativeText(
-            "Use a calibration file for calibrated ray geometry. Test Mode uses explicit "
-            "estimated intrinsics from the live resolution and an assumed 70° horizontal "
-            "field of view. Test Mode is suitable for functional/visual testing only: "
-            "geometry remains provisional, scale stays arbitrary, and metrology is not certified."
-        )
-        calibrated = dialog.addButton(
-            "Use calibration file",
-            QMessageBox.ButtonRole.ActionRole,
-        )
-        estimated = dialog.addButton(
-            "Run Test Mode",
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-        dialog.addButton(QMessageBox.StandardButton.Cancel)
-        dialog.exec()
-        clicked = dialog.clickedButton()
-        if clicked is calibrated:
+        # A selected Phase 9 profile is an explicit user choice from the calibration
+        # workspace, so Start can use it directly. Legacy B3 tests and workflows still
+        # fall back to the historical chooser when no Phase 9 profile is selected.
+        if self._selected_calibration_profile is not None:
             return "calibrated"
-        if clicked is estimated:
+
+        source_label, resolution_text = self._camera_calibration_dialog_context()
+        dialog = CameraCalibrationDialog(
+            self,
+            profile_store=self._calibration_profile_store,
+            source_label=source_label,
+            target_resolution_text=resolution_text,
+            metric_status_text="Not qualified • scale evidence required",
+            initial_profile=None,
+            allow_test_mode=True,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        if dialog.test_mode_requested:
             return "estimated"
+        if dialog.selected_profile is not None:
+            self.set_camera_calibration_profile(dialog.selected_profile)
+            return "calibrated"
         return None
 
     def _prepare_live_camera_for_start(
@@ -3700,6 +3807,7 @@ class ReconstructionPage(QWidget):
             camera = self._controller.build_estimated_live_camera()
             self._live_camera = camera
             self._live_calibration_path = None
+            self._live_calibration_application = None
             self._live_camera_mode = "estimated"
             self._configure_visualizer_camera(camera)
             self._refresh_live_camera_presentation()
@@ -3713,6 +3821,22 @@ class ReconstructionPage(QWidget):
         )
 
     def _choose_live_camera_calibration(self) -> ReconstructionCamera | None:
+        profile = self._selected_calibration_profile
+        if profile is not None:
+            if self._controller is None:
+                return None
+            target_size = self._controller.current_live_image_size()
+            applied = apply_camera_calibration_profile(
+                profile,
+                target_size,
+                allow_same_aspect_full_frame_resize=True,
+            )
+            self._live_calibration_application = applied
+            self._live_camera = applied.camera
+            self._live_calibration_path = None
+            return applied.camera
+
+        # Preserve the exact Phase 8 legacy JSON path for backward compatibility.
         if self._live_camera is not None and self._live_calibration_path is not None:
             return self._live_camera
         selected, _ = QFileDialog.getOpenFileName(
@@ -3727,11 +3851,13 @@ class ReconstructionPage(QWidget):
         camera = load_live_camera_calibration(path)
         self._live_camera = camera
         self._live_calibration_path = path
+        self._live_calibration_application = None
         return camera
 
     def _reset_live_camera_selection(self) -> None:
         self._live_camera = None
         self._live_calibration_path = None
+        self._live_calibration_application = None
         self._live_camera_mode = None
         if hasattr(self, "_reconstruction_canvas"):
             self._reconstruction_canvas.configure_camera_geometry(
@@ -3740,25 +3866,62 @@ class ReconstructionPage(QWidget):
         self._refresh_camera_authority()
 
     def _refresh_live_camera_presentation(self) -> None:
+        profile = self._selected_calibration_profile
         if self._live_camera_mode == "estimated":
             self._runtime_prerequisite_value.setText("Estimated intrinsics • Test mode")
             self._runtime_prerequisite_value.setToolTip(
                 "Explicit provisional mode: 70° assumed horizontal FOV, centered principal "
                 "point, square pixels, zero distortion. Non-metric; metrology is not certified."
             )
+        elif self._live_camera_mode == "calibrated" and profile is not None:
+            applied = self._live_calibration_application
+            suffix = ""
+            if applied is not None and applied.was_rescaled:
+                suffix = " • safely rescaled"
+            self._runtime_prerequisite_value.setText(
+                f"{profile.camera.camera_id} • {profile.validation_state.value.replace('_', ' ')}{suffix}"
+            )
+            self._runtime_prerequisite_value.setToolTip(
+                f"Profile: {profile.profile_id}\nCalibration record: {profile.calibration_record_id}"
+            )
         elif self._live_calibration_path is not None:
             self._runtime_prerequisite_value.setText(self._live_calibration_path.name)
             self._runtime_prerequisite_value.setToolTip(str(self._live_calibration_path))
+        elif profile is not None:
+            self._runtime_prerequisite_value.setText(
+                f"Selected calibration • {profile.camera.camera_id}"
+            )
+            self._runtime_prerequisite_value.setToolTip(profile.profile_id)
         else:
             self._runtime_prerequisite_value.setText("Choose calibration or Test mode on Start")
             self._runtime_prerequisite_value.setToolTip(
-                "Live Start explicitly offers a calibrated JSON profile or provisional Test Mode."
+                "Live Start opens the Phase 9 camera-calibration workspace or explicit provisional Test Mode."
             )
         self._refresh_camera_authority()
 
     def _refresh_camera_authority(self) -> None:
         if not hasattr(self, "_camera_geometry_value"):
             return
+        profile = self._selected_calibration_profile
+        if hasattr(self, "_calibration_clear_button"):
+            self._calibration_clear_button.setEnabled(profile is not None)
+        if profile is not None and hasattr(self, "_calibration_profile_value"):
+            self._calibration_profile_value.setText(profile.camera.camera_id)
+            self._calibration_profile_value.setToolTip(
+                f"Profile: {profile.profile_id}\nRecord: {profile.calibration_record_id}"
+            )
+            self._calibration_resolution_value.setText(
+                f"{profile.calibration_image_size.width} × {profile.calibration_image_size.height}"
+            )
+            self._calibration_resolution_value.setToolTip(
+                "Calibration resolution. Different live resolutions are accepted only through the Phase 9.1B safe full-frame resize path."
+            )
+        elif hasattr(self, "_calibration_profile_value"):
+            self._calibration_profile_value.setText("No profile selected")
+            self._calibration_profile_value.setToolTip("")
+            self._calibration_resolution_value.setText("—")
+            self._calibration_resolution_value.setToolTip("")
+
         if self._live_camera_mode == "estimated":
             self._camera_geometry_value.setText("Estimated / test")
             self._camera_geometry_value.setToolTip(
@@ -3768,7 +3931,17 @@ class ReconstructionPage(QWidget):
             self._metric_scale_value.setToolTip(
                 "Test Mode does not establish metric scale or calibrated ray geometry."
             )
+        elif self._live_camera_mode == "calibrated" and profile is not None:
+            state_text = profile.validation_state.value.replace("_", " ").title()
+            method_text = profile.method.value.replace("_", " ").title()
+            self._camera_geometry_value.setText(f"{state_text} • {method_text}")
+            self._camera_geometry_value.setToolTip(profile.provenance)
+            self._metric_scale_value.setText("Not qualified")
+            self._metric_scale_value.setToolTip(
+                "Camera calibration does not establish scene metric scale. Separate Phase 9 metric evidence is required."
+            )
         elif self._live_camera_mode == "calibrated":
+            # Exact legacy Phase 8 presentation retained for existing JSON users/tests.
             self._camera_geometry_value.setText("Calibrated")
             self._camera_geometry_value.setToolTip(
                 str(self._live_calibration_path or "Explicit calibrated camera profile")
@@ -3776,6 +3949,15 @@ class ReconstructionPage(QWidget):
             self._metric_scale_value.setText("Evidence-driven")
             self._metric_scale_value.setToolTip(
                 "Calibrated intrinsics do not by themselves establish monocular metric scale."
+            )
+        elif profile is not None:
+            state_text = profile.validation_state.value.replace("_", " ").title()
+            method_text = profile.method.value.replace("_", " ").title()
+            self._camera_geometry_value.setText(f"{state_text} • {method_text}")
+            self._camera_geometry_value.setToolTip(profile.provenance)
+            self._metric_scale_value.setText("Not qualified")
+            self._metric_scale_value.setToolTip(
+                "A calibration profile is selected, but metric scale requires independent scale evidence."
             )
         else:
             self._camera_geometry_value.setText("Not selected")
@@ -4226,6 +4408,11 @@ class ReconstructionPage(QWidget):
             self._start_button.setEnabled(False)
             self._pause_button.setEnabled(False)
             self._stop_button.setEnabled(False)
+            if hasattr(self, "_calibration_manage_button"):
+                self._calibration_manage_button.setEnabled(True)
+                self._calibration_clear_button.setEnabled(
+                    self._selected_calibration_profile is not None
+                )
             self._refresh_scene_interaction_controls()
             self._refresh_checkpoint_resume_controls()
             self._refresh_failure_recovery_controls()
@@ -4254,6 +4441,12 @@ class ReconstructionPage(QWidget):
             OfflineReconstructionRunState.CANCELLING,
         }
         busy = live_busy or offline_busy or controller.is_active
+        if hasattr(self, "_calibration_manage_button"):
+            calibration_mutable = not controller.is_shutdown and not busy
+            self._calibration_manage_button.setEnabled(calibration_mutable)
+            self._calibration_clear_button.setEnabled(
+                calibration_mutable and self._selected_calibration_profile is not None
+            )
         can_start = (
             not controller.is_shutdown
             and selection.ready
