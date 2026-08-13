@@ -855,6 +855,20 @@ from core.reconstruction.engine_endurance import (
     build_reconstruction_endurance_campaign,
 )
 
+from core.reconstruction.persistent_authority import (
+    PERSISTENT_SCENE_AUTHORITY_SCHEMA_VERSION,
+    PERSISTENT_SCENE_AUTHORITY_PHASE,
+    PERSISTENT_SCENE_AUTHORITY_MANIFEST,
+    PERSISTENT_SCENE_AUTHORITY_CHECKSUM,
+    PersistentSceneAuthoritySnapshot,
+    build_persistent_scene_authority_snapshot,
+    persistent_scene_authority_snapshot_from_dict,
+    write_persistent_scene_authority_snapshot,
+    read_persistent_scene_authority_snapshot,
+    read_optional_persistent_scene_authority_snapshot,
+    remove_persistent_scene_authority_snapshot,
+)
+
 from core.reconstruction.persistent_scene import (
     PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
@@ -1427,6 +1441,17 @@ __all__ = [
     "F4AppearanceIntegrationSummary",
     "appearance_provider_descriptors",
     "materialize_appearance_dataset",
+    "PERSISTENT_SCENE_AUTHORITY_SCHEMA_VERSION",
+    "PERSISTENT_SCENE_AUTHORITY_PHASE",
+    "PERSISTENT_SCENE_AUTHORITY_MANIFEST",
+    "PERSISTENT_SCENE_AUTHORITY_CHECKSUM",
+    "PersistentSceneAuthoritySnapshot",
+    "build_persistent_scene_authority_snapshot",
+    "persistent_scene_authority_snapshot_from_dict",
+    "write_persistent_scene_authority_snapshot",
+    "read_persistent_scene_authority_snapshot",
+    "read_optional_persistent_scene_authority_snapshot",
+    "remove_persistent_scene_authority_snapshot",
     "PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION",
     "PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST",
     "PERSISTENT_RECONSTRUCTION_SCENE_CHECKSUM",

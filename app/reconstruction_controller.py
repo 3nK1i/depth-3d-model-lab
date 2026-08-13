@@ -56,7 +56,10 @@ from core.reconstruction import (
     CameraIntrinsicsPolicy,
     LiveCaptureRuntimeState,
     LiveCaptureRuntimeStats,
+    CameraCalibrationProfile,
+    MetricQualificationEvidence,
     PersistentReconstructionScene,
+    PersistentSceneAuthoritySnapshot,
     ReconstructionCamera,
     ReconstructionEngineCheckpoint,
     ReconstructionPipelinePlan,
@@ -65,6 +68,7 @@ from core.reconstruction import (
     ReconstructionQualityProfile,
     ReconstructionResumeCompatibilityResult,
     ReconstructionStageRunResult,
+    build_persistent_scene_authority_snapshot,
     estimate_camera_geometry_from_horizontal_fov,
     new_reconstruction_session_id,
 )
@@ -73,6 +77,7 @@ from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
 
 
 ReconstructionStartGuard = Callable[[], str | None]
+_AUTHORITY_UNSET = object()
 
 
 class ReconstructionWorkflow(str, Enum):
@@ -203,6 +208,7 @@ class ReconstructionController(QObject):
     offline_run_finished = pyqtSignal(object)
     scene_availability_changed = pyqtSignal(object)
     persistent_scene_changed = pyqtSignal(object, str)
+    persistent_authority_changed = pyqtSignal(object, str)
     checkpoint_changed = pyqtSignal(object, str)
     resume_compatibility_changed = pyqtSignal(object)
     resume_context_changed = pyqtSignal(object)
@@ -252,6 +258,9 @@ class ReconstructionController(QObject):
         )
         self._persistence_controller.persistent_scene_changed.connect(
             self.persistent_scene_changed.emit
+        )
+        self._persistence_controller.persistent_authority_changed.connect(
+            self.persistent_authority_changed.emit
         )
         self._persistence_controller.checkpoint_changed.connect(self.checkpoint_changed.emit)
         self._persistence_controller.resume_compatibility_changed.connect(
@@ -338,6 +347,14 @@ class ReconstructionController(QObject):
     @property
     def persistent_scene_manifest(self) -> Path | None:
         return self._persistence_controller.scene_manifest
+
+    @property
+    def persistent_authority_snapshot(self) -> PersistentSceneAuthoritySnapshot | None:
+        return self._persistence_controller.authority_snapshot
+
+    @property
+    def persistent_authority_manifest(self) -> Path | None:
+        return self._persistence_controller.authority_manifest
 
     @property
     def engine_checkpoint(self) -> ReconstructionEngineCheckpoint | None:
@@ -856,9 +873,54 @@ class ReconstructionController(QObject):
             verify_file_references=verify_file_references,
         )
 
-    def save_persistent_scene(self, output_dir: str | Path) -> Path:
+    def save_persistent_scene(
+        self,
+        output_dir: str | Path,
+        *,
+        camera_calibration_profile: CameraCalibrationProfile | None | object = _AUTHORITY_UNSET,
+        metric_qualification_evidence: MetricQualificationEvidence | None | object = _AUTHORITY_UNSET,
+    ) -> Path:
         self._require_idle_for_persistence("save a persistent reconstruction scene")
-        return self._persistence_controller.save_scene(output_dir)
+        if camera_calibration_profile is _AUTHORITY_UNSET and metric_qualification_evidence is _AUTHORITY_UNSET:
+            return self._persistence_controller.save_scene(output_dir)
+        scene = self._persistence_controller.scene
+        if scene is None:
+            raise ReconstructionValidationError("No persistent reconstruction scene is loaded.")
+        current = self._persistence_controller.authority_snapshot
+        calibration = (
+            current.camera_calibration_profile
+            if camera_calibration_profile is _AUTHORITY_UNSET and current is not None
+            else (None if camera_calibration_profile is _AUTHORITY_UNSET else camera_calibration_profile)
+        )
+        evidence = (
+            current.metric_qualification_evidence
+            if metric_qualification_evidence is _AUTHORITY_UNSET and current is not None
+            else (None if metric_qualification_evidence is _AUTHORITY_UNSET else metric_qualification_evidence)
+        )
+        if calibration is not None and not isinstance(calibration, CameraCalibrationProfile):
+            raise TypeError("camera_calibration_profile must be CameraCalibrationProfile or None.")
+        if evidence is not None and not isinstance(evidence, MetricQualificationEvidence):
+            raise TypeError("metric_qualification_evidence must be MetricQualificationEvidence or None.")
+        if calibration is None and evidence is None:
+            snapshot = None
+        else:
+            scale_profile_id = (
+                current.metric_assessment_scale_profile_id
+                if current is not None
+                and evidence is current.metric_qualification_evidence
+                and current.metric_assessment_scale_profile_id
+                else None
+            )
+            snapshot = build_persistent_scene_authority_snapshot(
+                scene,
+                camera_calibration_profile=calibration,
+                metric_qualification_evidence=evidence,
+                metric_assessment_scale_profile_id=scale_profile_id,
+            )
+        return self._persistence_controller.save_scene_with_authority(
+            output_dir,
+            authority_snapshot=snapshot,
+        )
 
     def reload_persistent_scene(self) -> PersistentReconstructionScene:
         """Reload the active manifest with integrity and same-session checks."""

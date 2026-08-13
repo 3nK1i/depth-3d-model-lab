@@ -186,6 +186,7 @@ from core.reconstruction import (
     LiveCaptureRuntimeState,
     OfflineSparseExportSource,
     PERSISTENT_RECONSTRUCTION_SCENE_MANIFEST,
+    PersistentSceneAuthoritySnapshot,
     ReconstructionExportRequest,
     ReconstructionExportSource,
     ReconstructionCamera,
@@ -246,6 +247,8 @@ class ReconstructionPage(QWidget):
         self._last_runtime_error = ""
         self._scene_availability = ReconstructionSceneAvailability.NONE
         self._persistent_scene = None
+        self._persistent_authority_snapshot: PersistentSceneAuthoritySnapshot | None = None
+        self._persisted_metric_assessment = None
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -2958,6 +2961,7 @@ class ReconstructionPage(QWidget):
         controller.source_selection_changed.connect(self.set_source_selection)
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
+        controller.persistent_authority_changed.connect(self.set_persistent_authority_snapshot)
         controller.checkpoint_changed.connect(self.set_checkpoint)
         controller.resume_compatibility_changed.connect(self._on_resume_compatibility_changed)
         controller.resume_context_changed.connect(self._on_resume_context_changed)
@@ -2974,6 +2978,10 @@ class ReconstructionPage(QWidget):
         self._refresh_runtime_controls()
         scene = controller.persistent_scene
         self.set_persistent_scene(scene, str(controller.persistent_scene_manifest or ""))
+        self.set_persistent_authority_snapshot(
+            controller.persistent_authority_snapshot,
+            str(controller.persistent_authority_manifest or ""),
+        )
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
         self._refresh_reconstruction_export_controls()
         self._telemetry_timer.start()
@@ -3367,7 +3375,10 @@ class ReconstructionPage(QWidget):
             if response != QMessageBox.StandardButton.Yes:
                 return
         try:
-            controller.save_persistent_scene(output_dir)
+            controller.save_persistent_scene(
+                output_dir,
+                camera_calibration_profile=self._selected_calibration_profile,
+            )
             self._clear_warning_if_possible()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self.set_error(f"Could not save persistent reconstruction scene: {exc}")
@@ -3974,6 +3985,25 @@ class ReconstructionPage(QWidget):
             self._camera_geometry_value.setToolTip("")
             self._metric_scale_value.setText("Evidence-driven")
             self._metric_scale_value.setToolTip("")
+
+        assessment = self._persisted_metric_assessment
+        if self._persistent_scene is not None and assessment is not None:
+            if assessment.authorizes_calibrated_metric_scale:
+                self._metric_scale_value.setText("Qualified")
+            elif assessment.authorizes_metric_coordinates:
+                self._metric_scale_value.setText("Provisional")
+            else:
+                self._metric_scale_value.setText("Not qualified")
+            details = [assessment.message]
+            if assessment.relative_scale_uncertainty is not None:
+                details.append(
+                    f"Relative scale uncertainty: ±{assessment.relative_scale_uncertainty * 100.0:.2f}%"
+                )
+            self._metric_scale_value.setToolTip("\n".join(details))
+        elif self._persistent_scene is not None and self._persistent_authority_snapshot is None:
+            self._metric_scale_value.setToolTip(
+                "Legacy persistent scene: no Phase 9.1H calibration/metric authority sidecar is available."
+            )
         self._metrology_value.setText("Not certified")
 
     def _pause_or_resume_runtime(self) -> None:
@@ -4629,6 +4659,13 @@ class ReconstructionPage(QWidget):
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""
         self._persistent_scene = scene
+        # Scene identity changed; any previously restored metric assessment is
+        # no longer bound until the matching Phase 9.1H authority sidecar arrives.
+        # Keep the operational calibration selection intact so a newly completed
+        # reconstruction can persist the calibration that was actually used.
+        self._persistent_authority_snapshot = None
+        self._persisted_metric_assessment = None
+        self._refresh_camera_authority()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
@@ -4655,6 +4692,29 @@ class ReconstructionPage(QWidget):
             self._reset_semantic_presentation()
             return
         self._apply_semantic_presentation(presentation)
+
+    def set_persistent_authority_snapshot(
+        self,
+        snapshot: PersistentSceneAuthoritySnapshot | None,
+        manifest_path: str,
+    ) -> None:
+        if snapshot is not None and not isinstance(snapshot, PersistentSceneAuthoritySnapshot):
+            raise TypeError("snapshot must be PersistentSceneAuthoritySnapshot or None.")
+        self._persistent_authority_snapshot = snapshot
+        self._persisted_metric_assessment = (
+            None if snapshot is None else snapshot.metric_qualification_assessment
+        )
+        if snapshot is not None and snapshot.camera_calibration_profile is not None:
+            profile = snapshot.camera_calibration_profile
+            if self._selected_calibration_profile is None or (
+                self._selected_calibration_profile.as_dict() != profile.as_dict()
+            ):
+                self.set_camera_calibration_profile(profile)
+        elif self._persistent_scene is not None and self._selected_calibration_profile is not None:
+            # Loading a legacy/no-sidecar scene must not silently retain unrelated
+            # calibration evidence from a previously focused scene.
+            self.clear_camera_calibration_profile()
+        self._refresh_camera_authority()
 
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
         if checkpoint is None:

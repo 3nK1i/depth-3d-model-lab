@@ -24,6 +24,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from core.reconstruction import (
     PersistentReconstructionScene,
     PersistentReconstructionSceneState,
+    PersistentSceneAuthoritySnapshot,
     ReconstructionEngineCheckpoint,
     ReconstructionPipelinePlan,
     ReconstructionPipelineRunResult,
@@ -34,9 +35,12 @@ from core.reconstruction import (
     create_reconstruction_engine_checkpoint,
     persistent_scene_from_pipeline_result,
     read_persistent_reconstruction_scene,
+    read_optional_persistent_scene_authority_snapshot,
     read_reconstruction_engine_checkpoint,
+    remove_persistent_scene_authority_snapshot,
     verify_persistent_scene_file_references,
     write_persistent_reconstruction_scene,
+    write_persistent_scene_authority_snapshot,
     write_reconstruction_engine_checkpoint,
 )
 from core.reconstruction.errors import ReconstructionValidationError
@@ -84,6 +88,7 @@ class ReconstructionPersistenceController(QObject):
     offline_result_changed = pyqtSignal(object, str)
     scene_availability_changed = pyqtSignal(object)  # ReconstructionSceneAvailability
     persistent_scene_changed = pyqtSignal(object, str)  # scene or None, manifest path
+    persistent_authority_changed = pyqtSignal(object, str)  # snapshot or None, sidecar path
     checkpoint_changed = pyqtSignal(object, str)  # checkpoint or None, manifest path
     resume_compatibility_changed = pyqtSignal(object)
     error_occurred = pyqtSignal(str)
@@ -94,6 +99,8 @@ class ReconstructionPersistenceController(QObject):
         self._offline_result_path: Path | None = None
         self._scene: PersistentReconstructionScene | None = None
         self._scene_manifest: Path | None = None
+        self._authority_snapshot: PersistentSceneAuthoritySnapshot | None = None
+        self._authority_manifest: Path | None = None
         self._checkpoint: ReconstructionEngineCheckpoint | None = None
         self._checkpoint_manifest: Path | None = None
         self._resume_compatibility: ReconstructionResumeCompatibilityResult | None = None
@@ -119,6 +126,14 @@ class ReconstructionPersistenceController(QObject):
     @property
     def scene_availability(self) -> ReconstructionSceneAvailability:
         return self._availability
+
+    @property
+    def authority_snapshot(self) -> PersistentSceneAuthoritySnapshot | None:
+        return self._authority_snapshot
+
+    @property
+    def authority_manifest(self) -> Path | None:
+        return self._authority_manifest
 
     @property
     def checkpoint(self) -> ReconstructionEngineCheckpoint | None:
@@ -199,6 +214,14 @@ class ReconstructionPersistenceController(QObject):
             payload_snapshots_by_kind=payload_snapshots_by_kind,
         )
         manifest = write_persistent_reconstruction_scene(scene, output_dir)
+        remove_persistent_scene_authority_snapshot(Path(manifest).parent)
+        # A newly adopted result has no persisted Phase 9 authority sidecar yet.
+        # Clear only the persistence-owned snapshot; do not emit an authority-clear
+        # signal here because the currently selected operational calibration may
+        # be exactly the evidence the user intends to persist on the subsequent
+        # explicit Save action.
+        self._authority_snapshot = None
+        self._authority_manifest = None
         return self._set_scene(scene, manifest)
 
     def load_scene(
@@ -219,20 +242,80 @@ class ReconstructionPersistenceController(QObject):
         if verify_file_references:
             verify_persistent_scene_file_references(scene)
         manifest = self._normalize_scene_manifest(path)
-        return self._set_scene(scene, manifest)
+        authority, authority_manifest = read_optional_persistent_scene_authority_snapshot(
+            manifest,
+            expected_scene=scene,
+        )
+        loaded = self._set_scene(scene, manifest)
+        self._set_authority(authority, authority_manifest)
+        return loaded
 
     def save_scene(self, output_dir: str | Path) -> Path:
         self._require_active()
         if self._scene is None:
             raise ReconstructionValidationError("No persistent reconstruction scene is loaded.")
         manifest = write_persistent_reconstruction_scene(self._scene, output_dir)
+        root = Path(manifest).parent
+        if self._authority_snapshot is None:
+            remove_persistent_scene_authority_snapshot(root)
+            authority_manifest = None
+        else:
+            authority_manifest = write_persistent_scene_authority_snapshot(
+                self._authority_snapshot,
+                root,
+            )
         self._scene_manifest = manifest.resolve()
+        self._authority_manifest = None if authority_manifest is None else authority_manifest.resolve()
         self.persistent_scene_changed.emit(self._scene, str(self._scene_manifest))
+        self.persistent_authority_changed.emit(
+            self._authority_snapshot,
+            str(self._authority_manifest or ""),
+        )
+        return self._scene_manifest
+
+    def save_scene_with_authority(
+        self,
+        output_dir: str | Path,
+        *,
+        authority_snapshot: PersistentSceneAuthoritySnapshot | None,
+    ) -> Path:
+        self._require_active()
+        if self._scene is None:
+            raise ReconstructionValidationError("No persistent reconstruction scene is loaded.")
+        if authority_snapshot is not None:
+            if not isinstance(authority_snapshot, PersistentSceneAuthoritySnapshot):
+                raise TypeError("authority_snapshot must be PersistentSceneAuthoritySnapshot or None.")
+            if authority_snapshot.scene_id != self._scene.scene_id:
+                raise ReconstructionValidationError("Authority snapshot scene identity mismatch.")
+            if authority_snapshot.scene_fingerprint_sha256 != self._scene.scene_fingerprint_sha256:
+                raise ReconstructionValidationError("Authority snapshot scene fingerprint mismatch.")
+            if authority_snapshot.session_id != self._scene.session_id:
+                raise ReconstructionValidationError("Authority snapshot session identity mismatch.")
+        manifest = write_persistent_reconstruction_scene(self._scene, output_dir)
+        root = Path(manifest).parent
+        if authority_snapshot is None:
+            remove_persistent_scene_authority_snapshot(root)
+            authority_manifest = None
+        else:
+            authority_manifest = write_persistent_scene_authority_snapshot(
+                authority_snapshot,
+                root,
+            )
+        self._scene_manifest = manifest.resolve()
+        self._authority_snapshot = authority_snapshot
+        self._authority_manifest = None if authority_manifest is None else authority_manifest.resolve()
+        self.persistent_scene_changed.emit(self._scene, str(self._scene_manifest))
+        self.persistent_authority_changed.emit(
+            self._authority_snapshot,
+            str(self._authority_manifest or ""),
+        )
         return self._scene_manifest
 
     def clear_scene(self) -> None:
         self._scene = None
         self._scene_manifest = None
+        self._authority_snapshot = None
+        self._authority_manifest = None
         next_availability = (
             ReconstructionSceneAvailability.PARTIAL
             if self._offline_result is not None
@@ -243,6 +326,7 @@ class ReconstructionPersistenceController(QObject):
         )
         self._set_availability(next_availability)
         self.persistent_scene_changed.emit(None, "")
+        self.persistent_authority_changed.emit(None, "")
 
     def create_checkpoint(
         self,
@@ -333,6 +417,15 @@ class ReconstructionPersistenceController(QObject):
         self._set_availability(availability)
         self.persistent_scene_changed.emit(scene, str(self._scene_manifest))
         return scene
+
+    def _set_authority(
+        self,
+        snapshot: PersistentSceneAuthoritySnapshot | None,
+        manifest: Path | None,
+    ) -> None:
+        self._authority_snapshot = snapshot
+        self._authority_manifest = None if manifest is None else manifest.resolve()
+        self.persistent_authority_changed.emit(snapshot, str(self._authority_manifest or ""))
 
     def _set_checkpoint(
         self,
