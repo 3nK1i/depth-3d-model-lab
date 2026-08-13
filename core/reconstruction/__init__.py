@@ -492,6 +492,13 @@ from core.reconstruction.calibration_profile import (
     load_camera_calibration_profile,
     save_camera_calibration_profile,
 )
+from core.reconstruction.calibration_management import (
+    CalibrationProfileFileFormat,
+    CameraCalibrationProfileStore,
+    ImportedCameraCalibration,
+    create_manual_camera_calibration_profile,
+    import_camera_calibration_file,
+)
 from core.reconstruction.live_contracts import (
     LIVE_SLAM_RECONSTRUCTION_FRAME,
     LIVE_SLAM_SCHEMA_VERSION,
@@ -1143,6 +1150,11 @@ __all__ = [
     "camera_calibration_profile_to_live_calibration_dict",
     "load_camera_calibration_profile",
     "save_camera_calibration_profile",
+    "CalibrationProfileFileFormat",
+    "CameraCalibrationProfileStore",
+    "ImportedCameraCalibration",
+    "create_manual_camera_calibration_profile",
+    "import_camera_calibration_file",
     "LIVE_SLAM_MAX_MESSAGE_BYTES",
     "LIVE_SLAM_PROTOCOL_VERSION",
     "LIVE_SLAM_RECONSTRUCTION_FRAME",
