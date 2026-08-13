@@ -14,7 +14,7 @@ spacer, so the runtime card naturally lands at the row's right edge.
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QSizePolicy, QWidget
 
 from app.widgets.runtime_toolbar import RuntimeToolbar
 from app.widgets.source_bar import SourceBar
@@ -33,6 +33,9 @@ class SourceRuntimeBar(QWidget):
         super().__init__(parent)
         self.source_bar = SourceBar()
         self.runtime_toolbar = RuntimeToolbar()
+        for child in (self.source_bar, self.runtime_toolbar):
+            child.setMinimumWidth(0)
+            child.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

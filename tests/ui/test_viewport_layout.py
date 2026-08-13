@@ -43,12 +43,31 @@ def test_canvas_fills_card(panel: ViewportPanel):
 def test_render_card_is_compact_not_full_height(panel: ViewportPanel):
     card_h = panel.geometry().height()
     assert panel._render_card.height() < card_h
-    assert panel._render_card.width() == RENDER_CARD_WIDTH
+
+    # The Phase 8.9 pre-H responsive viewport may deliberately compact this
+    # floating card when the actual viewport is short/narrow. Preserve the
+    # original contract that the card never grows beyond its standard width,
+    # while accepting the bounded compact presentation.
+    assert panel._render_card.width() <= RENDER_CARD_WIDTH
+    if panel._render_card.compact:
+        assert panel._render_card.width() < RENDER_CARD_WIDTH
+    else:
+        assert panel._render_card.width() == RENDER_CARD_WIDTH
 
 
 def test_toolbar_width_within_spec(panel: ViewportPanel):
     assert 38 <= TOOLBAR_WIDTH <= 44
-    assert panel._tools.width() == TOOLBAR_WIDTH
+
+    # Phase 8.9 pre-H responsive hardening reflows the same tool overlay
+    # horizontally when the viewport is short/narrow so it cannot collide with
+    # the header or bottom-left orientation gizmo. TOOLBAR_WIDTH remains the
+    # standard width contract for the normal vertical presentation only.
+    if panel._tools.compact:
+        assert panel._tools.width() > TOOLBAR_WIDTH
+        assert panel._tools.width() > panel._tools.height()
+    else:
+        assert panel._tools.width() == TOOLBAR_WIDTH
+        assert panel._tools.height() > panel._tools.width()
 
 
 def test_overlays_sit_inside_the_canvas(panel: ViewportPanel):

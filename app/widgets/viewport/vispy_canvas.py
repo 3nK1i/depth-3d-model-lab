@@ -625,13 +625,7 @@ class ReconstructionCanvas(QObject):
     def update_live_pose(self, T_reconstruction_from_camera: np.ndarray) -> None:
         from app.reconstruction_visualization import camera_position_in_viewer
 
-        frustum = self._frustum_builder(
-            T_reconstruction_from_camera,
-            intrinsics_matrix=self._intrinsics_matrix,
-            image_size=self._image_size,
-        )
         position = camera_position_in_viewer(T_reconstruction_from_camera).astype(np.float32)
-        self._camera_frustum.set_data(pos=frustum, connect="segments")
         self._camera_center.set_data(
             pos=position.reshape(1, 3),
             face_color=(0.88, 0.16, 0.24, 1.0),
@@ -644,6 +638,15 @@ class ReconstructionCanvas(QObject):
         if len(self._trajectory_positions) > self.MAX_TRAJECTORY_POSES:
             del self._trajectory_positions[: len(self._trajectory_positions) - self.MAX_TRAJECTORY_POSES]
         self._refresh_world_axis_scale()
+        from app.reconstruction_visualization import adaptive_camera_frustum_depth
+
+        frustum = self._frustum_builder(
+            T_reconstruction_from_camera,
+            intrinsics_matrix=self._intrinsics_matrix,
+            image_size=self._image_size,
+            depth=adaptive_camera_frustum_depth(self._world_axis_length),
+        )
+        self._camera_frustum.set_data(pos=frustum, connect="segments")
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
         self._canvas.update()
@@ -1105,7 +1108,9 @@ class ReconstructionCanvas(QObject):
         from app.reconstruction_visualization import keyframe_frustum_segments_in_viewer
 
         matrix = self._offline_camera_matrices[index : index + 1]
-        depth = float(np.clip(self._world_axis_length * 0.34, 0.05, 0.15))
+        from app.reconstruction_visualization import adaptive_camera_frustum_depth
+
+        depth = adaptive_camera_frustum_depth(self._world_axis_length)
         frustum = keyframe_frustum_segments_in_viewer(matrix, depth=depth)
         center = self._offline_camera_positions[index : index + 1]
         self._selected_offline_camera_frustum.set_data(pos=frustum, connect="segments")

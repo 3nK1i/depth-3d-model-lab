@@ -7,7 +7,7 @@ Structure (spec: layered composition, not sibling columns):
         ├── _CanvasSurface (#viewportCanvas)  <- fills the whole cell
         └── _OverlayLayer (transparent, same cell)
             ├── _ViewportHeader        AlignLeft  | AlignTop
-            ├── _ToolOverlay           AlignLeft  | AlignVCenter
+            ├── _ToolOverlay           AlignLeft  | AlignTop
             ├── _RenderModeCard        AlignRight | AlignTop
             └── _AxisIndicator         AlignLeft  | AlignBottom
 
@@ -29,8 +29,9 @@ import math
 from enum import Enum
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF, QRegion
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QButtonGroup,
     QFrame,
     QGridLayout,
@@ -52,6 +53,7 @@ OVERLAY_MARGIN = 14
 CARD_MARGIN = 10
 TOOLBAR_WIDTH = 42
 RENDER_CARD_WIDTH = 162
+CANVAS_CLIP_RADIUS = 4.0
 
 class ViewportStatus(Enum):
     """Runtime state displayed in the viewport header."""
@@ -221,9 +223,10 @@ class _ToolOverlay(QFrame):
         self.setFixedWidth(TOOLBAR_WIDTH)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        col = QVBoxLayout(self)
-        col.setContentsMargins(4, 6, 4, 6)
-        col.setSpacing(4)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(4, 6, 4, 6)
+        self._layout.setSpacing(4)
+        self._compact = False
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -233,12 +236,12 @@ class _ToolOverlay(QFrame):
             btn.clicked.connect(lambda _c, t=tool_id: self.tool_changed.emit(t))
             self._group.addButton(btn)
             self._tool_buttons[tool_id] = btn
-            col.addWidget(btn)
+            self._layout.addWidget(btn)
         self._tool_buttons[self.DEFAULT_TOOL].setChecked(True)
 
         fit_btn = IconButton("fit", size=32, icon_size=16, tooltip="Fit scene to view")
         fit_btn.clicked.connect(self.fit_requested.emit)
-        col.addWidget(fit_btn)
+        self._layout.addWidget(fit_btn)
 
         self._fullscreen_btn = IconButton(
             "fullscreen",
@@ -248,7 +251,40 @@ class _ToolOverlay(QFrame):
             checkable=True,
         )
         self._fullscreen_btn.clicked.connect(self.fullscreen_requested.emit)
-        col.addWidget(self._fullscreen_btn)
+        self._layout.addWidget(self._fullscreen_btn)
+
+    def set_compact(self, compact: bool) -> None:
+        """Reflow the tool strip when the viewport is too short for a vertical stack.
+
+        Compact mode keeps every action available but moves the six controls into
+        a horizontal strip below the viewport header, leaving the bottom-left
+        orientation gizmo a dedicated safe zone.
+        """
+
+        compact = bool(compact)
+        if compact == self._compact:
+            return
+        self._compact = compact
+
+        # Release the previous fixed dimension before asking the layout for a new
+        # size hint in the opposite direction.
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16_777_215, 16_777_215)
+        self._layout.setDirection(
+            QBoxLayout.Direction.LeftToRight
+            if compact
+            else QBoxLayout.Direction.TopToBottom
+        )
+        self._layout.setContentsMargins(*(6, 4, 6, 4) if compact else (4, 6, 4, 6))
+        self._layout.setSpacing(3 if compact else 4)
+        self._layout.invalidate()
+        self._layout.activate()
+        self.adjustSize()
+        self.setFixedSize(self.sizeHint())
+
+    @property
+    def compact(self) -> bool:
+        return self._compact
 
     @property
     def active_tool(self) -> str:
@@ -288,15 +324,16 @@ class _CardSlider(QWidget):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(3)
 
-        caption = QLabel(label_text)
-        caption.setObjectName("cardSectionTitle")
-        col.addWidget(caption)
+        self._caption = QLabel(label_text)
+        self._caption.setObjectName("cardSectionTitle")
+        col.addWidget(self._caption)
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(7)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setToolTip(label_text.title())
         self._slider.setMinimum(minimum)
         self._slider.setMaximum(maximum)
         self._slider.setValue(value)
@@ -314,6 +351,13 @@ class _CardSlider(QWidget):
     def _on_changed(self, value: int) -> None:
         self._value.setText(self._formatter(value))
         self.value_changed.emit(value)
+
+    def set_compact(self, compact: bool) -> None:
+        """Collapse the caption row when the viewport has limited height."""
+
+        compact = bool(compact)
+        self._caption.setVisible(not compact)
+        self._value.setFixedWidth(36 if compact else 42)
 
     @property
     def slider(self) -> QSlider:
@@ -334,18 +378,19 @@ class _RenderModeCard(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("floatingCard")
+        self._compact = False
         self.setFixedWidth(RENDER_CARD_WIDTH)
         # Fixed vertical policy keeps the card sized to its contents so it
         # never stretches into a full-height sidebar.
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        col = QVBoxLayout(self)
-        col.setContentsMargins(12, 10, 12, 10)
-        col.setSpacing(7)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(12, 10, 12, 10)
+        self._layout.setSpacing(7)
 
-        title = QLabel("RENDER MODE")
-        title.setObjectName("cardSectionTitle")
-        col.addWidget(title)
+        self._title = QLabel("RENDER MODE")
+        self._title.setObjectName("cardSectionTitle")
+        self._layout.addWidget(self._title)
 
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
@@ -360,7 +405,7 @@ class _RenderModeCard(QFrame):
                 lambda checked, m=mode: self._on_mode_toggled(m, checked)
             )
             self._mode_group.addButton(radio)
-            col.addWidget(radio)
+            self._layout.addWidget(radio)
 
         mesh_button = self._mode_buttons["Mesh (Poisson)"]
         mesh_button.setEnabled(False)
@@ -369,7 +414,7 @@ class _RenderModeCard(QFrame):
             "dedicated reconstruction phase adds Open3D meshing off the UI thread."
         )
 
-        col.addSpacing(2)
+        self._layout.addSpacing(2)
         self._point_size = _CardSlider(
             "POINT SIZE", minimum=1, maximum=100, value=20, formatter=lambda v: f"{v / 10:.1f}"
         )
@@ -380,7 +425,7 @@ class _RenderModeCard(QFrame):
             "SMOOTHING", minimum=0, maximum=100, value=50, formatter=lambda v: f"{v / 100:.1f}"
         )
         for widget in (self._point_size, self._density, self._smoothing):
-            col.addWidget(widget)
+            self._layout.addWidget(widget)
 
         self._point_size.value_changed.connect(
             lambda value: self.point_size_changed.emit(value / 10.0)
@@ -396,11 +441,44 @@ class _RenderModeCard(QFrame):
             lambda value: self.smoothing_changed.emit(value / 100.0)
         )
 
-        col.addSpacing(2)
-        reset_btn = QPushButton("  Reset View")
-        reset_btn.setIcon(render_icon("reset", PALETTE.viewport_text, 13))
-        reset_btn.clicked.connect(self.reset_view_clicked.emit)
-        col.addWidget(reset_btn)
+        self._layout.addSpacing(2)
+        self._reset_btn = QPushButton("  Reset View")
+        self._reset_btn.setIcon(render_icon("reset", PALETTE.viewport_text, 13))
+        self._reset_btn.clicked.connect(self.reset_view_clicked.emit)
+        self._layout.addWidget(self._reset_btn)
+
+    def set_compact(self, compact: bool) -> None:
+        """Adapt the floating card without clipping controls in short viewports."""
+
+        compact = bool(compact)
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.setFixedWidth(148 if compact else RENDER_CARD_WIDTH)
+        self._layout.setContentsMargins(*(8, 5, 8, 5) if compact else (12, 10, 12, 10))
+        self._layout.setSpacing(3 if compact else 7)
+        # In a short viewport the card's semantic title is already obvious from
+        # its radio controls; hiding only that heading recovers enough vertical
+        # space to keep Reset fully inside the floating card.
+        self._title.setVisible(not compact)
+        # Mesh is intentionally disabled in the current release. Hiding only that
+        # unavailable row in compact mode saves vertical space without removing a
+        # usable action. If it becomes enabled later it remains visible.
+        mesh = self._mode_buttons["Mesh (Poisson)"]
+        mesh.setVisible(not compact or mesh.isEnabled())
+        for slider in (self._point_size, self._density, self._smoothing):
+            slider.set_compact(compact)
+        self._reset_btn.setText("  Reset" if compact else "  Reset View")
+        if compact:
+            self._reset_btn.setFixedHeight(24)
+        else:
+            self._reset_btn.setMinimumHeight(0)
+            self._reset_btn.setMaximumHeight(16_777_215)
+        self.updateGeometry()
+
+    @property
+    def compact(self) -> bool:
+        return self._compact
 
     def _on_mode_toggled(self, mode: str, checked: bool) -> None:
         if checked:
@@ -610,6 +688,21 @@ class _CanvasSurface(QFrame):
             Qt.AlignmentFlag.AlignCenter,
         )
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._sync_clip_mask()
+
+    def _sync_clip_mask(self) -> None:
+        """Clip both the idle grid and native VisPy child to the rounded canvas."""
+
+        rect = QRectF(self.rect())
+        if rect.isEmpty():
+            self.clearMask()
+            return
+        path = QPainterPath()
+        path.addRoundedRect(rect, CANVAS_CLIP_RADIUS, CANVAS_CLIP_RADIUS)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().paintEvent(event)
 
@@ -693,13 +786,19 @@ class _OverlayHost(QWidget):
         self.setStyleSheet("background: transparent;")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(left, top, right, bottom)
-        layout.setSpacing(0)
-        layout.addWidget(child)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(left, top, right, bottom)
+        self._layout.setSpacing(0)
+        self._layout.addWidget(child)
 
         if mouse_transparent:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def set_insets(
+        self, *, left: int = 0, top: int = 0, right: int = 0, bottom: int = 0
+    ) -> None:
+        self._layout.setContentsMargins(left, top, right, bottom)
+        self.updateGeometry()
 
 
 class ViewportPanel(QFrame):
@@ -723,6 +822,7 @@ class ViewportPanel(QFrame):
 
     def _build_ui(self) -> None:
         grid = QGridLayout(self)
+        self._grid = grid
         grid.setContentsMargins(CARD_MARGIN, CARD_MARGIN, CARD_MARGIN, CARD_MARGIN)
         grid.setSpacing(0)
 
@@ -756,7 +856,7 @@ class ViewportPanel(QFrame):
             self._tools_host,
             0,
             0,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
         )
 
         self._render_card = _RenderModeCard()
@@ -780,8 +880,11 @@ class ViewportPanel(QFrame):
         self._axis = _AxisIndicator()
         self._axis_host = _OverlayHost(
             self._axis,
-            left=OVERLAY_MARGIN,
-            bottom=OVERLAY_MARGIN,
+            # Give the XYZ labels/arrows a little more breathing room from the
+            # viewport edges. The larger bottom inset is intentional: visually
+            # lift the gizmo more than we move it horizontally.
+            left=OVERLAY_MARGIN + 12,
+            bottom=OVERLAY_MARGIN + 16,
             mouse_transparent=True,
         )
         grid.addWidget(
@@ -793,6 +896,52 @@ class ViewportPanel(QFrame):
 
         grid.setRowStretch(0, 1)
         grid.setColumnStretch(0, 1)
+        self._sync_responsive_overlays()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._sync_responsive_overlays()
+
+    def _sync_responsive_overlays(self) -> None:
+        """Keep floating controls fully visible in a bounded windowed viewport."""
+
+        if not hasattr(self, "_render_card"):
+            return
+        compact = self.width() < 620 or self.height() < 360
+        self._render_card.set_compact(compact)
+        self._tools.set_compact(compact)
+        # The static/shared 3D surface must be allowed to shrink with the
+        # containing page. A fixed 260 px minimum can push the viewport beyond
+        # its card in short windowed layouts even though the canvas itself is
+        # correctly clipped. Preserve the original minimum at normal height.
+        self._canvas.setMinimumHeight(180 if compact else 260)
+
+        if compact:
+            # Short viewports cannot safely fit the full vertical tool stack
+            # between the title/header and the bottom-left orientation gizmo.
+            # Reflow it horizontally beneath the header instead of allowing
+            # overlays to collide.
+            self._tools_host.set_insets(
+                left=OVERLAY_MARGIN,
+                top=OVERLAY_MARGIN + 28,
+            )
+            self._grid.setAlignment(
+                self._tools_host,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            )
+        else:
+            # Keep the normal vertical strip in a dedicated top-left lane below
+            # the header. Centering it vertically can make its lower controls
+            # collide with the bottom-left XYZ gizmo in Stable Video's shorter
+            # full-window viewport.
+            self._tools_host.set_insets(
+                left=OVERLAY_MARGIN,
+                top=OVERLAY_MARGIN + 28,
+            )
+            self._grid.setAlignment(
+                self._tools_host,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            )
 
     # -- Camera lifecycle (spec: fit once, never per frame) ----------------
 

@@ -16,11 +16,14 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from app.icons import render_icon
 from app.stable_video_controller import StableVideoRunState
+from app.theme import PALETTE
 from app.widgets.depth_view import DepthMapView
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.viewport.viewport_panel import ViewportPanel, ViewportStatus
@@ -51,6 +54,8 @@ class StableVideoPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._output_dir: Path | None = None
+        self._compact_controls = False
+        self._paused = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -83,10 +88,38 @@ class StableVideoPage(QWidget):
         self._pause.setEnabled(False)
         self._stop.setEnabled(False)
         self._open.setEnabled(False)
+        self._stabilization_label = QLabel("Stabilization")
+        for widget in (
+            self._model,
+            self._temporal,
+            self._stabilization,
+            self._fps,
+            self._export,
+            self._numeric,
+            self._start,
+            self._pause,
+            self._stop,
+            self._open,
+        ):
+            widget.setMinimumWidth(0)
+        self._temporal.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        for widget in (self._start, self._pause, self._stop, self._open):
+            # Runtime actions must never collapse to zero width. Compact mode
+            # gives them fixed icon-sized widths; normal mode keeps their
+            # preferred text width.
+            widget.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self._start.setIcon(render_icon("play", PALETTE.toolbar_text_muted, 14))
+        self._pause.setIcon(render_icon("pause", PALETTE.toolbar_text_muted, 14))
+        self._stop.setIcon(render_icon("stop", PALETTE.toolbar_text_muted, 14))
+        self._open.setIcon(render_icon("snapshot", PALETTE.toolbar_text_muted, 14))
+        self._start.setToolTip("Start Stable Video")
+        self._pause.setToolTip("Pause or resume Stable Video")
+        self._stop.setToolTip("Stop and finalize Stable Video export")
+        self._open.setToolTip("Open Stable Video export")
         row.addWidget(self._model)
         row.addWidget(self._temporal)
         row.addStretch(1)
-        row.addWidget(QLabel("Stabilization"))
+        row.addWidget(self._stabilization_label)
         row.addWidget(self._stabilization)
         row.addWidget(self._fps)
         row.addWidget(self._export)
@@ -160,6 +193,62 @@ class StableVideoPage(QWidget):
             lambda text: self.stabilization_changed.emit(_STABILIZATION_VALUES[text])
         )
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._set_compact_controls(self.width() < 1180)
+
+    def _set_compact_controls(self, compact: bool) -> None:
+        compact = bool(compact)
+        if compact == self._compact_controls:
+            return
+        self._compact_controls = compact
+        self._temporal.setVisible(not compact)
+        self._stabilization_label.setText("Stab." if compact else "Stabilization")
+        self._fps.setSuffix(" FPS" if compact else " FPS export")
+        self._export.setText("RGB + Depth" if compact else "Export RGB + Depth")
+        self._numeric.setText("Numeric" if compact else "Numerical depth")
+        self._sync_runtime_action_presentation()
+
+    def _sync_runtime_action_presentation(self) -> None:
+        """Keep Stable Video runtime actions visible at every supported width."""
+
+        compact = self._compact_controls
+        buttons = (self._start, self._pause, self._stop, self._open)
+        if compact:
+            for button in buttons:
+                button.setFixedWidth(34)
+                button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self._start.setText("")
+            self._pause.setText("")
+            self._stop.setText("")
+            self._open.setText("")
+        else:
+            for button in buttons:
+                button.setMinimumWidth(0)
+                button.setMaximumWidth(16_777_215)
+                button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            self._start.setText("Start Stable Video")
+            self._pause.setText("Resume" if self._paused else "Pause")
+            self._stop.setText("Stop & Finalize")
+            self._open.setText("Open Export")
+
+        # Pause becomes Resume semantically while retaining a compact icon-only
+        # presentation in constrained windows.
+        self._pause.setIcon(
+            render_icon(
+                "play" if self._paused else "pause",
+                PALETTE.toolbar_text_muted,
+                14,
+            )
+        )
+        self._pause.setToolTip(
+            "Resume Stable Video" if self._paused else "Pause Stable Video"
+        )
+
+    @property
+    def compact_controls(self) -> bool:
+        return self._compact_controls
+
     @property
     def smoothing_strength(self) -> float:
         return _STABILIZATION_VALUES[self._stabilization.currentText()]
@@ -183,6 +272,7 @@ class StableVideoPage(QWidget):
             if native_temporal
             else "Temporal path: Generic geometry smoothing"
         )
+        self._model.setToolTip(self._temporal.text())
 
     def set_source_eligible(self, eligible: bool, reason: str = "") -> None:
         if self._start.isEnabled() == eligible and not reason:
@@ -195,11 +285,12 @@ class StableVideoPage(QWidget):
     def apply_state(self, state: StableVideoRunState) -> None:
         running = state in {StableVideoRunState.STARTING, StableVideoRunState.RUNNING}
         paused = state is StableVideoRunState.PAUSED
+        self._paused = paused
         stopping = state is StableVideoRunState.STOPPING
         self._start.setEnabled(state in {StableVideoRunState.IDLE, StableVideoRunState.COMPLETED, StableVideoRunState.FAILED})
         self._pause.setEnabled(running or paused)
-        self._pause.setText("Resume" if paused else "Pause")
         self._stop.setEnabled(running or paused or stopping)
+        self._sync_runtime_action_presentation()
         self._stabilization.setEnabled(not running and not paused)
         self._fps.setEnabled(not running and not paused)
         self._export.setEnabled(not running and not paused)

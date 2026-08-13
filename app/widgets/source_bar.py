@@ -14,7 +14,7 @@ against :mod:`core.capture`.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -44,6 +44,7 @@ _SOURCE_META: dict[SourceType, tuple[str, str]] = {
 # here since SourceRuntimeBar applies the overall 3-card proportions).
 _TYPE_CARD_STRETCH = 53
 _CONFIG_CARD_STRETCH = 47
+_SOURCE_TYPE_TEXT_MIN_WIDTH = 350
 
 
 class SourceBar(QWidget):
@@ -58,6 +59,7 @@ class SourceBar(QWidget):
         super().__init__(parent)
         self._type_buttons: dict[SourceType, QPushButton] = {}
         self._active_type = SourceType.CAMERA
+        self._compact_source_types = False
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -65,8 +67,10 @@ class SourceBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        layout.addWidget(self._build_type_card(), _TYPE_CARD_STRETCH)
+        self._type_card = self._build_type_card()
+        layout.addWidget(self._type_card, _TYPE_CARD_STRETCH)
         layout.addWidget(self._build_config_card(), _CONFIG_CARD_STRETCH)
+        QTimer.singleShot(0, self._refresh_source_type_presentation)
 
     def _build_type_card(self) -> ToolbarGroupCard:
         card = ToolbarGroupCard()
@@ -83,9 +87,13 @@ class SourceBar(QWidget):
             btn.setObjectName("sourceTypeButton")
             btn.setCheckable(True)
             btn.setIcon(render_icon(icon_name, PALETTE.toolbar_text_muted, 15))
+            btn.setToolTip(text.title() if source_type is not SourceType.RTSP else "RTSP")
+            btn.setAccessibleName(text.title() if source_type is not SourceType.RTSP else "RTSP")
             btn.clicked.connect(lambda _c, t=source_type: self._on_type_clicked(t))
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             self._type_buttons[source_type] = btn
-            row.addWidget(btn)
+            row.addWidget(btn, stretch=1)
 
         self._sync_type_button_icons()
         self._type_buttons[self._active_type].setChecked(True)
@@ -117,45 +125,75 @@ class SourceBar(QWidget):
             self._image_browse_btn = QPushButton("Browse…")
             self._image_browse_btn.clicked.connect(self.browse_image_clicked.emit)
             recent = SettingsComboBox(["Recent files…"])
-            recent.setMinimumWidth(150)
+            recent.setMinimumWidth(0)
+            recent.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._image_recent_combo = recent
             row.addWidget(self._image_browse_btn)
-            row.addWidget(recent)
+            row.addWidget(recent, stretch=1)
         elif source_type is SourceType.VIDEO:
             self._video_browse_btn = QPushButton("Browse…")
             self._video_browse_btn.clicked.connect(self.browse_video_clicked.emit)
             self._video_path_edit = QLineEdit()
             self._video_path_edit.setPlaceholderText("No video loaded")
             self._video_path_edit.setReadOnly(True)
-            self._video_path_edit.setMinimumWidth(200)
+            self._video_path_edit.setMinimumWidth(0)
+            self._video_path_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             row.addWidget(self._video_browse_btn)
-            row.addWidget(self._video_path_edit)
+            row.addWidget(self._video_path_edit, stretch=1)
         elif source_type is SourceType.CAMERA:
             # No refresh button in this target-matching composition (spec
             # §7): device rescan stays available contextually elsewhere
             # without disturbing this exact row.
             self._camera_device_combo = SettingsComboBox(["Camera 0"])
-            self._camera_device_combo.setMinimumWidth(100)
+            self._camera_device_combo.setMinimumWidth(0)
+            self._camera_device_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._camera_resolution_combo = SettingsComboBox(
                 ["1280\u00d7720", "1920\u00d71080", "640\u00d7480"]
             )
-            self._camera_resolution_combo.setMinimumWidth(100)
+            self._camera_resolution_combo.setMinimumWidth(0)
+            self._camera_resolution_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._camera_fps_combo = SettingsComboBox(["30 FPS", "60 FPS", "15 FPS"])
-            self._camera_fps_combo.setMinimumWidth(80)
-            row.addWidget(self._camera_device_combo)
-            row.addWidget(self._camera_resolution_combo)
-            row.addWidget(self._camera_fps_combo)
+            self._camera_fps_combo.setMinimumWidth(0)
+            self._camera_fps_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row.addWidget(self._camera_device_combo, stretch=10)
+            row.addWidget(self._camera_resolution_combo, stretch=12)
+            row.addWidget(self._camera_fps_combo, stretch=8)
         elif source_type is SourceType.RTSP:
             self._rtsp_url_edit = QLineEdit()
             self._rtsp_url_edit.setPlaceholderText("rtsp://host:port/stream")
-            self._rtsp_url_edit.setMinimumWidth(200)
+            self._rtsp_url_edit.setMinimumWidth(0)
+            self._rtsp_url_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._rtsp_test_btn = QPushButton("Test")
             self._rtsp_test_btn.clicked.connect(self.rtsp_test_clicked.emit)
-            row.addWidget(self._rtsp_url_edit)
+            row.addWidget(self._rtsp_url_edit, stretch=1)
             row.addWidget(self._rtsp_test_btn)
 
         row.addStretch(1)
         return widget
+
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        # Child card geometry settles after the parent resize/layout pass.
+        QTimer.singleShot(0, self._refresh_source_type_presentation)
+
+    def _refresh_source_type_presentation(self) -> None:
+        if not hasattr(self, "_type_card"):
+            return
+        compact = self._type_card.width() < _SOURCE_TYPE_TEXT_MIN_WIDTH
+        presentation_matches = all(
+            (button.text() == "") == compact for button in self._type_buttons.values()
+        )
+        if compact == self._compact_source_types and presentation_matches:
+            return
+        self._compact_source_types = compact
+        for source_type, button in self._type_buttons.items():
+            _, text = _SOURCE_META[source_type]
+            button.setText("" if compact else f"  {text}")
+
+    @property
+    def compact_source_types(self) -> bool:
+        return self._compact_source_types
 
     def _on_type_clicked(self, source_type: SourceType) -> None:
         if source_type == self._active_type:

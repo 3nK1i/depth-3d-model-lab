@@ -236,6 +236,21 @@ def adaptive_world_axis_length(
     return float(np.clip(diagonal * 0.30, minimum, maximum))
 
 
+def adaptive_camera_frustum_depth(world_axis_length: float) -> float:
+    """Return a bounded presentation depth for a camera frustum.
+
+    The live current-camera presentation historically used a fixed 0.35 reconstruction-unit depth,
+    which can dominate small arbitrary-gauge scenes and read visually as a large
+    rotated rectangle.  Tie the symbolic frustum to the already presentation-only
+    adaptive world-axis scale instead; this never changes SLAM poses or authority.
+    """
+
+    length = float(world_axis_length)
+    if not np.isfinite(length) or length <= 0.0:
+        raise ValueError("world_axis_length must be a positive finite value.")
+    return float(np.clip(length * 0.34, 0.05, 0.15))
+
+
 def trajectory_display_indices(count: int, *, max_points: int = 4096) -> np.ndarray:
     """Return ordered indices for bounded trajectory rendering.
 

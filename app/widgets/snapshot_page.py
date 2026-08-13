@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -56,12 +57,16 @@ class SnapshotPage(QWidget):
         self._run.setEnabled(False)
         self._cancel.setEnabled(False)
         self._open.setEnabled(False)
+        self._model_label.setMinimumWidth(0)
+        self._frame_label.setMinimumWidth(0)
+        self._frame_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self._model_label)
         row.addSpacing(12)
-        row.addWidget(self._frame_label)
-        row.addStretch(1)
+        row.addWidget(self._frame_label, stretch=1)
         for button in (self._capture, self._run, self._cancel, self._open):
-            row.addWidget(button)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            row.addWidget(button, stretch=1)
         layout.addWidget(controls)
 
         self._source = OriginalSourceView()

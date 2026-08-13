@@ -19,7 +19,7 @@ from __future__ import annotations
 from enum import Enum
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QPushButton, QSizePolicy, QWidget
 
 from app.icons import render_icon
 from app.theme import PALETTE
@@ -69,41 +69,46 @@ class RuntimeToolbar(QWidget):
         self._connect_btn = QPushButton("Connect")
         self._connect_btn.setObjectName("toolbarDisconnectButton")
         self._connect_btn.setFixedHeight(RUNTIME_BUTTON_HEIGHT)
-        self._connect_btn.setMinimumWidth(100)
+        self._connect_btn.setMinimumWidth(0)
+        self._connect_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._connect_btn.clicked.connect(self.connect_clicked.emit)
 
         self._disconnect_btn = QPushButton("Disconnect")
         self._disconnect_btn.setObjectName("toolbarDisconnectButton")
         self._disconnect_btn.setFixedHeight(RUNTIME_BUTTON_HEIGHT)
-        self._disconnect_btn.setMinimumWidth(100)
+        self._disconnect_btn.setMinimumWidth(0)
+        self._disconnect_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._disconnect_btn.clicked.connect(self.disconnect_clicked.emit)
 
         self._start_btn = QPushButton("  Start Inference")
         self._start_btn.setObjectName("toolbarStartButton")
         self._start_btn.setFixedHeight(RUNTIME_BUTTON_HEIGHT)
-        self._start_btn.setMinimumWidth(140)
+        self._start_btn.setMinimumWidth(0)
+        self._start_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._start_btn.setIcon(render_icon("play", PALETTE.toolbar_green_fg, 14))
         self._start_btn.clicked.connect(self.start_clicked.emit)
 
         self._pause_resume_btn = QPushButton("  Pause")
         self._pause_resume_btn.setObjectName("toolbarPauseButton")
         self._pause_resume_btn.setFixedHeight(RUNTIME_BUTTON_HEIGHT)
-        self._pause_resume_btn.setMinimumWidth(90)
+        self._pause_resume_btn.setMinimumWidth(0)
+        self._pause_resume_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._pause_resume_btn.setIcon(render_icon("pause", PALETTE.toolbar_amber_fg, 14))
         self._pause_resume_btn.clicked.connect(self.pause_resume_clicked.emit)
 
         self._stop_btn = QPushButton("  Stop Inference")
         self._stop_btn.setObjectName("toolbarStopButton")
         self._stop_btn.setFixedHeight(RUNTIME_BUTTON_HEIGHT)
-        self._stop_btn.setMinimumWidth(140)
+        self._stop_btn.setMinimumWidth(0)
+        self._stop_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._stop_btn.setIcon(render_icon("stop", PALETTE.toolbar_red_fg, 14))
         self._stop_btn.clicked.connect(self.stop_clicked.emit)
 
-        row.addWidget(self._connect_btn)
-        row.addWidget(self._disconnect_btn)
-        row.addWidget(self._start_btn)
-        row.addWidget(self._pause_resume_btn)
-        row.addWidget(self._stop_btn)
+        row.addWidget(self._connect_btn, stretch=5)
+        row.addWidget(self._disconnect_btn, stretch=5)
+        row.addWidget(self._start_btn, stretch=7)
+        row.addWidget(self._pause_resume_btn, stretch=5)
+        row.addWidget(self._stop_btn, stretch=7)
 
         outer.addWidget(card)
 
