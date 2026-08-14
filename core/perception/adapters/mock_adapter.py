@@ -6,7 +6,7 @@ from core.contracts.common import ModelProvenance
 from core.models.metadata import ConfidenceKind
 from core.perception.base import BasePerceptionAdapter
 from core.perception.messages import FramePerceptionRequest, PromptedSegmentationRequest, SequenceResetRequest
-from core.perception.raw import RawPerceptionBatch, RawPerceptionInstance, RawPromptedMask
+from core.perception.raw import RawAutomaticMaskBatch, RawAutomaticMaskProposal, RawPerceptionBatch, RawPerceptionInstance, RawPromptedMask
 
 class DevelopmentPerceptionMockAdapter(BasePerceptionAdapter):
 
@@ -54,6 +54,27 @@ class DevelopmentPerceptionMockAdapter(BasePerceptionAdapter):
                 mask[y0:y1, x0:x1] = True
             instances.append(RawPerceptionInstance(f'mock-{i}', i, f'mock-object-{i}', 0.9 - i * 0.1, box, mask, 0.85 if mask is not None else None, ConfidenceKind.CONFIDENCE if mask is not None else ConfidenceKind.NONE))
         return RawPerceptionBatch(request.frame_reference, request.rgb_space.space_id, tuple(instances), self._prov('instance_segmentation'), (time.perf_counter() - t) * 1000)
+
+
+    def propose_masks(self, request: FramePerceptionRequest) -> RawAutomaticMaskBatch:
+        if not self._loaded:
+            raise RuntimeError('Mock adapter is not loaded.')
+        h, w = request.rgb.shape[:2]
+        proposals = []
+        regions = (
+            (int(0.08 * w), int(0.10 * h), int(0.48 * w), int(0.72 * h)),
+            (int(0.52 * w), int(0.22 * h), int(0.92 * w), int(0.88 * h)),
+        )
+        for index, (x0, y0, x1, y1) in enumerate(regions):
+            mask = np.zeros((h, w), dtype=np.bool_)
+            mask[y0:y1, x0:x1] = True
+            proposals.append(RawAutomaticMaskProposal(f'mock-auto-{index}', mask))
+        return RawAutomaticMaskBatch(
+            request.frame_reference,
+            request.rgb_space.space_id,
+            tuple(proposals),
+            self._prov('automatic_segmentation'),
+        )
 
     def refine_mask(self, request: PromptedSegmentationRequest) -> RawPromptedMask:
         h, w = request.frame_request.rgb.shape[:2]

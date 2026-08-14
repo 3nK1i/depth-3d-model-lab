@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Protocol, runtime_checkable
 from core.perception.messages import FramePerceptionRequest, PromptedSegmentationRequest, SequenceResetRequest
-from core.perception.raw import RawPerceptionBatch, RawPromptedMask
+from core.perception.raw import RawAutomaticMaskBatch, RawPerceptionBatch, RawPromptedMask
 
 class PerceptionAdapterError(RuntimeError):
     """Base typed error for perception adapters."""
@@ -45,6 +45,12 @@ class FramePerceptionAdapter(Protocol):
 class PromptedSegmentationAdapter(Protocol):
 
     def refine_mask(self, request: PromptedSegmentationRequest) -> RawPromptedMask:
+        ...
+
+@runtime_checkable
+class AutomaticSegmentationAdapter(Protocol):
+
+    def propose_masks(self, request: FramePerceptionRequest) -> RawAutomaticMaskBatch:
         ...
 
 @runtime_checkable

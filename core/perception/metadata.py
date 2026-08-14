@@ -20,12 +20,14 @@ class PerceptionTask(str, Enum):
     DETECTION = "detection"
     INSTANCE_SEGMENTATION = "instance_segmentation"
     PROMPTED_SEGMENTATION = "prompted_segmentation"
+    AUTOMATIC_SEGMENTATION = "automatic_segmentation"
     TRACKING = "tracking"
 
 
 class AdapterCapability(str, Enum):
     FRAME_PERCEPTION = "frame_perception"
     PROMPTED_SEGMENTATION = "prompted_segmentation"
+    AUTOMATIC_SEGMENTATION = "automatic_segmentation"
     SEQUENCE_PERCEPTION = "sequence_perception"
 
 
@@ -149,6 +151,13 @@ class PerceptionCapabilities:
         ):
             raise ContractValidationError(
                 "Prompted segmentation tasks require the prompted adapter capability."
+            )
+        if (
+            PerceptionTask.AUTOMATIC_SEGMENTATION in self.tasks
+            and AdapterCapability.AUTOMATIC_SEGMENTATION not in self.adapter_capabilities
+        ):
+            raise ContractValidationError(
+                "Automatic segmentation tasks require the automatic segmentation adapter capability."
             )
         frame_tasks = {
             PerceptionTask.DETECTION,

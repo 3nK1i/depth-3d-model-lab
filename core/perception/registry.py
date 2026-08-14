@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from importlib import import_module
 from typing import Any, Iterable
-from core.perception.base import BasePerceptionAdapter, FramePerceptionAdapter, PromptedSegmentationAdapter, SequencePerceptionAdapter
+from core.perception.base import AutomaticSegmentationAdapter, BasePerceptionAdapter, FramePerceptionAdapter, PromptedSegmentationAdapter, SequencePerceptionAdapter
 from core.perception.metadata import AdapterCapability, PerceptionDescriptor
 
 class PerceptionRegistryError(ValueError):
@@ -69,7 +69,7 @@ class PerceptionRegistry:
 
     @staticmethod
     def _validate_adapter_capabilities(adapter, d):
-        checks = ((AdapterCapability.FRAME_PERCEPTION, FramePerceptionAdapter, 'infer_frame'), (AdapterCapability.PROMPTED_SEGMENTATION, PromptedSegmentationAdapter, 'refine_mask'), (AdapterCapability.SEQUENCE_PERCEPTION, SequencePerceptionAdapter, 'reset_sequence'))
+        checks = ((AdapterCapability.FRAME_PERCEPTION, FramePerceptionAdapter, 'infer_frame'), (AdapterCapability.PROMPTED_SEGMENTATION, PromptedSegmentationAdapter, 'refine_mask'), (AdapterCapability.AUTOMATIC_SEGMENTATION, AutomaticSegmentationAdapter, 'propose_masks'), (AdapterCapability.SEQUENCE_PERCEPTION, SequencePerceptionAdapter, 'reset_sequence'))
         for capability, protocol, method in checks:
             if capability in d.capabilities.adapter_capabilities and (not isinstance(adapter, protocol)):
                 raise PerceptionAdapterContractError(f'Adapter for {d.model_id!r} declares {capability.value!r} but does not implement {method}().')

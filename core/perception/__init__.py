@@ -1,11 +1,19 @@
 """Segmentation-first perception contracts, registry, pipeline, and optional adapters."""
-from core.perception.base import BasePerceptionAdapter, FramePerceptionAdapter, PerceptionAdapterError, PerceptionDependencyError, PerceptionModelLoadError, PromptedSegmentationAdapter, SequencePerceptionAdapter, UnsupportedPerceptionOperation
+from core.perception.base import AutomaticSegmentationAdapter, BasePerceptionAdapter, FramePerceptionAdapter, PerceptionAdapterError, PerceptionDependencyError, PerceptionModelLoadError, PromptedSegmentationAdapter, SequencePerceptionAdapter, UnsupportedPerceptionOperation
 from core.perception.metadata import AdapterCapability, CoResidencyPolicy, PerceptionCapabilities, PerceptionDescriptor, PerceptionResourceMetadata, PerceptionTask, PreferredDevice
 from core.perception.messages import FramePerceptionRequest, PerceptionPipelineRequest, PerceptionShutdownRequest, PerceptionWorkerConfiguration, PerceptionWorkerReady, PerceptionWorkerResponse, PromptedSegmentationRequest, SegmentationPrompt, SegmentationPromptKind, SequenceResetRequest
 from core.perception.registry import PERCEPTION_MODEL_REGISTRY, DuplicatePerceptionModelError, PerceptionAdapterContractError, PerceptionRegistry, PerceptionRegistryError, UnknownPerceptionModelError
 from core.perception.result import ApprovalStatus, BoundingBox2D, DenseMaskPayload, Detection2D, InstanceMask, MaskRepresentation, MaskSource, ObjectObservation, PerceptionFrameResult, PerceptionResultStatus, PolygonMaskPayload, PromptedMaskRefinement, RLEMaskPayload, SharedMemoryMaskPayload, UnsupportedMaskRepresentationError, normalize_detection_box, normalize_mask_payload, select_authoritative_mask
 from core.perception.pipeline import PerceptionPipeline, PerceptionPipelinePolicy
-from core.perception.raw import RawPerceptionBatch, RawPerceptionInstance, RawPromptedMask
+from core.perception.raw import RawAutomaticMaskBatch, RawAutomaticMaskProposal, RawPerceptionBatch, RawPerceptionInstance, RawPromptedMask
+from core.perception.auto_segment import (
+    AUTO_SEGMENT_SCHEMA_VERSION,
+    AutoSegmentEngine,
+    AutoSegmentGenerationResult,
+    AutoSegmentGenerationStatus,
+    AutoSegmentPolicy,
+)
+
 from core.perception.semantic_workspace import (
     SEMANTIC_WORKSPACE_SCHEMA_VERSION,
     SemanticClassCatalog,

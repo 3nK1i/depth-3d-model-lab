@@ -10,7 +10,9 @@ def test_yolo_and_sam_capabilities_are_separate():
     sam = PERCEPTION_MODEL_REGISTRY.get('ultralytics-sam2-prompted')
     assert PerceptionTask.INSTANCE_SEGMENTATION in seg.capabilities.tasks
     assert AdapterCapability.PROMPTED_SEGMENTATION not in seg.capabilities.adapter_capabilities
-    assert sam.capabilities.adapter_capabilities == (AdapterCapability.PROMPTED_SEGMENTATION,)
+    assert AdapterCapability.PROMPTED_SEGMENTATION in sam.capabilities.adapter_capabilities
+    assert AdapterCapability.AUTOMATIC_SEGMENTATION in sam.capabilities.adapter_capabilities
+    assert PerceptionTask.AUTOMATIC_SEGMENTATION in sam.capabilities.tasks
 
 def test_unmeasured_production_resources_prefer_isolation():
     for mid in EXPECTED[:3]:

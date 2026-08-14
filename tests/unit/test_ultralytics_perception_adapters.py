@@ -112,3 +112,47 @@ def test_sam_adapter_routes_box_prompt_without_model_specific_worker_logic(monke
     assert captured["bboxes"] == [0.0, 0.0, 3.0, 2.0]
     assert np.asarray(captured["source"])[0, 0].tolist() == [3, 2, 1]
     assert raw.mask.shape == (3, 4)
+
+
+def test_sam_adapter_segment_everything_uses_no_prompt_and_returns_unlabeled_masks(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMasks:
+        # Deliberately use a smaller mask grid; the adapter must restore source size.
+        data = np.asarray(
+            [
+                [[1, 1], [1, 0]],
+                [[0, 1], [1, 1]],
+            ],
+            dtype=np.float32,
+        )
+
+    class FakeResult:
+        masks = FakeMasks()
+
+    class FakeSAM:
+        def __init__(self, checkpoint: str) -> None:
+            captured["checkpoint"] = checkpoint
+
+        def predict(self, **kwargs):
+            captured.update(kwargs)
+            return [FakeResult()]
+
+    fake = types.ModuleType("ultralytics")
+    fake.SAM = FakeSAM
+    monkeypatch.setitem(sys.modules, "ultralytics", fake)
+    monkeypatch.setattr(ultralytics_sam, "package_version", lambda _: "8.4-test")
+
+    request = _request()
+    adapter = UltralyticsSAM2PromptedAdapter()
+    adapter.load({"checkpoint": "sam2.1_t.pt", "device": "cpu", "imgsz": 1024})
+    batch = adapter.propose_masks(request)
+
+    assert captured["checkpoint"] == "sam2.1_t.pt"
+    assert "bboxes" not in captured
+    assert "points" not in captured
+    assert "labels" not in captured
+    assert np.asarray(captured["source"])[0, 0].tolist() == [3, 2, 1]
+    assert len(batch.proposals) == 2
+    assert all(proposal.mask.shape == (3, 4) for proposal in batch.proposals)
+    assert batch.model_provenance.task == "automatic_segmentation"
