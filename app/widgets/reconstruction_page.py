@@ -24,6 +24,8 @@ progressive disclosure to the settings sidebar without changing any reconstructi
 Phase 8.9A2 adds a bounded product-export interaction over the already-qualified A1 export
 contract. It exports only materialized, session-matched reconstruction evidence and remains
 distinct from persistent-scene save/reload. QC report productization remains Phase 8.9B.
+Phase 9.3A adds a passive canonical-scene presentation summary over the existing persistent
+scene and Phase 9.1H authority sidecar; canonical surface rendering remains Phase 9.3B.
 """
 
 from __future__ import annotations
@@ -82,6 +84,10 @@ from app.offline_reconstruction_semantics import (
     semantic_presentation_from_persistent_scene,
 )
 from app.reconstruction_diagnostics import LiveTrackingDiagnosticsAccumulator
+from app.reconstruction_canonical_scene_presentation import (
+    CanonicalScenePresentation,
+    build_canonical_scene_presentation,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -215,6 +221,7 @@ class ReconstructionPage(QWidget):
     nerf_visualization_changed = pyqtSignal(object)
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
+    canonical_scene_presentation_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
@@ -249,6 +256,7 @@ class ReconstructionPage(QWidget):
         self._persistent_scene = None
         self._persistent_authority_snapshot: PersistentSceneAuthoritySnapshot | None = None
         self._persisted_metric_assessment = None
+        self._canonical_scene_presentation: CanonicalScenePresentation | None = None
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -668,11 +676,11 @@ class ReconstructionPage(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
         )
 
-        safety = QLabel("VIEWER Z-UP • ARBITRARY GAUGE")
-        safety.setObjectName("reconstructionViewportSafety")
-        safety.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._viewport_safety = QLabel("VIEWER Z-UP • ARBITRARY GAUGE")
+        self._viewport_safety.setObjectName("reconstructionViewportSafety")
+        self._viewport_safety.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         grid.addWidget(
-            safety,
+            self._viewport_safety,
             0,
             0,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
@@ -1584,6 +1592,75 @@ class ReconstructionPage(QWidget):
             self.reconstruction_reference_comparison_changed.emit(presentation)
 
     @property
+    def canonical_scene_presentation(self) -> CanonicalScenePresentation | None:
+        return self._canonical_scene_presentation
+
+    def _refresh_canonical_scene_presentation(self) -> None:
+        try:
+            presentation = build_canonical_scene_presentation(
+                self._persistent_scene,
+                self._persistent_authority_snapshot,
+            )
+        except (TypeError, ValueError) as exc:
+            self._canonical_scene_presentation = None
+            if hasattr(self, "_canonical_scene_state_value"):
+                self._canonical_scene_state_value.setText("Canonical scene unavailable")
+                self._canonical_scene_state_value.setToolTip(str(exc))
+                self._canonical_scene_geometry_value.setText("—")
+                self._canonical_scene_provider_value.setText("—")
+                self._canonical_scene_resource_value.setText("—")
+                self._canonical_scene_scale_value.setText("Not qualified")
+                self._canonical_scene_authority_value.setText(
+                    "Canonical authority unavailable • metrology not certified"
+                )
+                self._canonical_scene_status_value.setText("Persistent scene presentation rejected")
+                self._canonical_scene_status_value.setToolTip(str(exc))
+            if hasattr(self, "_viewport_safety"):
+                self._viewport_safety.setText("VIEWER Z-UP • ARBITRARY GAUGE")
+                self._viewport_safety.setToolTip(str(exc))
+            self.canonical_scene_presentation_changed.emit(None)
+            return
+
+        changed = presentation != self._canonical_scene_presentation
+        self._canonical_scene_presentation = presentation
+        if hasattr(self, "_canonical_scene_state_value"):
+            self._canonical_scene_state_value.setText(presentation.scene_text)
+            self._canonical_scene_state_value.setToolTip(presentation.scene_id)
+            self._canonical_scene_geometry_value.setText(presentation.geometry_text)
+            self._canonical_scene_geometry_value.setToolTip(presentation.artifact_id)
+            self._canonical_scene_provider_value.setText(presentation.provider_id or "—")
+            self._canonical_scene_resource_value.setText(presentation.resource_text)
+            self._canonical_scene_resource_value.setToolTip(presentation.resource_path)
+            self._canonical_scene_scale_value.setText(presentation.scale_text)
+            scale_tip = []
+            if presentation.scale_unit_to_metre is not None:
+                scale_tip.append(
+                    f"Scale factor: {presentation.scale_unit_to_metre:.9g} m per reconstruction unit"
+                )
+            if presentation.metric_evidence_id:
+                scale_tip.append(f"Metric evidence: {presentation.metric_evidence_id}")
+            if presentation.metric_assessment_state:
+                scale_tip.append(f"Assessment: {presentation.metric_assessment_state}")
+            if presentation.calibration_available:
+                scale_tip.append("Camera calibration evidence is present but remains separate from scale authority.")
+            elif presentation.available:
+                scale_tip.append("No persisted camera-calibration profile is bound to this scene.")
+            self._canonical_scene_scale_value.setToolTip("\n".join(scale_tip))
+            self._canonical_scene_authority_value.setText(presentation.authority_text)
+            self._canonical_scene_status_value.setText(presentation.state_text)
+            self._canonical_scene_status_value.setToolTip(
+                "Phase 9.3A is presentation-only. Canonical surface parsing/rendering is deferred to Phase 9.3B."
+            )
+        if hasattr(self, "_viewport_safety"):
+            self._viewport_safety.setText(presentation.viewer_scale_banner_text)
+            self._viewport_safety.setToolTip(
+                "Viewport axis conversion is presentation-only. Metric wording is shown only from "
+                "the scene-bound Phase 9.1H metric qualification assessment; metrology is not certified."
+            )
+        if changed:
+            self.canonical_scene_presentation_changed.emit(presentation)
+
+    @property
     def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
         return self._appearance_presentation
 
@@ -2347,6 +2424,34 @@ class ReconstructionPage(QWidget):
         recovery_actions.addStretch(1)
         session_layout.addLayout(recovery_actions)
         layout.addWidget(session)
+
+        # Phase 9.3A composes the existing persistent canonical-geometry contract
+        # and Phase 9.1H authority sidecar into one passive scene summary.  It
+        # does not parse mesh payloads or render canonical geometry; that remains
+        # the explicit Phase 9.3B boundary.
+        self._canonical_scene_group = self._settings_group("CANONICAL SCENE")
+        canonical_layout = self._canonical_scene_group.content_layout
+        self._canonical_scene_state_value = self._settings_value("No persistent scene")
+        self._canonical_scene_geometry_value = self._settings_value("—")
+        self._canonical_scene_provider_value = self._settings_value("—")
+        self._canonical_scene_resource_value = self._settings_value("—")
+        self._canonical_scene_scale_value = self._settings_value("—")
+        self._canonical_scene_authority_value = self._settings_value("No canonical scene authority")
+        self._canonical_scene_status_value = self._settings_value(
+            "Waiting for persistent reconstruction scene"
+        )
+        self._canonical_scene_authority_value.setMinimumHeight(
+            self._canonical_scene_authority_value.fontMetrics().lineSpacing() * 2
+        )
+        self._add_status_row(canonical_layout, "Scene", self._canonical_scene_state_value)
+        self._add_status_row(canonical_layout, "Geometry", self._canonical_scene_geometry_value)
+        self._add_status_row(canonical_layout, "Provider", self._canonical_scene_provider_value)
+        self._add_status_row(canonical_layout, "Resource", self._canonical_scene_resource_value)
+        self._add_status_row(canonical_layout, "Scale", self._canonical_scene_scale_value)
+        self._add_status_row(canonical_layout, "Authority", self._canonical_scene_authority_value)
+        self._add_status_row(canonical_layout, "State", self._canonical_scene_status_value)
+        layout.addWidget(self._canonical_scene_group)
+        self._refresh_canonical_scene_presentation()
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
         inspection_layout = self._offline_inspection_group.content_layout
@@ -4681,6 +4786,7 @@ class ReconstructionPage(QWidget):
         self._persistent_authority_snapshot = None
         self._persisted_metric_assessment = None
         self._refresh_camera_authority()
+        self._refresh_canonical_scene_presentation()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
@@ -4730,6 +4836,7 @@ class ReconstructionPage(QWidget):
             # calibration evidence from a previously focused scene.
             self.clear_camera_calibration_profile()
         self._refresh_camera_authority()
+        self._refresh_canonical_scene_presentation()
 
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
         if checkpoint is None:
