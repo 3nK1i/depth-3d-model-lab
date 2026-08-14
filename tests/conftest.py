@@ -166,6 +166,7 @@ def _install_fake_vispy_canvas() -> None:
         MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
         MAX_SEMANTIC_OBJECT_DISPLAY = 256
         MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
+        CANONICAL_INSPECTION_OVERLAY_FONT_SIZE = 14.0
 
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
@@ -228,6 +229,11 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_semantic_label_display_count = 0
             self._selected_canonical_semantic_surface_visible = False
             self._selected_canonical_semantic_label_visible = False
+            self._canonical_inspection_overlay_visible = False
+            self._canonical_inspection_overlay_scene_id = ""
+            self._canonical_inspection_overlay_object_id = ""
+            self._canonical_inspection_overlay_text = ""
+            self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
             self._semantic_objects_visible = True
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -589,6 +595,7 @@ def _install_fake_vispy_canvas() -> None:
                 self._refresh_selected_canonical_semantic_state()
 
         def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+            self.clear_canonical_inspection_overlay(update_canvas=False)
             self._canonical_semantic_loaded = False
             self._canonical_semantic_scene_id = ""
             self._canonical_semantic_artifact_id = ""
@@ -601,6 +608,48 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_semantic_label_display_count = 0
             self._selected_canonical_semantic_surface_visible = False
             self._selected_canonical_semantic_label_visible = False
+
+        def set_canonical_inspection_overlay(
+            self, *, scene_id: str, object_id: str, anchor_viewer, text: str
+        ) -> None:
+            if not self._canonical_semantic_loaded:
+                raise ValueError("Canonical inspection overlay requires loaded canonical semantics.")
+            scene_id = str(scene_id).strip()
+            object_id = str(object_id).strip()
+            text = str(text).strip()
+            if scene_id != self._canonical_semantic_scene_id:
+                raise ValueError("Canonical inspection overlay scene does not match loaded semantics.")
+            if object_id not in self._canonical_semantic_object_ids:
+                raise ValueError("Canonical inspection overlay targets an unknown semantic object.")
+            if self.selected_semantic_object_id != object_id:
+                raise ValueError("Canonical inspection overlay must target the currently selected object.")
+            anchor = np.asarray(anchor_viewer, dtype=np.float32)
+            if anchor.shape != (3,) or not np.isfinite(anchor).all():
+                raise ValueError("Canonical inspection overlay anchor must be one finite 3D point.")
+            if not text:
+                raise ValueError("Canonical inspection overlay text must be non-empty.")
+            self._canonical_inspection_overlay_scene_id = scene_id
+            self._canonical_inspection_overlay_object_id = object_id
+            self._canonical_inspection_overlay_text = text
+            self._canonical_inspection_overlay_anchor = anchor.copy()
+            self._refresh_canonical_inspection_overlay_visibility()
+
+        def clear_canonical_inspection_overlay(self, *, update_canvas: bool = True) -> None:
+            self._canonical_inspection_overlay_visible = False
+            self._canonical_inspection_overlay_scene_id = ""
+            self._canonical_inspection_overlay_object_id = ""
+            self._canonical_inspection_overlay_text = ""
+            self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
+
+        def _refresh_canonical_inspection_overlay_visibility(self) -> None:
+            self._canonical_inspection_overlay_visible = bool(
+                self._semantic_objects_visible
+                and self._semantic_objects_available
+                and self._canonical_semantic_loaded
+                and self._canonical_inspection_overlay_text
+                and self.selected_semantic_object_id == self._canonical_inspection_overlay_object_id
+                and self._canonical_inspection_overlay_scene_id == self._canonical_semantic_scene_id
+            )
 
         def _refresh_selected_canonical_semantic_state(self) -> None:
             index = self._selected_semantic_object_index
@@ -672,6 +721,7 @@ def _install_fake_vispy_canvas() -> None:
                 and self._selected_semantic_object_index is not None
             )
             self._refresh_selected_canonical_semantic_state()
+            self._refresh_canonical_inspection_overlay_visibility()
 
         def select_semantic_object(self, object_index: int) -> None:
             index = int(object_index)
@@ -682,12 +732,14 @@ def _install_fake_vispy_canvas() -> None:
             self._selected_semantic_object_index = index
             self._selected_semantic_object_visible = self._semantic_objects_visible
             self._refresh_selected_canonical_semantic_state()
+            self._refresh_canonical_inspection_overlay_visibility()
 
         def clear_semantic_object_selection(self) -> None:
             self._selected_semantic_object_index = None
             self._selected_semantic_object_visible = False
             self._selected_canonical_semantic_surface_visible = False
             self._selected_canonical_semantic_label_visible = False
+            self.clear_canonical_inspection_overlay(update_canvas=False)
 
         def focus_selected_semantic_object(self) -> None:
             self.focus_calls += 1
@@ -1034,6 +1086,18 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def selected_canonical_semantic_label_visible(self) -> bool:
             return bool(self._selected_canonical_semantic_label_visible)
+
+        @property
+        def canonical_inspection_overlay_visible(self) -> bool:
+            return bool(self._canonical_inspection_overlay_visible)
+
+        @property
+        def canonical_inspection_overlay_text(self) -> str:
+            return self._canonical_inspection_overlay_text
+
+        @property
+        def canonical_inspection_overlay_object_id(self) -> str:
+            return self._canonical_inspection_overlay_object_id
 
         @property
         def semantic_objects_available(self) -> bool:

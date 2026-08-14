@@ -102,6 +102,10 @@ from app.reconstruction_canonical_semantics import (
     CanonicalSemanticScenePresentation,
     load_persistent_canonical_semantics,
 )
+from app.reconstruction_canonical_inspection_overlays import (
+    CanonicalObjectInspectionOverlayPresentation,
+    build_canonical_object_inspection_overlay,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -237,6 +241,7 @@ class ReconstructionPage(QWidget):
     appearance_resource_fallback_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
+    canonical_inspection_overlay_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
@@ -278,6 +283,8 @@ class ReconstructionPage(QWidget):
         self._canonical_camera_error = ""
         self._canonical_semantic_presentation: CanonicalSemanticScenePresentation | None = None
         self._canonical_semantic_error = ""
+        self._canonical_inspection_overlay_presentation: CanonicalObjectInspectionOverlayPresentation | None = None
+        self._canonical_inspection_overlay_error = ""
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -1094,6 +1101,8 @@ class ReconstructionPage(QWidget):
             self._reconstruction_canvas.clear_canonical_semantic_objects()
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
+        self._canonical_inspection_overlay_presentation = None
+        self._canonical_inspection_overlay_error = ""
         button = getattr(self, "_viewport_tool_buttons", {}).get("semantic_objects")
         if button is not None:
             button.setEnabled(False)
@@ -1487,6 +1496,7 @@ class ReconstructionPage(QWidget):
             )
         changed = presentation != self._reconstruction_inspection_qc_presentation
         self._reconstruction_inspection_qc_presentation = presentation
+        self._refresh_canonical_inspection_overlay()
 
         if not hasattr(self, "_inspection_qc_target_value"):
             return
@@ -1517,6 +1527,46 @@ class ReconstructionPage(QWidget):
         if changed:
             self.reconstruction_inspection_qc_changed.emit(presentation)
         self._refresh_reconstruction_reference_comparison_presentation()
+
+    @property
+    def canonical_inspection_overlay_presentation(
+        self,
+    ) -> CanonicalObjectInspectionOverlayPresentation | None:
+        return self._canonical_inspection_overlay_presentation
+
+    def _refresh_canonical_inspection_overlay(self) -> None:
+        """Bind existing E3/E4 evidence to the selected Phase 9.3D object.
+
+        9.3E is presentation-only. Failures here never revoke canonical geometry,
+        semantic membership, the E2/E3 sidebar evidence, or source QC authority.
+        """
+
+        previous = self._canonical_inspection_overlay_presentation
+        self._reconstruction_canvas.clear_canonical_inspection_overlay(update_canvas=False)
+        self._canonical_inspection_overlay_presentation = None
+        self._canonical_inspection_overlay_error = ""
+        try:
+            presentation = build_canonical_object_inspection_overlay(
+                selection=self._inspection_selection,
+                canonical_semantics=self._canonical_semantic_presentation,
+                measurement=self._reconstruction_measurement_presentation,
+                validity=self._reconstruction_measurement_validity_presentation,
+                inspection_qc=self._reconstruction_inspection_qc_presentation,
+            )
+            if presentation is not None:
+                self._reconstruction_canvas.set_canonical_inspection_overlay(
+                    scene_id=presentation.scene_id,
+                    object_id=presentation.object_id,
+                    anchor_viewer=presentation.anchor_viewer,
+                    text=presentation.overlay_text,
+                )
+        except (TypeError, ValueError) as exc:
+            self._canonical_inspection_overlay_error = str(exc)
+            presentation = None
+
+        self._canonical_inspection_overlay_presentation = presentation
+        if previous != presentation:
+            self.canonical_inspection_overlay_changed.emit(presentation)
 
     @property
     def reconstruction_reference_comparison_presentation(self) -> ReconstructionReferenceComparisonPresentation | None:
@@ -1905,6 +1955,8 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.clear_canonical_semantic_objects()
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
+        self._canonical_inspection_overlay_presentation = None
+        self._canonical_inspection_overlay_error = ""
         scene = self._persistent_scene
         mesh = self._canonical_viewer_mesh
         if scene is None or mesh is None:
@@ -1988,6 +2040,7 @@ class ReconstructionPage(QWidget):
                 f"{presentation.binding_text}. Semantic surfaces are supporting membership only; "
                 "canonical geometry authority remains with the persistent surface mesh."
             )
+        self._refresh_canonical_inspection_overlay()
 
     @property
     def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
@@ -5132,6 +5185,8 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.clear_canonical_semantic_objects()
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
+        self._canonical_inspection_overlay_presentation = None
+        self._canonical_inspection_overlay_error = ""
         # Clear persistent camera visuals before changing the scene identity so
         # the 9.3B surface fit can never include stale camera positions from the
         # previously loaded scene. The camera presentation is rebuilt below only
@@ -5258,6 +5313,8 @@ class ReconstructionPage(QWidget):
         self._canonical_camera_error = ""
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
+        self._canonical_inspection_overlay_presentation = None
+        self._canonical_inspection_overlay_error = ""
         self._reconstruction_canvas.close()
 
     @staticmethod

@@ -397,6 +397,7 @@ class ReconstructionCanvas(QObject):
     MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
     MAX_SEMANTIC_OBJECT_DISPLAY = 256
     MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
+    CANONICAL_INSPECTION_OVERLAY_FONT_SIZE = 14.0
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -645,6 +646,28 @@ class ReconstructionCanvas(QObject):
             parent=self._view.scene,
         )
         self._selected_canonical_semantic_label.visible = False
+        # Phase 9.3E uses one bounded 3D text callout for source-authored
+        # measurement validity and exact selected-object QC. Numeric values are
+        # supplied only after E3 validity qualification; this visual never
+        # derives dimensions from semantic support geometry.
+        self._canonical_inspection_overlay = scene.visuals.Text(
+            text="",
+            pos=np.zeros((1, 3), dtype=np.float32),
+            color=(0.94, 0.95, 0.98, 0.98),
+            # Phase 9.3E pre-commit readability refinement: keep the bounded
+            # callout compact, but make uncertainty/rejection/QC text clearly
+            # legible at the project's 1366x768 minimum desktop target.
+            font_size=self.CANONICAL_INSPECTION_OVERLAY_FONT_SIZE,
+            bold=True,
+            anchor_x="center",
+            anchor_y="bottom",
+            parent=self._view.scene,
+        )
+        self._canonical_inspection_overlay.visible = False
+        self._canonical_inspection_overlay_scene_id = ""
+        self._canonical_inspection_overlay_object_id = ""
+        self._canonical_inspection_overlay_text = ""
+        self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
         self._canonical_semantic_loaded = False
         self._canonical_semantic_scene_id = ""
         self._canonical_semantic_artifact_id = ""
@@ -1331,6 +1354,7 @@ class ReconstructionCanvas(QObject):
         self._canvas.update()
 
     def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+        self.clear_canonical_inspection_overlay(update_canvas=False)
         self._canonical_semantic_labels.visible = False
         self._canonical_semantic_labels.text = ""
         self._selected_canonical_semantic_label.visible = False
@@ -1348,6 +1372,70 @@ class ReconstructionCanvas(QObject):
         self._canonical_semantic_label_display_count = 0
         if update_canvas:
             self._canvas.update()
+
+    def set_canonical_inspection_overlay(
+        self,
+        *,
+        scene_id: str,
+        object_id: str,
+        anchor_viewer: np.ndarray,
+        text: str,
+    ) -> None:
+        """Show bounded 9.3E source evidence for the selected canonical object.
+
+        The text is already authority-qualified by the application presentation
+        layer.  This canvas method only validates scene/object identity and
+        places the callout in the existing canonical viewer coordinates.
+        """
+
+        if not self._canonical_semantic_loaded:
+            raise ValueError("Canonical inspection overlay requires loaded canonical semantics.")
+        scene_id = str(scene_id).strip()
+        object_id = str(object_id).strip()
+        text = str(text).strip()
+        if not scene_id or not object_id or not text:
+            raise ValueError("Canonical inspection overlay requires scene, object, and text.")
+        if scene_id != self._canonical_semantic_scene_id:
+            raise ValueError("Canonical inspection overlay scene does not match loaded semantics.")
+        if object_id not in self._canonical_semantic_object_ids:
+            raise ValueError("Canonical inspection overlay targets an unknown semantic object.")
+        selected = self.selected_semantic_object_id
+        if selected != object_id:
+            raise ValueError("Canonical inspection overlay must target the currently selected object.")
+        anchor = np.asarray(anchor_viewer, dtype=np.float32)
+        if anchor.shape != (3,) or not np.isfinite(anchor).all():
+            raise ValueError("Canonical inspection overlay anchor must be one finite 3D point.")
+
+        self._canonical_inspection_overlay_scene_id = scene_id
+        self._canonical_inspection_overlay_object_id = object_id
+        self._canonical_inspection_overlay_text = text
+        self._canonical_inspection_overlay_anchor = np.ascontiguousarray(anchor)
+        self._canonical_inspection_overlay.text = text
+        self._canonical_inspection_overlay.pos = self._canonical_inspection_overlay_anchor.reshape(1, 3)
+        self._refresh_canonical_inspection_overlay_visibility()
+        self._canvas.update()
+
+    def clear_canonical_inspection_overlay(self, *, update_canvas: bool = True) -> None:
+        self._canonical_inspection_overlay.visible = False
+        self._canonical_inspection_overlay.text = ""
+        self._canonical_inspection_overlay_scene_id = ""
+        self._canonical_inspection_overlay_object_id = ""
+        self._canonical_inspection_overlay_text = ""
+        self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
+        if update_canvas:
+            self._canvas.update()
+
+    def _refresh_canonical_inspection_overlay_visibility(self) -> None:
+        selected = self.selected_semantic_object_id
+        self._canonical_inspection_overlay.visible = bool(
+            self._semantic_objects_visible
+            and self._semantic_objects_available
+            and self._canonical_semantic_loaded
+            and self._canonical_inspection_overlay_text
+            and selected is not None
+            and selected == self._canonical_inspection_overlay_object_id
+            and self._canonical_inspection_overlay_scene_id == self._canonical_semantic_scene_id
+        )
 
     def _clear_selected_canonical_semantic_mesh(self) -> None:
         # Match the qualified 9.3B MeshVisual lifecycle: never submit a zero-
@@ -1530,6 +1618,7 @@ class ReconstructionCanvas(QObject):
             and self._canonical_semantic_loaded
             and self._selected_canonical_semantic_surface_loaded
         )
+        self._refresh_canonical_inspection_overlay_visibility()
         self._canvas.update()
 
     def select_semantic_object(self, object_index: int) -> None:
@@ -1540,6 +1629,7 @@ class ReconstructionCanvas(QObject):
             raise IndexError("Semantic object index is out of range.")
         self._selected_semantic_object_index = index
         self._refresh_selected_semantic_object()
+        self._refresh_canonical_inspection_overlay_visibility()
         self._canvas.update()
 
     def clear_semantic_object_selection(self) -> None:
@@ -1553,6 +1643,7 @@ class ReconstructionCanvas(QObject):
         self._selected_canonical_semantic_label.visible = False
         self._selected_canonical_semantic_label.text = ""
         self._clear_selected_canonical_semantic_mesh()
+        self.clear_canonical_inspection_overlay(update_canvas=False)
         self._canvas.update()
 
     def _refresh_selected_semantic_object(self) -> None:
@@ -2235,6 +2326,18 @@ class ReconstructionCanvas(QObject):
     @property
     def selected_canonical_semantic_label_visible(self) -> bool:
         return bool(self._selected_canonical_semantic_label.visible)
+
+    @property
+    def canonical_inspection_overlay_visible(self) -> bool:
+        return bool(self._canonical_inspection_overlay.visible)
+
+    @property
+    def canonical_inspection_overlay_text(self) -> str:
+        return self._canonical_inspection_overlay_text
+
+    @property
+    def canonical_inspection_overlay_object_id(self) -> str:
+        return self._canonical_inspection_overlay_object_id
 
     @property
     def semantic_objects_available(self) -> bool:
