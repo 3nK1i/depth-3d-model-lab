@@ -350,6 +350,78 @@ def workspace_from_mask_proposals(
         ),
     )
 
+def append_workspace_mask_proposal(
+    workspace: SemanticWorkspace,
+    mask: InstanceMask,
+    *,
+    object_id: str,
+) -> SemanticWorkspace:
+    """Append one genuinely unlabeled interactive mask proposal.
+
+    The caller owns the stable object ID.  No class or authority is invented.
+    """
+
+    if not isinstance(workspace, SemanticWorkspace):
+        raise TypeError("workspace must be SemanticWorkspace.")
+    if not isinstance(mask, InstanceMask):
+        raise TypeError("mask must be InstanceMask.")
+    key = require_nonempty(object_id, field_name="object_id")
+    if workspace.object_by_id(key) is not None:
+        raise ContractValidationError(f"Semantic workspace object already exists: {key!r}.")
+    if mask.frame_reference != workspace.frame_reference:
+        raise ContractValidationError("Interactive proposal mask must belong to the workspace frame.")
+    return SemanticWorkspace(
+        workspace_id=workspace.workspace_id,
+        frame_reference=workspace.frame_reference,
+        class_catalog=workspace.class_catalog,
+        objects=workspace.objects + (SemanticWorkspaceObject(object_id=key, proposal_mask=mask),),
+        revision=workspace.revision + 1,
+    )
+
+
+def replace_workspace_object_mask(
+    workspace: SemanticWorkspace,
+    object_id: str,
+    mask: InstanceMask,
+) -> SemanticWorkspace:
+    """Replace one proposal mask while preserving semantic identity.
+
+    A changed mask always returns to PENDING review.  Existing class/instance
+    identity is preserved, but the human must re-accept the revised geometry.
+    """
+
+    if not isinstance(workspace, SemanticWorkspace):
+        raise TypeError("workspace must be SemanticWorkspace.")
+    if not isinstance(mask, InstanceMask):
+        raise TypeError("mask must be InstanceMask.")
+    key = require_nonempty(object_id, field_name="object_id")
+    target = workspace.object_by_id(key)
+    if target is None:
+        raise ContractValidationError(f"Unknown semantic workspace object: {key!r}.")
+    if target.proposal_mask is None:
+        raise ContractValidationError(
+            "Interactive mask replacement currently requires a proposal-backed workspace object."
+        )
+    if mask.frame_reference != workspace.frame_reference:
+        raise ContractValidationError("Refined mask must belong to the workspace frame.")
+    if mask.parent_mask_id != target.proposal_mask.mask_id:
+        raise ContractValidationError("Refined mask must name the current proposal mask as its parent.")
+    if mask.revision <= target.proposal_mask.revision:
+        raise ContractValidationError("Refined mask revision must increase monotonically.")
+    replacement = replace(
+        target,
+        proposal_mask=mask,
+        review_status=SemanticReviewStatus.PENDING,
+    )
+    return SemanticWorkspace(
+        workspace_id=workspace.workspace_id,
+        frame_reference=workspace.frame_reference,
+        class_catalog=workspace.class_catalog,
+        objects=tuple(replacement if item.object_id == key else item for item in workspace.objects),
+        revision=workspace.revision + 1,
+    )
+
+
 def workspace_from_perception_result(
     result: PerceptionFrameResult,
     *,

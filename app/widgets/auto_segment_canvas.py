@@ -1,4 +1,4 @@
-"""Interactive mask canvas for the Phase 9.2D Auto Segment workspace."""
+"""Interactive mask/prompt canvas for the Phase 9.2 Auto Segment workspace."""
 from __future__ import annotations
 
 import numpy as np
@@ -17,6 +17,7 @@ _PALETTE = (
 
 class AutoSegmentCanvas(QWidget):
     object_clicked = pyqtSignal(str)
+    prompt_point_clicked = pyqtSignal(int, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -29,6 +30,13 @@ class AutoSegmentCanvas(QWidget):
         self._image_rect = QRectF()
         self._show_masks = True
         self._show_labels = True
+        self._interaction_mode = "select"
+        self._positive_points: tuple[tuple[float, float], ...] = ()
+        self._negative_points: tuple[tuple[float, float], ...] = ()
+
+    @property
+    def interaction_mode(self) -> str:
+        return self._interaction_mode
 
     def set_image(self, image_bgr: np.ndarray | None) -> None:
         if image_bgr is None:
@@ -60,6 +68,26 @@ class AutoSegmentCanvas(QWidget):
         self._show_labels = bool(labels)
         self.update()
 
+    def set_interaction_mode(self, mode: str) -> None:
+        value = str(mode).strip().lower()
+        if value not in {"select", "segment_new", "refine_positive", "refine_negative"}:
+            raise ValueError(f"Unsupported Auto Segment canvas interaction mode: {mode!r}.")
+        self._interaction_mode = value
+        self.setCursor(
+            Qt.CursorShape.ArrowCursor if value == "select" else Qt.CursorShape.CrossCursor
+        )
+        self.update()
+
+    def set_prompt_points(
+        self,
+        *,
+        positive: tuple[tuple[float, float], ...] = (),
+        negative: tuple[tuple[float, float], ...] = (),
+    ) -> None:
+        self._positive_points = tuple((float(x), float(y)) for x, y in positive)
+        self._negative_points = tuple((float(x), float(y)) for x, y in negative)
+        self.update()
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
         if not painter.isActive():
@@ -75,6 +103,7 @@ class AutoSegmentCanvas(QWidget):
             self._image_rect = target
             painter.drawPixmap(target.toRect(), self._pixmap)
             self._paint_workspace(painter, target)
+            self._paint_prompt_points(painter, target)
         finally:
             if painter.isActive():
                 painter.end()
@@ -131,6 +160,22 @@ class AutoSegmentCanvas(QWidget):
                     painter.setPen(color)
                     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
 
+    def _paint_prompt_points(self, painter: QPainter, target: QRectF) -> None:
+        for positive, points in (
+            (True, self._positive_points),
+            (False, self._negative_points),
+        ):
+            fill = QColor("#42df83") if positive else QColor("#ff5168")
+            for x, y in points:
+                point = self._map_point(x, y, target)
+                painter.setPen(QPen(QColor("#ffffff"), 1.5))
+                painter.setBrush(fill)
+                painter.drawEllipse(point, 6.0, 6.0)
+                painter.setPen(QPen(QColor("#07100b" if positive else "#16060a"), 1.6))
+                painter.drawLine(QPointF(point.x() - 3.0, point.y()), QPointF(point.x() + 3.0, point.y()))
+                if positive:
+                    painter.drawLine(QPointF(point.x(), point.y() - 3.0), QPointF(point.x(), point.y() + 3.0))
+
     def _map_point(self, x: float, y: float, target: QRectF) -> QPointF:
         assert self._bgr is not None
         return QPointF(
@@ -146,12 +191,17 @@ class AutoSegmentCanvas(QWidget):
         return min(max(x, 0), self._bgr.shape[1] - 1), min(max(y, 0), self._bgr.shape[0] - 1)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() != Qt.MouseButton.LeftButton or self._workspace is None:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         point = self._widget_to_image(event.position())
         if point is None:
             return
         x, y = point
+        if self._interaction_mode != "select":
+            self.prompt_point_clicked.emit(x, y)
+            return
+        if self._workspace is None:
+            return
         matches: list[tuple[int, str]] = []
         for item in self._workspace.objects:
             if item.proposal_mask is None:

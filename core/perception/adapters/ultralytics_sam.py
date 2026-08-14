@@ -141,4 +141,13 @@ class UltralyticsSAM2PromptedAdapter(BasePerceptionAdapter):
             height=request.frame_request.rgb.shape[0],
             width=request.frame_request.rgb.shape[1],
         )
-        return RawPromptedMask(request.frame_request.frame_reference, request.parent_detection_id, request.parent_mask_id, mask, self._prov(), None, ConfidenceKind.NONE)
+        return RawPromptedMask(
+            request.frame_request.frame_reference,
+            request.parent_detection_id,
+            request.parent_mask_id,
+            mask,
+            self._prov(),
+            None,
+            ConfidenceKind.NONE,
+            creates_new_instance=request.creates_new_instance,
+        )

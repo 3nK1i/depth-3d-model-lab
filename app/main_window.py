@@ -573,10 +573,12 @@ class MainWindow(QMainWindow):
         )
         self._auto_segment_dialog = dialog
         dialog.run_requested.connect(self._start_auto_segment)
+        dialog.prompt_requested.connect(self._start_prompted_segment)
         dialog.cancel_requested.connect(self._auto_segment_controller.cancel)
         self._auto_segment_controller.state_changed.connect(dialog.set_controller_state)
         self._auto_segment_controller.progress_changed.connect(dialog.set_progress)
         self._auto_segment_controller.result_ready.connect(dialog.load_job_result)
+        self._auto_segment_controller.prompt_result_ready.connect(dialog.load_prompt_result)
         self._auto_segment_controller.failure_received.connect(dialog.show_failure)
         dialog.finished.connect(lambda _result: self._clear_auto_segment_dialog(dialog))
         dialog.exec()
@@ -586,6 +588,7 @@ class MainWindow(QMainWindow):
             (self._auto_segment_controller.state_changed, dialog.set_controller_state),
             (self._auto_segment_controller.progress_changed, dialog.set_progress),
             (self._auto_segment_controller.result_ready, dialog.load_job_result),
+            (self._auto_segment_controller.prompt_result_ready, dialog.load_prompt_result),
             (self._auto_segment_controller.failure_received, dialog.show_failure),
         ):
             try:
@@ -620,6 +623,38 @@ class MainWindow(QMainWindow):
                 profile=str(configuration.get("profile", "efficient")),
                 minimum_mask_pixels=int(configuration.get("minimum_mask_pixels", 64)),
                 max_proposals=int(configuration.get("max_proposals", 64)),
+            )
+            self._mode_tabs.set_navigation_locked(True)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(str(exc))
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _start_prompted_segment(self, configuration: dict[str, object]) -> None:
+        conflict = self._inspection_jobs_conflict()
+        if conflict:
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(conflict.replace("Measure & Inspect", "Interactive SAM2"))
+            return
+        image = configuration.get("image_bgr")
+        prompt_spec = configuration.get("prompt_spec")
+        if not isinstance(image, np.ndarray) or not isinstance(prompt_spec, dict):
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure("Interactive SAM2 requires an image and valid prompt specification.")
+            return
+        if not self._inference_controller.release_model_for_external_job():
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(
+                    "Stop or finish the active Live 3D inference operation before Interactive SAM2."
+                )
+            return
+        try:
+            self._auto_segment_controller.start_prompt(
+                image_bgr=image,
+                prompt_spec=dict(prompt_spec),
+                model_id=str(configuration.get("model_id", "ultralytics-sam2-prompted")),
+                profile=str(configuration.get("profile", "efficient")),
+                minimum_mask_pixels=int(configuration.get("minimum_mask_pixels", 64)),
             )
             self._mode_tabs.set_navigation_locked(True)
         except (OSError, RuntimeError, ValueError, TypeError) as exc:

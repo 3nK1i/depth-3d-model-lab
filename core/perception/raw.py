@@ -81,12 +81,24 @@ class RawPromptedMask:
     confidence: float | None = None
     confidence_kind: ConfidenceKind = ConfidenceKind.NONE
     warnings: tuple[str, ...] = ()
+    creates_new_instance: bool = False
 
     def __post_init__(self) -> None:
-        if not str(self.parent_detection_id).strip() and (not str(self.parent_mask_id).strip()):
-            raise ContractValidationError('A prompted mask requires a parent detection or mask ID.')
-        object.__setattr__(self, 'parent_detection_id', str(self.parent_detection_id).strip())
-        object.__setattr__(self, 'parent_mask_id', str(self.parent_mask_id).strip())
+        parent_detection_id = str(self.parent_detection_id).strip()
+        parent_mask_id = str(self.parent_mask_id).strip()
+        creates_new_instance = bool(self.creates_new_instance)
+        if creates_new_instance:
+            if parent_detection_id or parent_mask_id:
+                raise ContractValidationError(
+                    'A new-instance prompted mask must not claim a parent detection or mask.'
+                )
+        elif not parent_detection_id and not parent_mask_id:
+            raise ContractValidationError(
+                'A prompted refinement mask requires a parent detection or mask ID.'
+            )
+        object.__setattr__(self, 'parent_detection_id', parent_detection_id)
+        object.__setattr__(self, 'parent_mask_id', parent_mask_id)
+        object.__setattr__(self, 'creates_new_instance', creates_new_instance)
         object.__setattr__(self, 'mask', readonly_array(self.mask, field_name='prompted mask', dtype=np.bool_, ndim=2))
         if self.confidence_kind is ConfidenceKind.NONE:
             if self.confidence is not None:
@@ -107,7 +119,7 @@ class RawPromptedMask:
         object.__setattr__(self, 'warnings', tuple((str(v).strip() for v in self.warnings)))
 
     def __reduce__(self):
-        return (type(self), (self.frame_reference, self.parent_detection_id, self.parent_mask_id, self.mask, self.model_provenance, self.confidence, self.confidence_kind, self.warnings))
+        return (type(self), (self.frame_reference, self.parent_detection_id, self.parent_mask_id, self.mask, self.model_provenance, self.confidence, self.confidence_kind, self.warnings, self.creates_new_instance))
 
 
 @dataclass(frozen=True, slots=True)

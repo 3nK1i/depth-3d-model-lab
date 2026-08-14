@@ -5,7 +5,7 @@ import numpy as np
 from core.contracts.common import ModelProvenance
 from core.models.metadata import ConfidenceKind
 from core.perception.base import BasePerceptionAdapter
-from core.perception.messages import FramePerceptionRequest, PromptedSegmentationRequest, SequenceResetRequest
+from core.perception.messages import FramePerceptionRequest, PromptedSegmentationRequest, SegmentationPromptKind, SequenceResetRequest
 from core.perception.raw import RawAutomaticMaskBatch, RawAutomaticMaskProposal, RawPerceptionBatch, RawPerceptionInstance, RawPromptedMask
 
 class DevelopmentPerceptionMockAdapter(BasePerceptionAdapter):
@@ -83,4 +83,20 @@ class DevelopmentPerceptionMockAdapter(BasePerceptionAdapter):
             x0, y0, x1, y1 = map(int, request.prompt.box_xyxy)
             inset = max(1, min(x1 - x0, y1 - y0) // 10)
             mask[max(0, y0 + inset):min(h, y1 - inset), max(0, x0 + inset):min(w, x1 - inset)] = True
-        return RawPromptedMask(request.frame_request.frame_reference, request.parent_detection_id, request.parent_mask_id, mask, self._prov('prompted_segmentation'), 0.8, ConfidenceKind.CONFIDENCE)
+        elif request.prompt.kind is SegmentationPromptKind.POINTS:
+            radius = max(3, min(h, w) // 12)
+            yy, xx = np.ogrid[:h, :w]
+            for px, py in request.prompt.positive_points_xy:
+                mask |= (xx - int(round(px))) ** 2 + (yy - int(round(py))) ** 2 <= radius ** 2
+            for px, py in request.prompt.negative_points_xy:
+                mask &= (xx - int(round(px))) ** 2 + (yy - int(round(py))) ** 2 > max(2, radius // 2) ** 2
+        return RawPromptedMask(
+            request.frame_request.frame_reference,
+            request.parent_detection_id,
+            request.parent_mask_id,
+            mask,
+            self._prov('prompted_segmentation'),
+            0.8,
+            ConfidenceKind.CONFIDENCE,
+            creates_new_instance=request.creates_new_instance,
+        )

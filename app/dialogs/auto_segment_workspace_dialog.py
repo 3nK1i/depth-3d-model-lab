@@ -1,4 +1,4 @@
-"""Professional Phase 9.2D interactive Auto Segment review workspace."""
+"""Professional Phase 9.2E Auto Segment and SAM2 prompt-refinement workspace."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -48,7 +48,9 @@ from core.perception.semantic_project import (
 from core.perception.semantic_workspace import (
     SemanticReviewStatus,
     SemanticWorkspace,
+    append_workspace_mask_proposal,
     assign_workspace_class,
+    replace_workspace_object_mask,
     set_workspace_review_status,
     workspace_from_mask_proposals,
 )
@@ -65,6 +67,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
     """Large modal semantic-review workspace; no geometry/metric authority is granted here."""
 
     run_requested = pyqtSignal(dict)
+    prompt_requested = pyqtSignal(dict)
     cancel_requested = pyqtSignal()
 
     def __init__(
@@ -89,6 +92,10 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._source_label = "No image selected"
         self._selected_id = ""
         self._running = False
+        self._prompt_mode = "select"
+        self._prompt_positive: list[tuple[float, float]] = []
+        self._prompt_negative: list[tuple[float, float]] = []
+        self._prompt_target_id = ""
 
         self._build_ui()
         self._refresh_projects()
@@ -195,6 +202,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         visual_layout.addLayout(controls)
         self._canvas = AutoSegmentCanvas()
         self._canvas.object_clicked.connect(self.select_object)
+        self._canvas.prompt_point_clicked.connect(self._on_prompt_point)
         visual_layout.addWidget(self._canvas, stretch=1)
         splitter.addWidget(visual)
 
@@ -209,6 +217,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         side.setContentsMargins(8, 8, 8, 8)
         side.setSpacing(8)
         side.addWidget(self._build_generation_card())
+        side.addWidget(self._build_prompt_card())
         side.addWidget(self._build_objects_card(), stretch=1)
         side.addWidget(self._build_selected_card())
         side.addWidget(self._build_summary_card())
@@ -264,6 +273,48 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._cancel.clicked.connect(self.cancel_requested.emit)
         row.addWidget(self._cancel)
         layout.addLayout(row)
+        return card
+
+    def _build_prompt_card(self) -> QFrame:
+        card, layout = self._card("INTERACTIVE SAM2")
+        help_text = QLabel(
+            "Segment a missed object with one click, or refine the selected mask with include/exclude points."
+        )
+        help_text.setObjectName("autoSegmentMuted")
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+
+        self._segment_object = QPushButton("+ Segment Object")
+        self._segment_object.setObjectName("autoSegmentPrimaryButton")
+        self._segment_object.clicked.connect(self._begin_segment_object)
+        layout.addWidget(self._segment_object)
+
+        row = QHBoxLayout()
+        self._refine_positive = QPushButton("+ Include")
+        self._refine_positive.setObjectName("autoSegmentSecondaryButton")
+        self._refine_positive.clicked.connect(lambda: self._set_prompt_mode("refine_positive"))
+        row.addWidget(self._refine_positive)
+        self._refine_negative = QPushButton("− Exclude")
+        self._refine_negative.setObjectName("autoSegmentSecondaryButton")
+        self._refine_negative.clicked.connect(lambda: self._set_prompt_mode("refine_negative"))
+        row.addWidget(self._refine_negative)
+        layout.addLayout(row)
+
+        self._prompt_summary = QLabel("Select an object to refine, or click + Segment Object.")
+        self._prompt_summary.setObjectName("autoSegmentMuted")
+        self._prompt_summary.setWordWrap(True)
+        layout.addWidget(self._prompt_summary)
+
+        apply_row = QHBoxLayout()
+        self._apply_refine = QPushButton("Apply Refinement")
+        self._apply_refine.setObjectName("autoSegmentPrimaryButton")
+        self._apply_refine.clicked.connect(self._apply_refinement)
+        apply_row.addWidget(self._apply_refine, stretch=1)
+        self._clear_prompts = QPushButton("Clear")
+        self._clear_prompts.setObjectName("autoSegmentMiniButton")
+        self._clear_prompts.clicked.connect(self._clear_prompt_points)
+        apply_row.addWidget(self._clear_prompts)
+        layout.addLayout(apply_row)
         return card
 
     def _build_objects_card(self) -> QFrame:
@@ -333,7 +384,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         frame = QFrame()
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(0, 2, 0, 0)
-        self._footer = QLabel("Changes to project classes are saved in the reusable project library. Workspace masks remain session-local in 9.2D.")
+        self._footer = QLabel("Project classes are reusable. Prompted masks remain session-local in 9.2E and never establish geometry, metric, or measurement authority.")
         self._footer.setObjectName("autoSegmentMuted")
         layout.addWidget(self._footer, stretch=1)
         self._done = QPushButton("Done")
@@ -362,6 +413,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._source_label = str(label).strip() or "Image"
         self._workspace = None
         self._selected_id = ""
+        self._clear_prompt_points()
         self._canvas.set_image(self._image_bgr)
         self._canvas.set_workspace(None)
         self._source_text.setText(f"{self._source_label} · {image.shape[1]} × {image.shape[0]}")
@@ -410,6 +462,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
                 return
             self._workspace = None
             self._selected_id = ""
+            self._clear_prompt_points()
             self._canvas.set_workspace(None)
         self._project = self._store.load(project_id)
         self._refresh_class_combo()
@@ -498,6 +551,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._cancel.setEnabled(self._running)
         self._project_combo.setEnabled(not self._running)
         self._done.setEnabled(not self._running)
+        self._refresh_prompt_controls()
 
     def set_progress(self, progress: int, stage: str, message: str) -> None:
         self._progress.setValue(max(0, min(100, int(progress))))
@@ -589,7 +643,10 @@ class AutoSegmentWorkspaceDialog(QDialog):
     def select_object(self, object_id: str) -> None:
         if self._workspace is None or self._workspace.object_by_id(object_id) is None:
             return
-        self._selected_id = str(object_id)
+        key = str(object_id)
+        if self._prompt_target_id and self._prompt_target_id != key:
+            self._clear_prompt_points()
+        self._selected_id = key
         self._canvas.set_selected_object(self._selected_id)
         for row in range(self._object_list.count()):
             item = self._object_list.item(row)
@@ -667,6 +724,231 @@ class AutoSegmentWorkspaceDialog(QDialog):
         except ContractValidationError as exc:
             QMessageBox.warning(self, "Review proposal", str(exc))
 
+    def _begin_segment_object(self) -> None:
+        if self._image_bgr is None:
+            QMessageBox.information(self, "Segment object", "Open an image or use a captured frame first.")
+            return
+        if self._running:
+            return
+        self._clear_prompt_points()
+        self._set_prompt_mode("segment_new")
+        self._status_text.setText("Click the object you want SAM2 to segment.")
+
+    def _set_prompt_mode(self, mode: str) -> None:
+        if self._running:
+            return
+        if mode in {"refine_positive", "refine_negative"}:
+            obj = self._workspace.object_by_id(self._selected_id) if self._workspace and self._selected_id else None
+            if obj is None or obj.proposal_mask is None:
+                QMessageBox.information(self, "Refine mask", "Select a mask proposal before adding refinement points.")
+                return
+            if self._prompt_target_id and self._prompt_target_id != self._selected_id:
+                self._clear_prompt_points()
+            self._prompt_target_id = self._selected_id
+        self._prompt_mode = mode
+        self._canvas.set_interaction_mode(mode)
+        self._refresh_prompt_controls()
+
+    def _on_prompt_point(self, x: int, y: int) -> None:
+        if self._running or self._image_bgr is None:
+            return
+        point = (float(x), float(y))
+        if self._prompt_mode == "segment_new":
+            object_id = f"interactive:{uuid4().hex[:12]}"
+            self._prompt_positive = [point]
+            self._prompt_negative = []
+            self._canvas.set_prompt_points(positive=tuple(self._prompt_positive), negative=())
+            self.prompt_requested.emit(
+                self._prompt_configuration(
+                    operation="create",
+                    object_id=object_id,
+                    parent_mask_id="",
+                    revision=0,
+                    positive_points=tuple(self._prompt_positive),
+                    negative_points=(),
+                )
+            )
+            self._set_prompt_mode("select")
+            return
+        if self._prompt_mode == "refine_positive":
+            self._prompt_positive.append(point)
+        elif self._prompt_mode == "refine_negative":
+            self._prompt_negative.append(point)
+        else:
+            return
+        self._canvas.set_prompt_points(
+            positive=tuple(self._prompt_positive),
+            negative=tuple(self._prompt_negative),
+        )
+        self._refresh_prompt_controls()
+
+    def _prompt_configuration(
+        self,
+        *,
+        operation: str,
+        object_id: str,
+        parent_mask_id: str,
+        revision: int,
+        positive_points: tuple[tuple[float, float], ...],
+        negative_points: tuple[tuple[float, float], ...],
+    ) -> dict[str, object]:
+        assert self._image_bgr is not None
+        return {
+            "image_bgr": self._image_bgr.copy(),
+            "model_id": "ultralytics-sam2-prompted",
+            "profile": self._profile.currentText().strip().casefold(),
+            "minimum_mask_pixels": self._min_pixels.value(),
+            "prompt_spec": {
+                "operation": operation,
+                "object_id": object_id,
+                "parent_mask_id": parent_mask_id,
+                "revision": int(revision),
+                "positive_points": [list(point) for point in positive_points],
+                "negative_points": [list(point) for point in negative_points],
+            },
+        }
+
+    @staticmethod
+    def _mask_anchor(mask: np.ndarray) -> tuple[float, float]:
+        ys, xs = np.nonzero(mask)
+        if xs.size == 0:
+            raise ContractValidationError("Cannot refine an empty mask.")
+        cx, cy = float(np.mean(xs)), float(np.mean(ys))
+        index = int(np.argmin((xs.astype(float) - cx) ** 2 + (ys.astype(float) - cy) ** 2))
+        return float(xs[index]), float(ys[index])
+
+    def _apply_refinement(self) -> None:
+        if self._running or self._workspace is None or not self._selected_id:
+            return
+        obj = self._workspace.object_by_id(self._selected_id)
+        if obj is None or obj.proposal_mask is None:
+            return
+        mask = np.asarray(obj.proposal_mask.payload.data, dtype=bool)
+        anchor = self._mask_anchor(mask)
+        positives = (anchor,) + tuple(self._prompt_positive)
+        negatives = tuple(self._prompt_negative)
+        self._prompt_target_id = self._selected_id
+        self.prompt_requested.emit(
+            self._prompt_configuration(
+                operation="refine",
+                object_id=self._selected_id,
+                parent_mask_id=obj.proposal_mask.mask_id,
+                revision=obj.proposal_mask.revision + 1,
+                positive_points=positives,
+                negative_points=negatives,
+            )
+        )
+        self._set_prompt_mode("select")
+
+    def _clear_prompt_points(self) -> None:
+        self._prompt_positive = []
+        self._prompt_negative = []
+        self._prompt_target_id = ""
+        self._prompt_mode = "select"
+        if hasattr(self, "_canvas"):
+            self._canvas.set_prompt_points(positive=(), negative=())
+            self._canvas.set_interaction_mode("select")
+        if hasattr(self, "_prompt_summary"):
+            self._refresh_prompt_controls()
+
+    def _refresh_prompt_controls(self) -> None:
+        if not hasattr(self, "_segment_object"):
+            return
+        has_image = self._image_bgr is not None
+        obj = self._workspace.object_by_id(self._selected_id) if self._workspace and self._selected_id else None
+        can_refine = obj is not None and obj.proposal_mask is not None
+        self._segment_object.setEnabled(has_image and not self._running)
+        self._refine_positive.setEnabled(can_refine and not self._running)
+        self._refine_negative.setEnabled(can_refine and not self._running)
+        has_edits = bool(self._prompt_positive or self._prompt_negative)
+        target_matches = bool(self._selected_id) and self._prompt_target_id == self._selected_id
+        self._apply_refine.setEnabled(can_refine and target_matches and has_edits and not self._running)
+        self._clear_prompts.setEnabled(has_edits and not self._running)
+        if self._prompt_mode == "segment_new":
+            text = "Click one point on the object to create a new SAM2 proposal."
+        elif self._prompt_mode == "refine_positive":
+            text = f"Include mode · {len(self._prompt_positive)} include · {len(self._prompt_negative)} exclude"
+        elif self._prompt_mode == "refine_negative":
+            text = f"Exclude mode · {len(self._prompt_positive)} include · {len(self._prompt_negative)} exclude"
+        elif has_edits:
+            text = f"{len(self._prompt_positive)} include · {len(self._prompt_negative)} exclude · Apply when ready"
+        elif can_refine:
+            text = "Selected mask ready for refinement. Add include/exclude points."
+        else:
+            text = "Select an object to refine, or click + Segment Object."
+        self._prompt_summary.setText(text)
+
+    def load_prompt_result(self, result_dir: str | Path) -> None:
+        if self._image_bgr is None:
+            raise RuntimeError("Prompted SAM2 result arrived without a source image.")
+        root = Path(result_dir)
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        data = np.asarray(np.load(root / "mask.npy", allow_pickle=False), dtype=bool)
+        height, width = self._image_bgr.shape[:2]
+        if data.shape != (height, width):
+            raise ContractValidationError("Prompted SAM2 result mask does not match the source image.")
+        operation = str(manifest.get("operation", "")).strip().lower()
+        object_id = str(manifest.get("object_id", "")).strip()
+        parent_mask_id = str(manifest.get("parent_mask_id", "")).strip()
+        revision = int(manifest.get("revision", 0))
+        if operation not in {"create", "refine"} or not object_id:
+            raise ContractValidationError("Prompted SAM2 result manifest is invalid.")
+
+        if self._workspace is not None:
+            frame = self._workspace.frame_reference
+            current = self._workspace.object_by_id(object_id)
+            if operation == "refine" and (current is None or current.proposal_mask is None):
+                raise ContractValidationError("Prompted refinement target no longer exists in the workspace.")
+            space = (
+                current.proposal_mask.pixel_space
+                if current is not None and current.proposal_mask is not None
+                else PixelCoordinateSpace("rgb", frame, frame.source_size, PixelSpaceRole.RGB)
+            )
+        else:
+            frame = FrameReference(0, 0, 0.0, ImageSize(width, height))
+            space = PixelCoordinateSpace("rgb", frame, frame.source_size, PixelSpaceRole.RGB)
+            catalog = self._project.class_catalog if self._project is not None else self._empty_catalog()
+            self._workspace = SemanticWorkspace(
+                workspace_id=f"auto-segment-ui-{uuid4()}",
+                frame_reference=frame,
+                class_catalog=catalog,
+                objects=(),
+            )
+
+        provenance = ModelProvenance(
+            model_id=str(manifest.get("model_id", "ultralytics-sam2-prompted")),
+            display_name="SAM2 Interactive Segmentation",
+            task="prompted_segmentation",
+        )
+        confidence = manifest.get("confidence")
+        kind = ConfidenceKind(str(manifest.get("confidence_kind", ConfidenceKind.NONE.value)))
+        mask = InstanceMask(
+            mask_id=str(manifest.get("mask_id", f"{object_id}:sam2:r{revision}")),
+            frame_reference=frame,
+            pixel_space=space,
+            payload=DenseMaskPayload(data),
+            source=MaskSource.PROMPTED_REFINEMENT,
+            model_provenance=provenance,
+            revision=revision,
+            parent_mask_id=parent_mask_id,
+            confidence=None if confidence is None else float(confidence),
+            confidence_kind=kind,
+            foreground_valid=bool(np.any(data)),
+        )
+        assert self._workspace is not None
+        if operation == "create":
+            self._workspace = append_workspace_mask_proposal(self._workspace, mask, object_id=object_id)
+            self._status_text.setText("Created a new SAM2 proposal. Assign a class when the mask is correct.")
+        else:
+            self._workspace = replace_workspace_object_mask(self._workspace, object_id, mask)
+            self._status_text.setText("Refined mask applied. Review and accept it again when correct.")
+        self._selected_id = object_id
+        self._canvas.set_workspace(self._workspace)
+        self._clear_prompt_points()
+        self._progress.setValue(100)
+        self._refresh_all(keep_selection=True)
+        self.select_object(object_id)
+
     def _refresh_all(self, *, keep_selection: bool = False) -> None:
         self._refresh_class_combo()
         self._refresh_object_list()
@@ -675,6 +957,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._sync_overlay_options()
         self._run.setEnabled(not self._running and self._image_bgr is not None)
         self._cancel.setEnabled(self._running)
+        self._refresh_prompt_controls()
         if keep_selection and self._selected_id:
             self._canvas.set_selected_object(self._selected_id)
 
@@ -707,6 +990,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         label = obj.class_name or "Unlabeled"
         instance = obj.instance_name or "No instance name"
         self._selected_status.setText(f"{label} · {instance} · {obj.review_status.value.title()}")
+        self._refresh_prompt_controls()
 
     def _refresh_summary(self) -> None:
         if self._workspace is None:

@@ -82,14 +82,30 @@ class PromptedSegmentationRequest:
     prompt: SegmentationPrompt
     parent_detection_id: str = ''
     parent_mask_id: str = ''
+    creates_new_instance: bool = False
 
     def __post_init__(self) -> None:
         if self.prompt.pixel_space.frame_reference != self.frame_request.frame_reference:
             raise ContractValidationError('Prompt and frame request refer to different frames.')
-        if not self.parent_detection_id and (not self.parent_mask_id):
-            raise ContractValidationError('Prompted segmentation requires a parent detection or mask identifier.')
-        object.__setattr__(self, 'parent_detection_id', str(self.parent_detection_id).strip())
-        object.__setattr__(self, 'parent_mask_id', str(self.parent_mask_id).strip())
+        parent_detection_id = str(self.parent_detection_id).strip()
+        parent_mask_id = str(self.parent_mask_id).strip()
+        creates_new_instance = bool(self.creates_new_instance)
+        if creates_new_instance:
+            if parent_detection_id or parent_mask_id:
+                raise ContractValidationError(
+                    'New-instance prompted segmentation must not claim a parent detection or mask.'
+                )
+            if self.prompt.kind is not SegmentationPromptKind.POINTS:
+                raise ContractValidationError(
+                    'New-instance prompted segmentation currently requires a point prompt.'
+                )
+        elif not parent_detection_id and not parent_mask_id:
+            raise ContractValidationError(
+                'Prompted refinement requires a parent detection or mask identifier.'
+            )
+        object.__setattr__(self, 'parent_detection_id', parent_detection_id)
+        object.__setattr__(self, 'parent_mask_id', parent_mask_id)
+        object.__setattr__(self, 'creates_new_instance', creates_new_instance)
 
 @dataclass(frozen=True, slots=True)
 class SequenceResetRequest:
