@@ -88,6 +88,10 @@ from app.reconstruction_canonical_scene_presentation import (
     CanonicalScenePresentation,
     build_canonical_scene_presentation,
 )
+from app.reconstruction_canonical_geometry import (
+    CanonicalViewerMesh,
+    load_canonical_viewer_mesh,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -257,6 +261,8 @@ class ReconstructionPage(QWidget):
         self._persistent_authority_snapshot: PersistentSceneAuthoritySnapshot | None = None
         self._persisted_metric_assessment = None
         self._canonical_scene_presentation: CanonicalScenePresentation | None = None
+        self._canonical_viewer_mesh: CanonicalViewerMesh | None = None
+        self._canonical_viewer_error = ""
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -531,7 +537,7 @@ class ReconstructionPage(QWidget):
         headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(headline)
         detail = QLabel(
-            "World origin, current camera pose, trajectory, sparse SLAM landmarks, and historical keyframe structure are active. Dense/canonical geometry and neural appearance are introduced progressively in later Phase 8.8 steps."
+            "World origin and reconstruction context share this viewport. Persistent canonical surface geometry is rendered here when an integrity-verified scene resource is available; appearance previews remain presentation-only overlays."
         )
         detail.setObjectName("reconstructionViewportHint")
         detail.setWordWrap(True)
@@ -566,7 +572,7 @@ class ReconstructionPage(QWidget):
             tool_row.addWidget(button)
         self._viewport_tool_buttons["orbit"].setChecked(True)
 
-        fit_button = IconButton("fit", size=28, icon_size=15, tooltip="Fit known camera path to view")
+        fit_button = IconButton("fit", size=28, icon_size=15, tooltip="Fit available scene geometry and camera context to view")
         fit_button.clicked.connect(self._reconstruction_canvas.fit_scene)
         tool_row.addWidget(fit_button)
         focus_button = IconButton("camera", size=28, icon_size=15, tooltip="Focus current camera")
@@ -1659,6 +1665,93 @@ class ReconstructionPage(QWidget):
             )
         if changed:
             self.canonical_scene_presentation_changed.emit(presentation)
+
+    @property
+    def canonical_viewer_mesh(self) -> CanonicalViewerMesh | None:
+        return self._canonical_viewer_mesh
+
+    def _apply_canonical_viewer_status(self) -> None:
+        mesh = self._canonical_viewer_mesh
+        if not hasattr(self, "_canonical_scene_status_value"):
+            return
+        if mesh is not None and self._reconstruction_canvas.canonical_mesh_loaded:
+            self._canonical_scene_status_value.setText(
+                f"Interactive canonical surface • {mesh.vertex_count:,} vertices • {mesh.face_count:,} faces"
+            )
+            self._canonical_scene_status_value.setToolTip(
+                "Phase 9.3B renders the integrity-verified persisted canonical OBJ in the existing "
+                "ReconstructionCanvas. Rendering is presentation-only; canonical authority stays with "
+                "the persistent scene and metrology is not certified."
+            )
+            return
+        if self._canonical_viewer_error:
+            self._canonical_scene_status_value.setText(
+                "Canonical authority retained • interactive surface unavailable"
+            )
+            self._canonical_scene_status_value.setToolTip(self._canonical_viewer_error)
+            return
+        presentation = self._canonical_scene_presentation
+        if presentation is not None and presentation.available and not presentation.viewer_resource_ready:
+            self._canonical_scene_status_value.setText(
+                "Canonical authority ready • no materialized interactive surface"
+            )
+            self._canonical_scene_status_value.setToolTip(
+                "Phase 9.3B renders only an integrity-verified persistent surface_obj_path resource. "
+                "Canonical authority remains valid even when no materialized viewer surface is available; "
+                "metrology is not certified."
+            )
+
+    def _refresh_canonical_geometry_viewer(self) -> None:
+        """Load/clear the persisted canonical surface without changing scene authority."""
+
+        self._reconstruction_canvas.clear_canonical_mesh()
+        self._canonical_viewer_mesh = None
+        self._canonical_viewer_error = ""
+        scene = self._persistent_scene
+        if scene is None:
+            self._refresh_viewport_state()
+            return
+
+        presentation = self._canonical_scene_presentation
+        if presentation is None or not presentation.viewer_resource_ready:
+            self._apply_canonical_viewer_status()
+            self._refresh_viewport_state()
+            return
+
+        try:
+            mesh = load_canonical_viewer_mesh(scene)
+            if mesh is None:
+                self._apply_canonical_viewer_status()
+                self._refresh_viewport_state()
+                return
+            self._reconstruction_canvas.set_canonical_mesh(
+                vertices_viewer=mesh.vertices_viewer,
+                faces=mesh.faces,
+                vertex_colors_rgba=mesh.vertex_colors_rgba,
+                scene_id=mesh.scene_id,
+                artifact_id=mesh.artifact_id,
+                source_path=mesh.source_path,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            # A viewer-resource failure cannot revoke already-established canonical
+            # authority, but stale geometry must never remain on screen.
+            self._reconstruction_canvas.clear_canonical_mesh()
+            self._canonical_viewer_error = str(exc)
+            self._viewport_state.setText("Canonical surface unavailable")
+            self._viewport_state.setToolTip(str(exc))
+            self._apply_canonical_viewer_status()
+            return
+
+        self._canonical_viewer_mesh = mesh
+        self._viewport_placeholder.setVisible(False)
+        self._viewport_state.setText("Canonical surface mesh")
+        self._viewport_state.setToolTip(
+            f"Persistent canonical surface: {mesh.vertex_count:,} vertices, {mesh.face_count:,} faces. "
+            "Viewer coordinates are presentation-only; persistent canonical geometry remains authoritative."
+        )
+        self._reconstruction_canvas.fit_scene()
+        self._visualizer_fitted_once = True
+        self._apply_canonical_viewer_status()
 
     @property
     def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
@@ -4498,6 +4591,12 @@ class ReconstructionPage(QWidget):
         if self.gaussian_preview_visible:
             self._viewport_state.setText("Gaussian Splatting preview • appearance only")
             return
+        if self._reconstruction_canvas.canonical_mesh_loaded:
+            self._viewport_state.setText("Canonical surface mesh")
+            return
+        if self._canonical_viewer_error and self._persistent_scene is not None:
+            self._viewport_state.setText("Canonical surface unavailable")
+            return
         if self._scene_availability is ReconstructionSceneAvailability.READY:
             self._viewport_state.setText("Scene ready")
             return
@@ -4787,6 +4886,7 @@ class ReconstructionPage(QWidget):
         self._persisted_metric_assessment = None
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
+        self._refresh_canonical_geometry_viewer()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
@@ -4837,6 +4937,7 @@ class ReconstructionPage(QWidget):
             self.clear_camera_calibration_profile()
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
+        self._apply_canonical_viewer_status()
 
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
         if checkpoint is None:
@@ -4887,6 +4988,8 @@ class ReconstructionPage(QWidget):
         self._pending_keyframes = None
         if hasattr(self, "_orientation_gizmo"):
             self._orientation_gizmo.shutdown()
+        self._canonical_viewer_mesh = None
+        self._canonical_viewer_error = ""
         self._reconstruction_canvas.close()
 
     @staticmethod

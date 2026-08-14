@@ -191,6 +191,16 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_sparse_envelope_available = False
             self._offline_sparse_envelope_min = None
             self._offline_sparse_envelope_max = None
+            self._canonical_mesh_loaded = False
+            self._canonical_mesh_visible = False
+            self._canonical_mesh_scene_id = ""
+            self._canonical_mesh_artifact_id = ""
+            self._canonical_mesh_source_path = ""
+            self._canonical_mesh_vertices = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_mesh_faces = np.zeros((0, 3), dtype=np.uint32)
+            self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
+            self._canonical_mesh_bounds_min = None
+            self._canonical_mesh_bounds_max = None
             self._semantic_objects_visible = True
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -396,6 +406,48 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_offline_sparse_envelope_visible(self, visible: bool) -> None:
             self._offline_sparse_envelope_visible_requested = bool(visible)
+
+        def set_canonical_mesh(
+            self,
+            *,
+            vertices_viewer,
+            faces,
+            vertex_colors_rgba,
+            scene_id: str,
+            artifact_id: str,
+            source_path: str,
+        ) -> None:
+            vertices = np.asarray(vertices_viewer, dtype=np.float32)
+            triangles = np.asarray(faces, dtype=np.uint32)
+            colors = np.asarray(vertex_colors_rgba, dtype=np.float32)
+            if vertices.ndim != 2 or vertices.shape[1:] != (3,) or vertices.shape[0] < 3:
+                raise ValueError("vertices_viewer must contain at least three (N, 3) vertices.")
+            if triangles.ndim != 2 or triangles.shape[1:] != (3,) or triangles.shape[0] < 1:
+                raise ValueError("faces must contain at least one triangular face.")
+            if colors.shape != (vertices.shape[0], 4):
+                raise ValueError("vertex_colors_rgba must have shape (N, 4).")
+            self._canonical_mesh_vertices = vertices.copy()
+            self._canonical_mesh_faces = triangles.copy()
+            self._canonical_mesh_colors = colors.copy()
+            self._canonical_mesh_bounds_min = vertices.min(axis=0).copy()
+            self._canonical_mesh_bounds_max = vertices.max(axis=0).copy()
+            self._canonical_mesh_scene_id = str(scene_id)
+            self._canonical_mesh_artifact_id = str(artifact_id)
+            self._canonical_mesh_source_path = str(source_path)
+            self._canonical_mesh_loaded = True
+            self._canonical_mesh_visible = True
+
+        def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
+            self._canonical_mesh_loaded = False
+            self._canonical_mesh_visible = False
+            self._canonical_mesh_scene_id = ""
+            self._canonical_mesh_artifact_id = ""
+            self._canonical_mesh_source_path = ""
+            self._canonical_mesh_vertices = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_mesh_faces = np.zeros((0, 3), dtype=np.uint32)
+            self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
+            self._canonical_mesh_bounds_min = None
+            self._canonical_mesh_bounds_max = None
 
         def set_semantic_objects(
             self,
@@ -688,6 +740,40 @@ def _install_fake_vispy_canvas() -> None:
             return self._offline_scale_status
 
         @property
+        def canonical_mesh_loaded(self) -> bool:
+            return bool(self._canonical_mesh_loaded)
+
+        @property
+        def canonical_mesh_visible(self) -> bool:
+            return bool(self._canonical_mesh_visible and self._canonical_mesh_loaded)
+
+        @property
+        def canonical_mesh_vertex_count(self) -> int:
+            return int(self._canonical_mesh_vertices.shape[0])
+
+        @property
+        def canonical_mesh_face_count(self) -> int:
+            return int(self._canonical_mesh_faces.shape[0])
+
+        @property
+        def canonical_mesh_scene_id(self) -> str:
+            return self._canonical_mesh_scene_id
+
+        @property
+        def canonical_mesh_artifact_id(self) -> str:
+            return self._canonical_mesh_artifact_id
+
+        @property
+        def canonical_mesh_source_path(self) -> str:
+            return self._canonical_mesh_source_path
+
+        @property
+        def canonical_mesh_bounds(self):
+            if self._canonical_mesh_bounds_min is None or self._canonical_mesh_bounds_max is None:
+                return None
+            return self._canonical_mesh_bounds_min.copy(), self._canonical_mesh_bounds_max.copy()
+
+        @property
         def semantic_objects_available(self) -> bool:
             return bool(self._semantic_objects_available)
 
@@ -751,6 +837,7 @@ def _install_fake_vispy_canvas() -> None:
             return self._is_interacting
 
         def close(self) -> None:
+            self.clear_canonical_mesh(update_canvas=False)
             self.closed = True
             self._native.close()
 

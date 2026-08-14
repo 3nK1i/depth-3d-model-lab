@@ -64,7 +64,7 @@ def _qualified_authority(scene):
     )
 
 
-def test_3a_sidebar_binds_scene_without_rendering_canonical_mesh(qtbot, monkeypatch, tmp_path: Path) -> None:
+def test_3a_sidebar_binds_scene_without_changing_canonical_authority_contract(qtbot, monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("app.application_controller.CameraEnumerator.start", lambda self: None)
     window = MainWindow()
     qtbot.addWidget(window)
@@ -78,9 +78,11 @@ def test_3a_sidebar_binds_scene_without_rendering_canonical_mesh(qtbot, monkeypa
     assert page._canonical_scene_resource_value.text() == "Materialized • 9.3B ready"
     assert page._canonical_scene_scale_value.text() == "Not qualified"
     assert page._canonical_scene_authority_value.text() == "Canonical geometry • metrology not certified"
-    assert "rendering deferred to 9.3B" in page._canonical_scene_status_value.text()
+    assert page.canonical_scene_presentation is not None
+    assert page.canonical_scene_presentation.viewer_resource_ready is True
+    assert page.canonical_scene_presentation.canonical_geometry_authoritative is True
+    assert page.canonical_scene_presentation.certified_metrology is False
     assert page._viewport_safety.text() == "VIEWER Z-UP • ARBITRARY GAUGE"
-    assert not hasattr(page._reconstruction_canvas, "set_canonical_mesh")
     window.close()
 
 

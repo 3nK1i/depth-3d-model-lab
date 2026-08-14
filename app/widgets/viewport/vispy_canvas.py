@@ -511,6 +511,19 @@ class ReconstructionCanvas(QObject):
         self._offline_sparse_envelope_available = False
         self._offline_sparse_envelope_min = None
         self._offline_sparse_envelope_max = None
+        # Phase 9.3B adds one persistent canonical surface visual to the
+        # existing Reconstruction SceneCanvas. The mesh is presentation-only;
+        # canonical authority remains with PersistentReconstructionScene.
+        self._canonical_mesh = scene.visuals.Mesh(parent=self._view.scene, shading="smooth")
+        self._canonical_mesh.visible = False
+        self._canonical_mesh_loaded = False
+        self._canonical_mesh_scene_id = ""
+        self._canonical_mesh_artifact_id = ""
+        self._canonical_mesh_source_path = ""
+        self._canonical_mesh_vertex_count = 0
+        self._canonical_mesh_face_count = 0
+        self._canonical_mesh_bounds_min = None
+        self._canonical_mesh_bounds_max = None
         self._semantic_object_boxes = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
             connect="segments",
@@ -904,6 +917,89 @@ class ReconstructionCanvas(QObject):
         )
         self._canvas.update()
 
+    def set_canonical_mesh(
+        self,
+        *,
+        vertices_viewer: np.ndarray,
+        faces: np.ndarray,
+        vertex_colors_rgba: np.ndarray,
+        scene_id: str,
+        artifact_id: str,
+        source_path: str,
+    ) -> None:
+        """Display one already-validated persistent canonical surface.
+
+        Coordinates are already in the application's presentation-only Z-up
+        viewer frame. This method never establishes scale or geometry authority.
+        """
+
+        vertices = np.asarray(vertices_viewer, dtype=np.float32)
+        triangles = np.asarray(faces, dtype=np.uint32)
+        colors = np.asarray(vertex_colors_rgba, dtype=np.float32)
+        if vertices.ndim != 2 or vertices.shape[1:] != (3,) or vertices.shape[0] < 3:
+            raise ValueError("vertices_viewer must contain at least three (N, 3) vertices.")
+        if not np.isfinite(vertices).all():
+            raise ValueError("vertices_viewer must be finite.")
+        if triangles.ndim != 2 or triangles.shape[1:] != (3,) or triangles.shape[0] < 1:
+            raise ValueError("faces must contain at least one triangular face.")
+        if np.any(triangles >= vertices.shape[0]):
+            raise ValueError("faces reference vertices outside the canonical mesh.")
+        if colors.shape != (vertices.shape[0], 4):
+            raise ValueError("vertex_colors_rgba must have shape (N, 4).")
+        if not np.isfinite(colors).all() or np.any(colors < 0.0) or np.any(colors > 1.0):
+            raise ValueError("vertex_colors_rgba must be finite in [0, 1].")
+        scene_id = str(scene_id).strip()
+        artifact_id = str(artifact_id).strip()
+        source_path = str(source_path).strip()
+        if not scene_id or not artifact_id or not source_path:
+            raise ValueError("Canonical mesh scene/artifact/source identity is required.")
+
+        vertices = np.ascontiguousarray(vertices)
+        triangles = np.ascontiguousarray(triangles)
+        colors = np.ascontiguousarray(colors)
+        self._canonical_mesh.set_data(
+            vertices=vertices,
+            faces=triangles,
+            vertex_colors=colors,
+        )
+        self._canonical_mesh.visible = True
+        self._canonical_mesh_loaded = True
+        self._canonical_mesh_scene_id = scene_id
+        self._canonical_mesh_artifact_id = artifact_id
+        self._canonical_mesh_source_path = source_path
+        self._canonical_mesh_vertex_count = int(vertices.shape[0])
+        self._canonical_mesh_face_count = int(triangles.shape[0])
+        self._canonical_mesh_bounds_min = vertices.min(axis=0).astype(np.float32)
+        self._canonical_mesh_bounds_max = vertices.max(axis=0).astype(np.float32)
+        self._canvas.update()
+
+    def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
+        # MeshVisual.set_data() immediately recomputes bounds.  Some qualified
+        # VisPy releases therefore reject a zero-vertex mesh before visibility
+        # can be disabled.  Never use an empty set_data() call as a clear
+        # operation: hide the current node and, when it owns loaded surface
+        # data, detach it from the scenegraph and replace it with one fresh
+        # empty hidden Mesh visual.  The next canonical load overwrites that
+        # visual normally through set_canonical_mesh().
+        self._canonical_mesh.visible = False
+        if self._canonical_mesh_loaded:
+            self._canonical_mesh.parent = None
+            self._canonical_mesh = scene.visuals.Mesh(
+                parent=self._view.scene,
+                shading="smooth",
+            )
+            self._canonical_mesh.visible = False
+        self._canonical_mesh_loaded = False
+        self._canonical_mesh_scene_id = ""
+        self._canonical_mesh_artifact_id = ""
+        self._canonical_mesh_source_path = ""
+        self._canonical_mesh_vertex_count = 0
+        self._canonical_mesh_face_count = 0
+        self._canonical_mesh_bounds_min = None
+        self._canonical_mesh_bounds_max = None
+        if update_canvas:
+            self._canvas.update()
+
     def set_semantic_objects(
         self,
         *,
@@ -1259,6 +1355,24 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
         if self._keyframe_positions.size:
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+        if (
+            self._canonical_mesh_loaded
+            and self._canonical_mesh_bounds_min is not None
+            and self._canonical_mesh_bounds_max is not None
+        ):
+            lower = np.asarray(self._canonical_mesh_bounds_min, dtype=np.float64)
+            upper = np.asarray(self._canonical_mesh_bounds_max, dtype=np.float64)
+            groups.append(
+                np.asarray(
+                    [
+                        [x, y, z]
+                        for x in (lower[0], upper[0])
+                        for y in (lower[1], upper[1])
+                        for z in (lower[2], upper[2])
+                    ],
+                    dtype=np.float64,
+                )
+            )
         if self._semantic_centroids_viewer.size:
             groups.append(np.asarray(self._semantic_centroids_viewer, dtype=np.float64))
         points = np.vstack(groups) if groups else None
@@ -1540,6 +1654,43 @@ class ReconstructionCanvas(QObject):
         return self._offline_scale_status
 
     @property
+    def canonical_mesh_loaded(self) -> bool:
+        return bool(self._canonical_mesh_loaded)
+
+    @property
+    def canonical_mesh_visible(self) -> bool:
+        return bool(self._canonical_mesh_loaded and self._canonical_mesh.visible)
+
+    @property
+    def canonical_mesh_vertex_count(self) -> int:
+        return int(self._canonical_mesh_vertex_count)
+
+    @property
+    def canonical_mesh_face_count(self) -> int:
+        return int(self._canonical_mesh_face_count)
+
+    @property
+    def canonical_mesh_scene_id(self) -> str:
+        return self._canonical_mesh_scene_id
+
+    @property
+    def canonical_mesh_artifact_id(self) -> str:
+        return self._canonical_mesh_artifact_id
+
+    @property
+    def canonical_mesh_source_path(self) -> str:
+        return self._canonical_mesh_source_path
+
+    @property
+    def canonical_mesh_bounds(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if self._canonical_mesh_bounds_min is None or self._canonical_mesh_bounds_max is None:
+            return None
+        return (
+            np.asarray(self._canonical_mesh_bounds_min, dtype=np.float32).copy(),
+            np.asarray(self._canonical_mesh_bounds_max, dtype=np.float32).copy(),
+        )
+
+    @property
     def semantic_objects_available(self) -> bool:
         return bool(self._semantic_objects_available)
 
@@ -1609,4 +1760,5 @@ class ReconstructionCanvas(QObject):
         if self._closed:
             return
         self._closed = True
+        self.clear_canonical_mesh(update_canvas=False)
         self._canvas.close()
