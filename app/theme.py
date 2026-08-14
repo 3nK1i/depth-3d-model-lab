@@ -1166,6 +1166,48 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
 
+
+    /* ---- Phase 9.2D Auto Segment workspace ---- */
+    QDialog#autoSegmentWorkspaceDialog {{ background-color: {p.bg_root}; }}
+    QFrame#autoSegmentHeader, QFrame#autoSegmentStatusRow, QFrame#autoSegmentPanel {{
+        background-color: {p.toolbar_card_bg}; border: 1px solid {p.toolbar_card_border}; border-radius: 7px;
+    }}
+    QLabel#autoSegmentTitle {{ color: {p.text_primary}; font-size: 13px; font-weight: 800; letter-spacing: 0.7px; }}
+    QLabel#autoSegmentMuted {{ color: {p.text_secondary}; font-size: 10px; }}
+    QLabel#autoSegmentStatusBadge {{
+        color: {p.success}; background-color: {p.footer_status_green_bg}; border: 1px solid {p.footer_status_green_border};
+        border-radius: 5px; padding: 3px 9px; font-size: 10px; font-weight: 800;
+    }}
+    QLabel#autoSegmentStatusBadge[statusKind="running"] {{ color: {p.info_cyan}; background-color: #122a33; border-color: #23505d; }}
+    QLabel#autoSegmentStatusBadge[statusKind="warning"] {{ color: {p.warning}; background-color: {p.footer_status_amber_bg}; border-color: {p.footer_status_amber_border}; }}
+    QLabel#autoSegmentStatusBadge[statusKind="error"] {{ color: {p.error}; background-color: {p.footer_status_red_bg}; border-color: {p.footer_status_red_border}; }}
+    QProgressBar#autoSegmentProgress {{ background-color: {p.footer_track_bg}; border: 1px solid {p.border}; border-radius: 4px; min-height: 7px; max-height: 7px; }}
+    QProgressBar#autoSegmentProgress::chunk {{ background-color: {p.info_cyan}; border-radius: 3px; }}
+    QScrollArea#autoSegmentSidebar {{ background-color: {p.settings_sidebar_bg}; border: 1px solid {p.settings_card_border}; border-radius: 7px; }}
+    QScrollArea#autoSegmentSidebar > QWidget > QWidget {{ background-color: {p.settings_sidebar_bg}; }}
+    QFrame#autoSegmentCard {{ background-color: {p.settings_card_bg}; border: 1px solid {p.settings_card_border}; border-radius: 7px; }}
+    QLabel#autoSegmentCardTitle {{ color: {p.text_primary}; font-size: 11px; font-weight: 800; letter-spacing: 0.55px; }}
+    QComboBox#autoSegmentCombo, QSpinBox#autoSegmentSpin, QLineEdit#autoSegmentLineEdit {{
+        background-color: {p.settings_input_bg}; border: 1px solid {p.settings_input_border}; border-radius: 5px;
+        padding: 5px 8px; color: {p.settings_text}; min-height: 20px;
+    }}
+    QListWidget#autoSegmentObjectList {{
+        background-color: {p.bg_input}; border: 1px solid {p.settings_input_border}; border-radius: 5px;
+        color: {p.settings_text}; selection-background-color: #2a1417; selection-color: {p.text_primary};
+    }}
+    QListWidget#autoSegmentObjectList::item {{ padding: 7px 6px; border-bottom: 1px solid {p.border}; }}
+    QListWidget#autoSegmentObjectList::item:selected {{ border-left: 3px solid {p.accent}; }}
+    QPushButton#autoSegmentPrimaryButton, QPushButton#autoSegmentSecondaryButton,
+    QPushButton#autoSegmentDangerButton, QPushButton#autoSegmentMiniButton {{
+        border-radius: 5px; padding: 6px 10px; font-size: 11px; font-weight: 700;
+    }}
+    QPushButton#autoSegmentPrimaryButton {{ background-color: {p.toolbar_green_bg}; border: 1px solid {p.toolbar_green_border}; color: {p.toolbar_green_fg}; }}
+    QPushButton#autoSegmentSecondaryButton, QPushButton#autoSegmentMiniButton {{ background-color: {p.toolbar_hover_bg}; border: 1px solid {p.toolbar_card_border}; color: {p.toolbar_text}; }}
+    QPushButton#autoSegmentDangerButton {{ background-color: {p.toolbar_red_bg}; border: 1px solid {p.toolbar_red_border}; color: {p.toolbar_red_fg}; }}
+    QPushButton#autoSegmentPrimaryButton:disabled, QPushButton#autoSegmentSecondaryButton:disabled,
+    QPushButton#autoSegmentDangerButton:disabled, QPushButton#autoSegmentMiniButton:disabled {{ background-color: transparent; border-color: {p.border}; color: {p.text_muted}; }}
+    QLabel#autoSegmentWarningText {{ color: {p.warning}; background-color: {p.footer_status_amber_bg}; border: 1px solid {p.footer_status_amber_border}; border-radius: 5px; padding: 6px 8px; font-size: 10px; font-weight: 700; }}
+
     /* ---- Phase 8.8 Reconstruction workspace ---- */
 
     QWidget#reconstructionPage {{

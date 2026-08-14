@@ -28,6 +28,8 @@ from PyQt6.QtWidgets import (
 )
 
 from app.application_controller import ApplicationController
+from app.auto_segment_controller import AutoSegmentController, AutoSegmentControllerState
+from app.dialogs.auto_segment_workspace_dialog import AutoSegmentWorkspaceDialog
 from app.reconstruction_controller import ReconstructionController
 from app.benchmark_controller import (
     BenchmarkController,
@@ -145,6 +147,8 @@ class MainWindow(QMainWindow):
         self._snapshot_controller = SnapshotController(Path(__file__).resolve().parents[1], self)
         self._stable_video_controller = StableVideoController(Path(__file__).resolve().parents[1], self)
         self._inspection_controller = MeasurementInspectionController(Path(__file__).resolve().parents[1], self)
+        self._auto_segment_controller = AutoSegmentController(Path(__file__).resolve().parents[1], self)
+        self._auto_segment_dialog: AutoSegmentWorkspaceDialog | None = None
         self._inspection_export_controller = InspectionExportController(Path(__file__).resolve().parents[1], self)
         # Phase 8.8A5 established Reconstruction-side start guards. Phase 8.8H2
         # keeps that ownership model and closes the reciprocal application boundary:
@@ -178,6 +182,7 @@ class MainWindow(QMainWindow):
         self._inspection_page.calibration_requested.connect(
             self._reconstruction_page.open_camera_calibration_workspace
         )
+        self._inspection_page.auto_segment_requested.connect(self._open_auto_segment_workspace)
         self._inspection_page.analysis_requested.connect(self._start_inspection_analysis)
         self._inspection_page.cancel_requested.connect(self._inspection_controller.cancel)
         self._inspection_page.recompute_requested.connect(self._recompute_inspection)
@@ -191,6 +196,7 @@ class MainWindow(QMainWindow):
         self._inspection_export_controller.result_ready.connect(self._on_inspection_export_result)
         self._inspection_export_controller.failure_received.connect(self._inspection_page.show_export_failure)
         self._inspection_export_controller.state_changed.connect(self._on_inspection_export_state_changed)
+        self._auto_segment_controller.state_changed.connect(self._on_auto_segment_state_changed)
         self._stable_video_page.start_requested.connect(self._start_stable_video)
         self._stable_video_page.pause_resume_requested.connect(self._pause_resume_stable_video)
         self._stable_video_page.stop_requested.connect(self._stop_stable_video)
@@ -443,6 +449,7 @@ class MainWindow(QMainWindow):
             or self._stable_video_controller.is_active
             or self._inspection_controller.is_running
             or self._inspection_export_controller.is_running
+            or bool(getattr(getattr(self, "_auto_segment_controller", None), "is_running", False))
         )
         self._mode_tabs.set_navigation_locked(locked)
         # Keep the other mode-specific readiness surfaces synchronized with the
@@ -518,6 +525,8 @@ class MainWindow(QMainWindow):
             return "Stop the active Snapshot job before measurement inspection."
         if self._stable_video_controller.is_active:
             return "Stop Stable Video before measurement inspection."
+        if self._auto_segment_controller.is_running:
+            return "Stop Auto Segment before measurement inspection."
         return ""
 
     def _start_inspection_analysis(self, configuration: dict[str, object]) -> None:
@@ -550,6 +559,76 @@ class MainWindow(QMainWindow):
         except (OSError, RuntimeError, ValueError, KeyError) as exc:
             self._inspection_page.show_failure(str(exc))
             self._mode_tabs.set_navigation_locked(False)
+
+    def _open_auto_segment_workspace(self) -> None:
+        initial = self._inspection_frame
+        source_label = "Captured Measure & Inspect frame" if initial is not None else ""
+        if initial is None and self._controller.latest_source_frame is not None:
+            initial = np.array(self._controller.latest_source_frame.image, dtype=np.uint8, copy=True)
+            source_label = "Latest Live 3D frame"
+        dialog = AutoSegmentWorkspaceDialog(
+            self,
+            initial_bgr=initial,
+            initial_source_label=source_label,
+        )
+        self._auto_segment_dialog = dialog
+        dialog.run_requested.connect(self._start_auto_segment)
+        dialog.cancel_requested.connect(self._auto_segment_controller.cancel)
+        self._auto_segment_controller.state_changed.connect(dialog.set_controller_state)
+        self._auto_segment_controller.progress_changed.connect(dialog.set_progress)
+        self._auto_segment_controller.result_ready.connect(dialog.load_job_result)
+        self._auto_segment_controller.failure_received.connect(dialog.show_failure)
+        dialog.finished.connect(lambda _result: self._clear_auto_segment_dialog(dialog))
+        dialog.exec()
+
+    def _clear_auto_segment_dialog(self, dialog: AutoSegmentWorkspaceDialog) -> None:
+        for signal, slot in (
+            (self._auto_segment_controller.state_changed, dialog.set_controller_state),
+            (self._auto_segment_controller.progress_changed, dialog.set_progress),
+            (self._auto_segment_controller.result_ready, dialog.load_job_result),
+            (self._auto_segment_controller.failure_received, dialog.show_failure),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        if self._auto_segment_dialog is dialog:
+            self._auto_segment_dialog = None
+        dialog.deleteLater()
+
+    def _start_auto_segment(self, configuration: dict[str, object]) -> None:
+        conflict = self._inspection_jobs_conflict()
+        if conflict:
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(conflict.replace("Measure & Inspect", "Auto Segment"))
+            return
+        image = configuration.get("image_bgr")
+        if not isinstance(image, np.ndarray):
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure("Open an image or capture a source frame before Auto Segment.")
+            return
+        if not self._inference_controller.release_model_for_external_job():
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(
+                    "Stop or finish the active Live 3D inference operation before Auto Segment."
+                )
+            return
+        try:
+            self._auto_segment_controller.start(
+                image_bgr=image,
+                model_id=str(configuration.get("model_id", "ultralytics-sam2-prompted")),
+                profile=str(configuration.get("profile", "efficient")),
+                minimum_mask_pixels=int(configuration.get("minimum_mask_pixels", 64)),
+                max_proposals=int(configuration.get("max_proposals", 64)),
+            )
+            self._mode_tabs.set_navigation_locked(True)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            if self._auto_segment_dialog is not None:
+                self._auto_segment_dialog.show_failure(str(exc))
+            self._mode_tabs.set_navigation_locked(False)
+
+    def _on_auto_segment_state_changed(self, _state: AutoSegmentControllerState) -> None:
+        self._on_reconstruction_activity_changed()
 
     def _recompute_inspection(self, configuration: dict[str, object]) -> None:
         conflict = self._inspection_jobs_conflict()
@@ -1004,6 +1083,7 @@ class MainWindow(QMainWindow):
         self._snapshot_controller.shutdown()
         self._stable_video_controller.shutdown()
         self._inspection_controller.shutdown()
+        self._auto_segment_controller.shutdown()
         self._inspection_export_controller.shutdown()
         self._inspection_page.close()
         # Stop reconstruction producers before closing the dedicated VisPy canvas

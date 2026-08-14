@@ -1,0 +1,723 @@
+"""Professional Phase 9.2D interactive Auto Segment review workspace."""
+from __future__ import annotations
+
+from dataclasses import replace
+import json
+from pathlib import Path
+from uuid import uuid4
+
+import cv2
+import numpy as np
+from PyQt6.QtCore import Qt, QStandardPaths, pyqtSignal
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.auto_segment_controller import AutoSegmentControllerState
+from app.widgets.auto_segment_canvas import AutoSegmentCanvas
+from core.contracts import FrameReference, ImageSize, ModelProvenance, PixelCoordinateSpace, PixelSpaceRole
+from core.contracts.validation import ContractValidationError
+from core.models.metadata import ConfidenceKind
+from core.perception.result import DenseMaskPayload, InstanceMask, MaskSource
+from core.perception.semantic_project import (
+    SegmentationProject,
+    SegmentationProjectStore,
+    add_project_class,
+    create_segmentation_project,
+    merge_project_catalog_into_workspace,
+)
+from core.perception.semantic_workspace import (
+    SemanticReviewStatus,
+    SemanticWorkspace,
+    assign_workspace_class,
+    set_workspace_review_status,
+    workspace_from_mask_proposals,
+)
+
+
+def default_segmentation_project_root() -> Path:
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    if not str(base).strip():
+        base = str(Path.home() / ".local" / "share" / "eia-depth-3d-model-lab")
+    return Path(base).expanduser().resolve() / "segmentation_projects"
+
+
+class AutoSegmentWorkspaceDialog(QDialog):
+    """Large modal semantic-review workspace; no geometry/metric authority is granted here."""
+
+    run_requested = pyqtSignal(dict)
+    cancel_requested = pyqtSignal()
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        project_store: SegmentationProjectStore | None = None,
+        initial_bgr: np.ndarray | None = None,
+        initial_source_label: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("autoSegmentWorkspaceDialog")
+        self.setWindowTitle("Auto Segment Workspace")
+        self.setModal(True)
+        self.setMinimumSize(900, 620)
+        self.resize(1180, 700)
+
+        self._store = project_store or SegmentationProjectStore(default_segmentation_project_root())
+        self._project: SegmentationProject | None = None
+        self._workspace: SemanticWorkspace | None = None
+        self._image_bgr: np.ndarray | None = None
+        self._source_label = "No image selected"
+        self._selected_id = ""
+        self._running = False
+
+        self._build_ui()
+        self._refresh_projects()
+        if initial_bgr is not None:
+            self.set_source_image(initial_bgr, label=initial_source_label or "Captured Measure & Inspect frame")
+        self._refresh_all()
+
+    @property
+    def workspace(self) -> SemanticWorkspace | None:
+        return self._workspace
+
+    @property
+    def project(self) -> SegmentationProject | None:
+        return self._project
+
+    @property
+    def source_image_bgr(self) -> np.ndarray | None:
+        return None if self._image_bgr is None else self._image_bgr.copy()
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(9)
+        outer.addWidget(self._build_header())
+        outer.addWidget(self._build_status())
+        outer.addWidget(self._build_body(), stretch=1)
+        outer.addWidget(self._build_footer())
+
+    def _build_header(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("autoSegmentHeader")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(8)
+        title_box = QVBoxLayout()
+        title = QLabel("AUTO SEGMENT WORKSPACE")
+        title.setObjectName("autoSegmentTitle")
+        subtitle = QLabel("Generate unlabeled SAM2 proposals, then review and assign stable project classes.")
+        subtitle.setObjectName("autoSegmentMuted")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        layout.addLayout(title_box, stretch=1)
+
+        layout.addWidget(QLabel("Project"))
+        self._project_combo = QComboBox()
+        self._project_combo.setObjectName("autoSegmentCombo")
+        self._project_combo.setMinimumWidth(190)
+        self._project_combo.currentIndexChanged.connect(self._on_project_changed)
+        layout.addWidget(self._project_combo)
+        new_project = QPushButton("New Project")
+        new_project.setObjectName("autoSegmentSecondaryButton")
+        new_project.clicked.connect(self._create_project)
+        layout.addWidget(new_project)
+        return frame
+
+    def _build_status(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("autoSegmentStatusRow")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setSpacing(8)
+        self._status_badge = QLabel("READY")
+        self._status_badge.setObjectName("autoSegmentStatusBadge")
+        self._status_badge.setProperty("statusKind", "ready")
+        layout.addWidget(self._status_badge)
+        self._status_text = QLabel("Open an image or use the captured frame.")
+        self._status_text.setObjectName("autoSegmentMuted")
+        layout.addWidget(self._status_text, stretch=1)
+        self._progress = QProgressBar()
+        self._progress.setObjectName("autoSegmentProgress")
+        self._progress.setRange(0, 100)
+        self._progress.setValue(0)
+        self._progress.setTextVisible(False)
+        self._progress.setFixedWidth(190)
+        layout.addWidget(self._progress)
+        return frame
+
+    def _build_body(self) -> QSplitter:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(9)
+
+        visual = QFrame()
+        visual.setObjectName("autoSegmentPanel")
+        visual_layout = QVBoxLayout(visual)
+        visual_layout.setContentsMargins(10, 9, 10, 10)
+        visual_layout.setSpacing(7)
+        controls = QHBoxLayout()
+        self._source_text = QLabel("No image selected")
+        self._source_text.setObjectName("autoSegmentMuted")
+        controls.addWidget(self._source_text, stretch=1)
+        open_image = QPushButton("Open Image")
+        open_image.setObjectName("autoSegmentSecondaryButton")
+        open_image.clicked.connect(self._open_image)
+        controls.addWidget(open_image)
+        self._show_masks = QCheckBox("Masks")
+        self._show_masks.setChecked(True)
+        self._show_labels = QCheckBox("Labels")
+        self._show_labels.setChecked(True)
+        self._show_masks.toggled.connect(self._sync_overlay_options)
+        self._show_labels.toggled.connect(self._sync_overlay_options)
+        controls.addWidget(self._show_masks)
+        controls.addWidget(self._show_labels)
+        visual_layout.addLayout(controls)
+        self._canvas = AutoSegmentCanvas()
+        self._canvas.object_clicked.connect(self.select_object)
+        visual_layout.addWidget(self._canvas, stretch=1)
+        splitter.addWidget(visual)
+
+        sidebar = QScrollArea()
+        sidebar.setObjectName("autoSegmentSidebar")
+        sidebar.setWidgetResizable(True)
+        sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar.setMinimumWidth(330)
+        sidebar.setMaximumWidth(390)
+        content = QWidget()
+        side = QVBoxLayout(content)
+        side.setContentsMargins(8, 8, 8, 8)
+        side.setSpacing(8)
+        side.addWidget(self._build_generation_card())
+        side.addWidget(self._build_objects_card(), stretch=1)
+        side.addWidget(self._build_selected_card())
+        side.addWidget(self._build_summary_card())
+        side.addStretch(1)
+        sidebar.setWidget(content)
+        splitter.addWidget(sidebar)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([840, 340])
+        return splitter
+
+    def _card(self, title: str) -> tuple[QFrame, QVBoxLayout]:
+        card = QFrame()
+        card.setObjectName("autoSegmentCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 9, 10, 10)
+        layout.setSpacing(7)
+        label = QLabel(title)
+        label.setObjectName("autoSegmentCardTitle")
+        layout.addWidget(label)
+        return card, layout
+
+    def _build_generation_card(self) -> QFrame:
+        card, layout = self._card("AUTO SEGMENT")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(7)
+        grid.setVerticalSpacing(6)
+        grid.addWidget(QLabel("Profile"), 0, 0)
+        self._profile = QComboBox()
+        self._profile.setObjectName("autoSegmentCombo")
+        self._profile.addItems(["Efficient", "Balanced", "Ultra"])
+        grid.addWidget(self._profile, 0, 1)
+        grid.addWidget(QLabel("Min pixels"), 1, 0)
+        self._min_pixels = QSpinBox()
+        self._min_pixels.setObjectName("autoSegmentSpin")
+        self._min_pixels.setRange(16, 1000000)
+        self._min_pixels.setValue(64)
+        grid.addWidget(self._min_pixels, 1, 1)
+        grid.addWidget(QLabel("Max proposals"), 2, 0)
+        self._max_proposals = QSpinBox()
+        self._max_proposals.setObjectName("autoSegmentSpin")
+        self._max_proposals.setRange(1, 256)
+        self._max_proposals.setValue(64)
+        grid.addWidget(self._max_proposals, 2, 1)
+        layout.addLayout(grid)
+        row = QHBoxLayout()
+        self._run = QPushButton("Run Auto Segment")
+        self._run.setObjectName("autoSegmentPrimaryButton")
+        self._run.clicked.connect(self._emit_run)
+        row.addWidget(self._run, stretch=1)
+        self._cancel = QPushButton("Cancel")
+        self._cancel.setObjectName("autoSegmentDangerButton")
+        self._cancel.clicked.connect(self.cancel_requested.emit)
+        row.addWidget(self._cancel)
+        layout.addLayout(row)
+        return card
+
+    def _build_objects_card(self) -> QFrame:
+        card, layout = self._card("PROPOSALS")
+        self._object_list = QListWidget()
+        self._object_list.setObjectName("autoSegmentObjectList")
+        self._object_list.setMinimumHeight(150)
+        self._object_list.currentItemChanged.connect(self._on_list_selection)
+        layout.addWidget(self._object_list)
+        return card
+
+    def _build_selected_card(self) -> QFrame:
+        card, layout = self._card("SELECTED OBJECT")
+        self._selected_status = QLabel("Select a proposal in the image or list.")
+        self._selected_status.setObjectName("autoSegmentMuted")
+        self._selected_status.setWordWrap(True)
+        layout.addWidget(self._selected_status)
+        layout.addWidget(QLabel("Class"))
+        class_row = QHBoxLayout()
+        self._class_combo = QComboBox()
+        self._class_combo.setObjectName("autoSegmentCombo")
+        self._class_combo.currentIndexChanged.connect(self._suggest_instance_name)
+        class_row.addWidget(self._class_combo, stretch=1)
+        new_class = QPushButton("+ New")
+        new_class.setObjectName("autoSegmentMiniButton")
+        new_class.clicked.connect(self._create_class)
+        class_row.addWidget(new_class)
+        layout.addLayout(class_row)
+        layout.addWidget(QLabel("Instance"))
+        self._instance_name = QLineEdit()
+        self._instance_name.setObjectName("autoSegmentLineEdit")
+        self._instance_name.setPlaceholderText("e.g. robot_arm_001")
+        layout.addWidget(self._instance_name)
+        self._assign = QPushButton("Assign Class")
+        self._assign.setObjectName("autoSegmentSecondaryButton")
+        self._assign.clicked.connect(self._assign_class)
+        layout.addWidget(self._assign)
+        review = QHBoxLayout()
+        self._accept = QPushButton("Accept")
+        self._accept.setObjectName("autoSegmentPrimaryButton")
+        self._accept.clicked.connect(lambda: self._set_review(SemanticReviewStatus.ACCEPTED))
+        review.addWidget(self._accept)
+        self._pending = QPushButton("Pending")
+        self._pending.setObjectName("autoSegmentSecondaryButton")
+        self._pending.clicked.connect(lambda: self._set_review(SemanticReviewStatus.PENDING))
+        review.addWidget(self._pending)
+        self._reject = QPushButton("Reject")
+        self._reject.setObjectName("autoSegmentDangerButton")
+        self._reject.clicked.connect(lambda: self._set_review(SemanticReviewStatus.REJECTED))
+        review.addWidget(self._reject)
+        layout.addLayout(review)
+        return card
+
+    def _build_summary_card(self) -> QFrame:
+        card, layout = self._card("REVIEW SUMMARY")
+        self._summary = QLabel("No proposals")
+        self._summary.setObjectName("autoSegmentMuted")
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
+        note = QLabel("Semantic review only — labels and masks do not establish geometry, metric scale, or measurement authority.")
+        note.setObjectName("autoSegmentWarningText")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        return card
+
+    def _build_footer(self) -> QFrame:
+        frame = QFrame()
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(0, 2, 0, 0)
+        self._footer = QLabel("Changes to project classes are saved in the reusable project library. Workspace masks remain session-local in 9.2D.")
+        self._footer.setObjectName("autoSegmentMuted")
+        layout.addWidget(self._footer, stretch=1)
+        self._done = QPushButton("Done")
+        self._done.setObjectName("autoSegmentSecondaryButton")
+        self._done.clicked.connect(self.accept)
+        layout.addWidget(self._done)
+        return frame
+
+    def accept(self) -> None:
+        if self._running:
+            QMessageBox.information(self, "Auto Segment", "Cancel the active Auto Segment job before closing the workspace.")
+            return
+        super().accept()
+
+    def reject(self) -> None:
+        if self._running:
+            QMessageBox.information(self, "Auto Segment", "Cancel the active Auto Segment job before closing the workspace.")
+            return
+        super().reject()
+
+    def set_source_image(self, image_bgr: np.ndarray, *, label: str) -> None:
+        image = np.asarray(image_bgr, dtype=np.uint8)
+        if image.ndim != 3 or image.shape[2] != 3:
+            raise ValueError("Auto Segment source must be an HxWx3 BGR image.")
+        self._image_bgr = np.ascontiguousarray(image.copy())
+        self._source_label = str(label).strip() or "Image"
+        self._workspace = None
+        self._selected_id = ""
+        self._canvas.set_image(self._image_bgr)
+        self._canvas.set_workspace(None)
+        self._source_text.setText(f"{self._source_label} · {image.shape[1]} × {image.shape[0]}")
+        self._status_text.setText("Ready to generate unlabeled SAM2 proposals.")
+        self._refresh_all()
+
+    def _open_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Open image for Auto Segment", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
+        if not path:
+            return
+        image = cv2.imread(path)
+        if image is None:
+            QMessageBox.warning(self, "Auto Segment", "The selected image could not be read.")
+            return
+        self.set_source_image(image, label=Path(path).name)
+
+    def _refresh_projects(self, select_id: str = "") -> None:
+        projects = list(self._store.list_projects())
+        if not projects:
+            project = create_segmentation_project("Auto Segment Project")
+            self._store.save(project)
+            projects = [project]
+        wanted = select_id or (self._project.project_id if self._project else projects[0].project_id)
+        self._project_combo.blockSignals(True)
+        self._project_combo.clear()
+        target_index = 0
+        for index, project in enumerate(projects):
+            self._project_combo.addItem(project.project_name, project.project_id)
+            if project.project_id == wanted:
+                target_index = index
+        self._project_combo.setCurrentIndex(target_index)
+        self._project_combo.blockSignals(False)
+        self._project = projects[target_index]
+        self._refresh_class_combo()
+
+    def _on_project_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        project_id = str(self._project_combo.itemData(index) or "")
+        if not project_id:
+            return
+        if self._workspace is not None and self._workspace.objects:
+            answer = QMessageBox.question(self, "Switch segmentation project", "Switching projects clears the current proposal review. Continue?")
+            if answer != QMessageBox.StandardButton.Yes:
+                self._refresh_projects(self._project.project_id if self._project else "")
+                return
+            self._workspace = None
+            self._selected_id = ""
+            self._canvas.set_workspace(None)
+        self._project = self._store.load(project_id)
+        self._refresh_class_combo()
+        self._refresh_all()
+
+    def _create_project(self) -> None:
+        name, ok = QInputDialog.getText(self, "New segmentation project", "Project name")
+        if not ok or not str(name).strip():
+            return
+        project = create_segmentation_project(str(name).strip())
+        self._store.save(project)
+        self._project = project
+        self._refresh_projects(project.project_id)
+        self._refresh_all()
+
+    def _create_class(self) -> None:
+        if self._project is None:
+            return
+        name, ok = QInputDialog.getText(self, "New class", "Class name")
+        if not ok or not str(name).strip():
+            return
+        try:
+            project, definition = add_project_class(self._project, str(name).strip())
+            self._store.save(project)
+            self._project = project
+            if self._workspace is not None:
+                self._workspace = merge_project_catalog_into_workspace(self._workspace, project)
+                self._canvas.set_workspace(self._workspace)
+            self._refresh_projects(project.project_id)
+            self._select_class_id(definition.class_id)
+            self._suggest_instance_name()
+        except (ContractValidationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "New class", str(exc))
+
+    def _refresh_class_combo(self) -> None:
+        current = self._class_combo.currentData() if hasattr(self, "_class_combo") else None
+        self._class_combo.blockSignals(True)
+        self._class_combo.clear()
+        self._class_combo.addItem("Select class...", None)
+        if self._project is not None:
+            for definition in self._project.class_catalog.classes:
+                self._class_combo.addItem(definition.class_name, definition.class_id)
+        if current is not None:
+            self._select_class_id(int(current), blocked=True)
+        self._class_combo.blockSignals(False)
+
+    def _select_class_id(self, class_id: int, *, blocked: bool = False) -> None:
+        for index in range(self._class_combo.count()):
+            if self._class_combo.itemData(index) == class_id:
+                if blocked:
+                    self._class_combo.setCurrentIndex(index)
+                else:
+                    self._class_combo.setCurrentIndex(index)
+                return
+
+    def _emit_run(self) -> None:
+        if self._image_bgr is None:
+            QMessageBox.information(self, "Auto Segment", "Open an image or use a captured frame first.")
+            return
+        self.run_requested.emit(
+            {
+                "image_bgr": self._image_bgr.copy(),
+                "model_id": "ultralytics-sam2-prompted",
+                "profile": self._profile.currentText().strip().casefold(),
+                "minimum_mask_pixels": self._min_pixels.value(),
+                "max_proposals": self._max_proposals.value(),
+            }
+        )
+
+    def set_controller_state(self, state: AutoSegmentControllerState) -> None:
+        self._running = state in {AutoSegmentControllerState.RUNNING, AutoSegmentControllerState.CANCELLING}
+        kinds = {
+            AutoSegmentControllerState.RUNNING: ("RUNNING", "running"),
+            AutoSegmentControllerState.CANCELLING: ("CANCELLING", "warning"),
+            AutoSegmentControllerState.COMPLETED: ("READY", "ready"),
+            AutoSegmentControllerState.FAILED: ("FAILED", "error"),
+            AutoSegmentControllerState.CANCELLED: ("CANCELLED", "warning"),
+            AutoSegmentControllerState.IDLE: ("READY", "ready"),
+        }
+        text, kind = kinds[state]
+        self._status_badge.setText(text)
+        self._status_badge.setProperty("statusKind", kind)
+        self._status_badge.style().unpolish(self._status_badge)
+        self._status_badge.style().polish(self._status_badge)
+        self._run.setEnabled(not self._running and self._image_bgr is not None)
+        self._cancel.setEnabled(self._running)
+        self._project_combo.setEnabled(not self._running)
+        self._done.setEnabled(not self._running)
+
+    def set_progress(self, progress: int, stage: str, message: str) -> None:
+        self._progress.setValue(max(0, min(100, int(progress))))
+        self._status_text.setText(str(message).strip() or str(stage).replace("_", " ").title())
+
+    def show_failure(self, message: str) -> None:
+        self._status_text.setText(str(message))
+        QMessageBox.warning(self, "Auto Segment", str(message))
+
+    def load_job_result(self, result_dir: str | Path) -> None:
+        if self._image_bgr is None:
+            raise RuntimeError("Auto Segment result arrived without a source image.")
+        root = Path(result_dir)
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        arrays = np.load(root / "masks.npz", allow_pickle=False)
+        height, width = self._image_bgr.shape[:2]
+        frame = FrameReference(0, 0, 0.0, ImageSize(width, height))
+        space = PixelCoordinateSpace("rgb", frame, frame.source_size, PixelSpaceRole.RGB)
+        provenance = ModelProvenance(
+            model_id=str(manifest.get("model_id", "auto-segment")),
+            display_name="SAM2 Auto Segment",
+            task="automatic_segmentation",
+        )
+        masks: list[InstanceMask] = []
+        for proposal in manifest.get("proposals", []):
+            data = np.asarray(arrays[str(proposal["mask_key"])], dtype=bool)
+            kind = ConfidenceKind(str(proposal.get("confidence_kind", ConfidenceKind.NONE.value)))
+            confidence = proposal.get("confidence")
+            masks.append(
+                InstanceMask(
+                    mask_id=str(proposal["mask_id"]),
+                    frame_reference=frame,
+                    pixel_space=space,
+                    payload=DenseMaskPayload(data),
+                    source=MaskSource.NATIVE_INSTANCE,
+                    model_provenance=provenance,
+                    confidence=None if confidence is None else float(confidence),
+                    confidence_kind=kind,
+                    foreground_valid=bool(np.any(data)),
+                )
+            )
+        catalog = self._project.class_catalog if self._project is not None else None
+        if masks:
+            workspace = workspace_from_mask_proposals(
+                masks,
+                workspace_id=f"auto-segment-ui-{uuid4()}",
+                class_catalog=catalog,
+            )
+            manifest_object_ids = tuple(
+                str(proposal.get("object_id", "")).strip()
+                for proposal in manifest.get("proposals", [])
+            )
+            if any(not object_id for object_id in manifest_object_ids):
+                raise ContractValidationError(
+                    "Auto Segment result manifest contains an empty proposal object_id."
+                )
+            if len(manifest_object_ids) != len(workspace.objects):
+                raise ContractValidationError(
+                    "Auto Segment result manifest proposal count does not match loaded masks."
+                )
+            self._workspace = SemanticWorkspace(
+                workspace_id=workspace.workspace_id,
+                frame_reference=workspace.frame_reference,
+                class_catalog=workspace.class_catalog,
+                objects=tuple(
+                    replace(item, object_id=object_id)
+                    for item, object_id in zip(workspace.objects, manifest_object_ids, strict=True)
+                ),
+                revision=workspace.revision,
+            )
+        else:
+            self._workspace = SemanticWorkspace(
+                workspace_id=f"auto-segment-ui-{uuid4()}",
+                frame_reference=frame,
+                class_catalog=catalog if catalog is not None else self._empty_catalog(),
+                objects=(),
+            )
+        self._selected_id = ""
+        self._canvas.set_workspace(self._workspace)
+        self._status_text.setText(f"Generated {len(self._workspace.objects)} unlabeled proposal(s). Click a mask to review it.")
+        self._progress.setValue(100)
+        self._refresh_all()
+
+    @staticmethod
+    def _empty_catalog():
+        from core.perception.semantic_workspace import SemanticClassCatalog
+        return SemanticClassCatalog()
+
+    def select_object(self, object_id: str) -> None:
+        if self._workspace is None or self._workspace.object_by_id(object_id) is None:
+            return
+        self._selected_id = str(object_id)
+        self._canvas.set_selected_object(self._selected_id)
+        for row in range(self._object_list.count()):
+            item = self._object_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == self._selected_id:
+                self._object_list.blockSignals(True)
+                self._object_list.setCurrentRow(row)
+                self._object_list.blockSignals(False)
+                break
+        obj = self._workspace.object_by_id(self._selected_id)
+        assert obj is not None
+        if obj.class_id is not None:
+            self._select_class_id(obj.class_id)
+        else:
+            self._class_combo.setCurrentIndex(0)
+        self._instance_name.setText(obj.instance_name)
+        self._refresh_selected()
+
+    def _on_list_selection(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
+        if current is None:
+            return
+        object_id = str(current.data(Qt.ItemDataRole.UserRole) or "")
+        if object_id and object_id != self._selected_id:
+            self.select_object(object_id)
+
+    def _suggest_instance_name(self) -> None:
+        if self._project is None or not self._selected_id:
+            return
+        class_id = self._class_combo.currentData()
+        if class_id is None:
+            return
+        definition = self._project.class_by_id(int(class_id))
+        if definition is None:
+            return
+        existing = tuple(
+            item.instance_name for item in (self._workspace.objects if self._workspace else ())
+            if item.instance_name and item.object_id != self._selected_id
+        )
+        current = self._workspace.object_by_id(self._selected_id) if self._workspace else None
+        if current is None or not current.instance_name or current.class_id != definition.class_id:
+            self._instance_name.setText(self._project.naming_policy.suggest(definition.class_name, existing_names=existing))
+
+    def _assign_class(self) -> None:
+        if self._workspace is None or self._project is None or not self._selected_id:
+            return
+        class_id = self._class_combo.currentData()
+        if class_id is None:
+            QMessageBox.information(self, "Assign class", "Choose an existing class or create a new one first.")
+            return
+        definition = self._project.class_by_id(int(class_id))
+        if definition is None:
+            return
+        try:
+            self._workspace = assign_workspace_class(
+                self._workspace,
+                self._selected_id,
+                definition,
+                instance_name=self._instance_name.text().strip(),
+            )
+            self._canvas.set_workspace(self._workspace)
+            self._refresh_all(keep_selection=True)
+        except ContractValidationError as exc:
+            QMessageBox.warning(self, "Assign class", str(exc))
+
+    def _set_review(self, status: SemanticReviewStatus) -> None:
+        if self._workspace is None or not self._selected_id:
+            return
+        obj = self._workspace.object_by_id(self._selected_id)
+        if status is SemanticReviewStatus.ACCEPTED and (obj is None or obj.class_id is None):
+            QMessageBox.information(self, "Accept proposal", "Assign a real project class before accepting this proposal.")
+            return
+        try:
+            self._workspace = set_workspace_review_status(self._workspace, self._selected_id, status)
+            self._canvas.set_workspace(self._workspace)
+            self._refresh_all(keep_selection=True)
+        except ContractValidationError as exc:
+            QMessageBox.warning(self, "Review proposal", str(exc))
+
+    def _refresh_all(self, *, keep_selection: bool = False) -> None:
+        self._refresh_class_combo()
+        self._refresh_object_list()
+        self._refresh_selected()
+        self._refresh_summary()
+        self._sync_overlay_options()
+        self._run.setEnabled(not self._running and self._image_bgr is not None)
+        self._cancel.setEnabled(self._running)
+        if keep_selection and self._selected_id:
+            self._canvas.set_selected_object(self._selected_id)
+
+    def _refresh_object_list(self) -> None:
+        self._object_list.blockSignals(True)
+        self._object_list.clear()
+        if self._workspace is not None:
+            for index, obj in enumerate(self._workspace.objects, start=1):
+                state = {
+                    SemanticReviewStatus.PENDING: "○",
+                    SemanticReviewStatus.ACCEPTED: "✓",
+                    SemanticReviewStatus.REJECTED: "×",
+                }[obj.review_status]
+                name = obj.instance_name or obj.class_name or f"Proposal {index:02d}"
+                item = QListWidgetItem(f"{state}  {name}")
+                item.setData(Qt.ItemDataRole.UserRole, obj.object_id)
+                self._object_list.addItem(item)
+                if obj.object_id == self._selected_id:
+                    self._object_list.setCurrentItem(item)
+        self._object_list.blockSignals(False)
+
+    def _refresh_selected(self) -> None:
+        obj = self._workspace.object_by_id(self._selected_id) if self._workspace and self._selected_id else None
+        enabled = obj is not None
+        for widget in (self._class_combo, self._instance_name, self._assign, self._accept, self._pending, self._reject):
+            widget.setEnabled(enabled and not self._running)
+        if obj is None:
+            self._selected_status.setText("Select a proposal in the image or list.")
+            return
+        label = obj.class_name or "Unlabeled"
+        instance = obj.instance_name or "No instance name"
+        self._selected_status.setText(f"{label} · {instance} · {obj.review_status.value.title()}")
+
+    def _refresh_summary(self) -> None:
+        if self._workspace is None:
+            self._summary.setText("No proposals")
+            return
+        total = len(self._workspace.objects)
+        accepted = sum(item.review_status is SemanticReviewStatus.ACCEPTED for item in self._workspace.objects)
+        rejected = sum(item.review_status is SemanticReviewStatus.REJECTED for item in self._workspace.objects)
+        pending = total - accepted - rejected
+        unlabeled = sum(item.class_id is None for item in self._workspace.objects)
+        self._summary.setText(f"{total} proposals · {accepted} accepted · {pending} pending · {rejected} rejected · {unlabeled} unlabeled")
+
+    def _sync_overlay_options(self) -> None:
+        self._canvas.set_overlay_options(masks=self._show_masks.isChecked(), labels=self._show_labels.isChecked())

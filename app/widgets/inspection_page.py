@@ -55,6 +55,7 @@ class InspectionPage(QWidget):
     recompute_requested = pyqtSignal(dict)
     export_requested = pyqtSignal(str)
     calibration_requested = pyqtSignal()
+    auto_segment_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -245,6 +246,7 @@ class InspectionPage(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
         layout.addWidget(self._build_object_card())
+        layout.addWidget(self._build_semantic_workspace_card())
         layout.addWidget(self._build_display_card())
         layout.addWidget(self._build_correction_card())
         layout.addWidget(self._build_calibration_card())
@@ -274,6 +276,21 @@ class InspectionPage(QWidget):
         self._object_list.currentItemChanged.connect(self._on_list_selection)
         self._object_list.setMinimumHeight(130)
         layout.addWidget(self._object_list)
+        return frame
+
+    def _build_semantic_workspace_card(self) -> QFrame:
+        frame, layout = self._card("SEMANTIC WORKSPACE")
+        detail = QLabel(
+            "Generate SAM2 mask proposals, then assign stable project classes and instance names. "
+            "Semantic review remains separate from geometry and metric authority."
+        )
+        detail.setObjectName("inspectionMuted")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+        button = QPushButton("Open Auto Segment")
+        button.setObjectName("inspectionSecondaryButton")
+        button.clicked.connect(self.auto_segment_requested.emit)
+        layout.addWidget(button)
         return frame
 
     def _build_display_card(self) -> QFrame:
