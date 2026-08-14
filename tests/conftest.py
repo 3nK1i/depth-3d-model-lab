@@ -162,6 +162,8 @@ def _install_fake_vispy_canvas() -> None:
         MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
         MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
         MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
+        MAX_CANONICAL_CAMERA_FRUSTUMS = 192
+        MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
         MAX_SEMANTIC_OBJECT_DISPLAY = 256
 
         def __init__(self, parent: QObject | None = None) -> None:
@@ -201,6 +203,18 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
+            self._canonical_camera_loaded = False
+            self._canonical_camera_scene_id = ""
+            self._canonical_camera_artifact_id = ""
+            self._canonical_camera_provider_id = ""
+            self._canonical_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._canonical_camera_positions = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_camera_ids = ()
+            self._canonical_camera_total_count = 0
+            self._canonical_camera_frustum_display_count = 0
+            self._canonical_camera_trajectory_display_count = 0
+            self._canonical_camera_frustums_visible = False
+            self._canonical_camera_trajectory_visible = False
             self._semantic_objects_visible = True
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -294,6 +308,11 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_trajectory_visible(self, visible: bool) -> None:
             self._trajectory_visible = bool(visible)
+            self._canonical_camera_trajectory_visible = bool(
+                self._trajectory_visible
+                and self._canonical_camera_loaded
+                and self._canonical_camera_trajectory_display_count >= 2
+            )
 
         def update_sparse_landmarks(
             self,
@@ -449,6 +468,66 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
 
+        def set_canonical_camera_trajectory(
+            self,
+            *,
+            matrices_reconstruction,
+            camera_ids,
+            scene_id: str,
+            artifact_id: str,
+            provider_id: str,
+            total_count: int | None = None,
+        ) -> None:
+            from app.reconstruction_visualization import (
+                keyframe_centers_in_viewer,
+                keyframe_display_indices,
+                trajectory_display_indices,
+            )
+
+            matrices = np.asarray(matrices_reconstruction, dtype=np.float64)
+            ids = tuple(str(value).strip() for value in camera_ids)
+            if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or matrices.shape[0] < 1:
+                raise ValueError("matrices_reconstruction must have shape (N, 4, 4) with N >= 1.")
+            if len(ids) != matrices.shape[0] or any(not value for value in ids):
+                raise ValueError("camera_ids must match canonical camera poses.")
+            positions = keyframe_centers_in_viewer(matrices)
+            frustum_indices = keyframe_display_indices(
+                matrices.shape[0], max_keyframes=self.MAX_CANONICAL_CAMERA_FRUSTUMS
+            )
+            trajectory_indices = trajectory_display_indices(
+                positions.shape[0], max_points=self.MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS
+            )
+            self._canonical_camera_loaded = True
+            self._canonical_camera_scene_id = str(scene_id)
+            self._canonical_camera_artifact_id = str(artifact_id)
+            self._canonical_camera_provider_id = str(provider_id)
+            self._canonical_camera_matrices = matrices.copy()
+            self._canonical_camera_positions = positions.copy()
+            self._canonical_camera_ids = ids
+            self._canonical_camera_total_count = (
+                matrices.shape[0] if total_count is None else int(total_count)
+            )
+            self._canonical_camera_frustum_display_count = int(frustum_indices.shape[0])
+            self._canonical_camera_trajectory_display_count = int(trajectory_indices.shape[0])
+            self._canonical_camera_frustums_visible = self._keyframes_visible
+            self._canonical_camera_trajectory_visible = bool(
+                self._trajectory_visible and trajectory_indices.shape[0] >= 2
+            )
+
+        def clear_canonical_camera_trajectory(self, *, update_canvas: bool = True) -> None:
+            self._canonical_camera_loaded = False
+            self._canonical_camera_scene_id = ""
+            self._canonical_camera_artifact_id = ""
+            self._canonical_camera_provider_id = ""
+            self._canonical_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+            self._canonical_camera_positions = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_camera_ids = ()
+            self._canonical_camera_total_count = 0
+            self._canonical_camera_frustum_display_count = 0
+            self._canonical_camera_trajectory_display_count = 0
+            self._canonical_camera_frustums_visible = False
+            self._canonical_camera_trajectory_visible = False
+
         def set_semantic_objects(
             self,
             *,
@@ -592,6 +671,9 @@ def _install_fake_vispy_canvas() -> None:
             )
             self._selected_offline_camera_visible = bool(
                 self._keyframes_visible and self._selected_offline_camera_index is not None
+            )
+            self._canonical_camera_frustums_visible = bool(
+                self._keyframes_visible and self._canonical_camera_loaded
             )
 
         def fit_scene(self) -> None:
@@ -774,6 +856,50 @@ def _install_fake_vispy_canvas() -> None:
             return self._canonical_mesh_bounds_min.copy(), self._canonical_mesh_bounds_max.copy()
 
         @property
+        def canonical_camera_loaded(self) -> bool:
+            return self._canonical_camera_loaded
+
+        @property
+        def canonical_camera_scene_id(self) -> str:
+            return self._canonical_camera_scene_id
+
+        @property
+        def canonical_camera_artifact_id(self) -> str:
+            return self._canonical_camera_artifact_id
+
+        @property
+        def canonical_camera_provider_id(self) -> str:
+            return self._canonical_camera_provider_id
+
+        @property
+        def canonical_camera_ids(self) -> tuple[str, ...]:
+            return self._canonical_camera_ids
+
+        @property
+        def canonical_camera_count(self) -> int:
+            return int(self._canonical_camera_total_count)
+
+        @property
+        def canonical_camera_persisted_count(self) -> int:
+            return int(self._canonical_camera_matrices.shape[0])
+
+        @property
+        def canonical_camera_frustum_display_count(self) -> int:
+            return int(self._canonical_camera_frustum_display_count)
+
+        @property
+        def canonical_camera_trajectory_display_count(self) -> int:
+            return int(self._canonical_camera_trajectory_display_count)
+
+        @property
+        def canonical_camera_frustums_visible(self) -> bool:
+            return bool(self._canonical_camera_loaded and self._canonical_camera_frustums_visible)
+
+        @property
+        def canonical_camera_trajectory_visible(self) -> bool:
+            return bool(self._canonical_camera_loaded and self._canonical_camera_trajectory_visible)
+
+        @property
         def semantic_objects_available(self) -> bool:
             return bool(self._semantic_objects_available)
 
@@ -837,6 +963,7 @@ def _install_fake_vispy_canvas() -> None:
             return self._is_interacting
 
         def close(self) -> None:
+            self.clear_canonical_camera_trajectory(update_canvas=False)
             self.clear_canonical_mesh(update_canvas=False)
             self.closed = True
             self._native.close()

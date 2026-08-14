@@ -25,7 +25,9 @@ Phase 8.9A2 adds a bounded product-export interaction over the already-qualified
 contract. It exports only materialized, session-matched reconstruction evidence and remains
 distinct from persistent-scene save/reload. QC report productization remains Phase 8.9B.
 Phase 9.3A adds a passive canonical-scene presentation summary over the existing persistent
-scene and Phase 9.1H authority sidecar; canonical surface rendering remains Phase 9.3B.
+scene and Phase 9.1H authority sidecar. Phase 9.3B renders the integrity-bound persistent
+canonical surface. Phase 9.3C adds the canonical reconstruction world frame plus explicitly
+persisted camera frustums and trajectory without inventing missing poses or scale.
 """
 
 from __future__ import annotations
@@ -91,6 +93,10 @@ from app.reconstruction_canonical_scene_presentation import (
 from app.reconstruction_canonical_geometry import (
     CanonicalViewerMesh,
     load_canonical_viewer_mesh,
+)
+from app.reconstruction_canonical_cameras import (
+    CanonicalCameraTrajectoryPresentation,
+    load_persistent_canonical_camera_trajectory,
 )
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
@@ -226,6 +232,7 @@ class ReconstructionPage(QWidget):
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
+    canonical_camera_presentation_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
@@ -263,6 +270,8 @@ class ReconstructionPage(QWidget):
         self._canonical_scene_presentation: CanonicalScenePresentation | None = None
         self._canonical_viewer_mesh: CanonicalViewerMesh | None = None
         self._canonical_viewer_error = ""
+        self._canonical_camera_presentation: CanonicalCameraTrajectoryPresentation | None = None
+        self._canonical_camera_error = ""
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -624,7 +633,7 @@ class ReconstructionPage(QWidget):
             "keyframes",
             size=28,
             icon_size=15,
-            tooltip="Show or hide historical SLAM keyframe cameras",
+            tooltip="Show or hide historical SLAM keyframe cameras and persistent camera frustums",
             checkable=True,
         )
         keyframes_button.setChecked(True)
@@ -1615,6 +1624,9 @@ class ReconstructionPage(QWidget):
                 self._canonical_scene_geometry_value.setText("—")
                 self._canonical_scene_provider_value.setText("—")
                 self._canonical_scene_resource_value.setText("—")
+                if hasattr(self, "_canonical_scene_world_value"):
+                    self._canonical_scene_world_value.setText("Canonical frame unavailable")
+                    self._canonical_scene_cameras_value.setText("Camera context unavailable")
                 self._canonical_scene_scale_value.setText("Not qualified")
                 self._canonical_scene_authority_value.setText(
                     "Canonical authority unavailable • metrology not certified"
@@ -1752,6 +1764,100 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.fit_scene()
         self._visualizer_fitted_once = True
         self._apply_canonical_viewer_status()
+
+    @property
+    def canonical_camera_presentation(self) -> CanonicalCameraTrajectoryPresentation | None:
+        return self._canonical_camera_presentation
+
+    def _refresh_canonical_camera_viewer(self) -> None:
+        """Bind only explicitly persisted camera poses to the canonical scene viewer."""
+
+        self._reconstruction_canvas.clear_canonical_camera_trajectory()
+        self._canonical_camera_presentation = None
+        self._canonical_camera_error = ""
+        scene = self._persistent_scene
+
+        if hasattr(self, "_canonical_scene_world_value"):
+            if scene is None:
+                self._canonical_scene_world_value.setText("No canonical scene")
+                self._canonical_scene_world_value.setToolTip("")
+                self._canonical_scene_cameras_value.setText("No persistent camera trajectory")
+                self._canonical_scene_cameras_value.setToolTip("")
+            else:
+                self._canonical_scene_world_value.setText("Canonical reconstruction origin • viewer Z-up")
+                self._canonical_scene_world_value.setToolTip(
+                    "World axes are rooted at the canonical reconstruction origin. The viewer-only "
+                    "axis conversion keeps Z visually up and does not establish metric scale or georeferencing."
+                )
+                self._canonical_scene_cameras_value.setText("Camera trajectory not persisted")
+                self._canonical_scene_cameras_value.setToolTip(
+                    "Legacy persistent scenes remain valid. Phase 9.3C renders cameras only when the "
+                    "camera_trajectory artifact explicitly stores T_reconstruction_from_camera matrices."
+                )
+
+        if scene is None:
+            self.canonical_camera_presentation_changed.emit(None)
+            self._refresh_viewport_state()
+            return
+
+        try:
+            presentation = load_persistent_canonical_camera_trajectory(scene)
+        except (TypeError, ValueError) as exc:
+            self._canonical_camera_error = str(exc)
+            if hasattr(self, "_canonical_scene_cameras_value"):
+                self._canonical_scene_cameras_value.setText("Persistent camera context rejected")
+                self._canonical_scene_cameras_value.setToolTip(str(exc))
+            # Camera presentation failure cannot revoke canonical geometry authority
+            # and must never leave stale frustums/trajectory on screen.
+            self.canonical_camera_presentation_changed.emit(None)
+            self._refresh_viewport_state()
+            return
+
+        if presentation is None:
+            self.canonical_camera_presentation_changed.emit(None)
+            self._refresh_viewport_state()
+            return
+
+        self._reconstruction_canvas.set_canonical_camera_trajectory(
+            matrices_reconstruction=presentation.matrices_reconstruction,
+            camera_ids=presentation.camera_ids,
+            scene_id=presentation.scene_id,
+            artifact_id=presentation.artifact_id,
+            provider_id=presentation.provider_id,
+            total_count=presentation.total_pose_count,
+        )
+        self._canonical_camera_presentation = presentation
+        if hasattr(self, "_canonical_scene_cameras_value"):
+            if presentation.trajectory_available:
+                text = (
+                    f"{presentation.persisted_pose_count:,} persisted poses • "
+                    "frustums + trajectory"
+                )
+            else:
+                text = f"{presentation.persisted_pose_count:,} persisted pose • frustum"
+            if presentation.total_pose_count != presentation.persisted_pose_count:
+                text += f" • {presentation.total_pose_count:,} total"
+            self._canonical_scene_cameras_value.setText(text)
+            frame = presentation.reconstruction_frame_id or "canonical reconstruction frame"
+            self._canonical_scene_cameras_value.setToolTip(
+                f"Provider: {presentation.provider_id}\n"
+                f"Frame: {frame}\n"
+                f"Pose convention: {presentation.pose_convention}\n"
+                "Camera poses remain supporting geometry/presentation context; canonical geometry "
+                "authority and metric qualification remain separate."
+            )
+        self._viewport_placeholder.setVisible(False)
+        if self._canonical_viewer_mesh is not None:
+            self._viewport_state.setText("Canonical scene • cameras + trajectory")
+        else:
+            self._viewport_state.setText("Canonical camera context")
+        self._viewport_state.setToolTip(
+            "Phase 9.3C camera frustums and trajectory are loaded from explicitly persisted "
+            "T_reconstruction_from_camera evidence. No camera pose or metric scale is invented."
+        )
+        self._reconstruction_canvas.fit_scene()
+        self._visualizer_fitted_once = True
+        self.canonical_camera_presentation_changed.emit(presentation)
 
     @property
     def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
@@ -2528,6 +2634,8 @@ class ReconstructionPage(QWidget):
         self._canonical_scene_geometry_value = self._settings_value("—")
         self._canonical_scene_provider_value = self._settings_value("—")
         self._canonical_scene_resource_value = self._settings_value("—")
+        self._canonical_scene_world_value = self._settings_value("No canonical scene")
+        self._canonical_scene_cameras_value = self._settings_value("No persistent camera trajectory")
         self._canonical_scene_scale_value = self._settings_value("—")
         self._canonical_scene_authority_value = self._settings_value("No canonical scene authority")
         self._canonical_scene_status_value = self._settings_value(
@@ -2540,6 +2648,8 @@ class ReconstructionPage(QWidget):
         self._add_status_row(canonical_layout, "Geometry", self._canonical_scene_geometry_value)
         self._add_status_row(canonical_layout, "Provider", self._canonical_scene_provider_value)
         self._add_status_row(canonical_layout, "Resource", self._canonical_scene_resource_value)
+        self._add_status_row(canonical_layout, "World", self._canonical_scene_world_value)
+        self._add_status_row(canonical_layout, "Cameras", self._canonical_scene_cameras_value)
         self._add_status_row(canonical_layout, "Scale", self._canonical_scene_scale_value)
         self._add_status_row(canonical_layout, "Authority", self._canonical_scene_authority_value)
         self._add_status_row(canonical_layout, "State", self._canonical_scene_status_value)
@@ -4591,8 +4701,17 @@ class ReconstructionPage(QWidget):
         if self.gaussian_preview_visible:
             self._viewport_state.setText("Gaussian Splatting preview • appearance only")
             return
+        if (
+            self._reconstruction_canvas.canonical_mesh_loaded
+            and self._reconstruction_canvas.canonical_camera_loaded
+        ):
+            self._viewport_state.setText("Canonical scene • cameras + trajectory")
+            return
         if self._reconstruction_canvas.canonical_mesh_loaded:
             self._viewport_state.setText("Canonical surface mesh")
+            return
+        if self._reconstruction_canvas.canonical_camera_loaded:
+            self._viewport_state.setText("Canonical camera context")
             return
         if self._canonical_viewer_error and self._persistent_scene is not None:
             self._viewport_state.setText("Canonical surface unavailable")
@@ -4877,6 +4996,13 @@ class ReconstructionPage(QWidget):
         self._hide_gaussian_preview()
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""
+        # Clear persistent camera visuals before changing the scene identity so
+        # the 9.3B surface fit can never include stale camera positions from the
+        # previously loaded scene. The camera presentation is rebuilt below only
+        # from the new scene's explicitly persisted evidence.
+        self._reconstruction_canvas.clear_canonical_camera_trajectory()
+        self._canonical_camera_presentation = None
+        self._canonical_camera_error = ""
         self._persistent_scene = scene
         # Scene identity changed; any previously restored metric assessment is
         # no longer bound until the matching Phase 9.1H authority sidecar arrives.
@@ -4887,6 +5013,7 @@ class ReconstructionPage(QWidget):
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
         self._refresh_canonical_geometry_viewer()
+        self._refresh_canonical_camera_viewer()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
@@ -4990,6 +5117,8 @@ class ReconstructionPage(QWidget):
             self._orientation_gizmo.shutdown()
         self._canonical_viewer_mesh = None
         self._canonical_viewer_error = ""
+        self._canonical_camera_presentation = None
+        self._canonical_camera_error = ""
         self._reconstruction_canvas.close()
 
     @staticmethod

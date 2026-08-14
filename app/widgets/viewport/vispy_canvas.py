@@ -393,6 +393,8 @@ class ReconstructionCanvas(QObject):
     MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
     MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
     MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
+    MAX_CANONICAL_CAMERA_FRUSTUMS = 192
+    MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
     MAX_SEMANTIC_OBJECT_DISPLAY = 256
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -524,6 +526,51 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = 0
         self._canonical_mesh_bounds_min = None
         self._canonical_mesh_bounds_max = None
+        # Phase 9.3C keeps persistent canonical-scene cameras separate from
+        # live/offline sparse-SfM visuals.  They share the same reconstruction
+        # coordinate transform but never inherit canonical geometry authority.
+        self._canonical_camera_frustums = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(0.42, 0.78, 0.98, 0.64),
+            width=1.15,
+            parent=self._view.scene,
+        )
+        self._canonical_camera_centers = scene.visuals.Markers(parent=self._view.scene)
+        self._canonical_camera_centers.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.42, 0.78, 0.98, 0.82),
+            size=4.2,
+            edge_width=0,
+        )
+        self._canonical_camera_trajectory = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="strip",
+            color=(0.42, 0.78, 0.98, 0.72),
+            width=1.45,
+            parent=self._view.scene,
+        )
+        self._canonical_camera_start = scene.visuals.Markers(parent=self._view.scene)
+        self._canonical_camera_start.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.42, 0.78, 0.98, 0.95),
+            size=5.6,
+            edge_width=0,
+        )
+        self._canonical_camera_loaded = False
+        self._canonical_camera_scene_id = ""
+        self._canonical_camera_artifact_id = ""
+        self._canonical_camera_provider_id = ""
+        self._canonical_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._canonical_camera_positions = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_camera_ids: tuple[str, ...] = ()
+        self._canonical_camera_total_count = 0
+        self._canonical_camera_frustum_display_count = 0
+        self._canonical_camera_trajectory_display_count = 0
+        self._canonical_camera_frustums.visible = False
+        self._canonical_camera_centers.visible = False
+        self._canonical_camera_trajectory.visible = False
+        self._canonical_camera_start.visible = False
         self._semantic_object_boxes = scene.visuals.Line(
             pos=np.zeros((0, 3), dtype=np.float32),
             connect="segments",
@@ -719,6 +766,14 @@ class ReconstructionCanvas(QObject):
         self._trajectory_visible = bool(visible)
         self._trajectory_line.visible = self._trajectory_visible
         self._trajectory_start.visible = self._trajectory_visible
+        self._canonical_camera_trajectory.visible = bool(
+            self._trajectory_visible
+            and self._canonical_camera_loaded
+            and self._canonical_camera_trajectory_display_count >= 2
+        )
+        self._canonical_camera_start.visible = bool(
+            self._trajectory_visible and self._canonical_camera_loaded
+        )
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
         self._canvas.update()
@@ -971,6 +1026,7 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = int(triangles.shape[0])
         self._canonical_mesh_bounds_min = vertices.min(axis=0).astype(np.float32)
         self._canonical_mesh_bounds_max = vertices.max(axis=0).astype(np.float32)
+        self._refresh_world_axis_scale()
         self._canvas.update()
 
     def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
@@ -997,6 +1053,128 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = 0
         self._canonical_mesh_bounds_min = None
         self._canonical_mesh_bounds_max = None
+        self._refresh_world_axis_scale()
+        if update_canvas:
+            self._canvas.update()
+
+    def set_canonical_camera_trajectory(
+        self,
+        *,
+        matrices_reconstruction: np.ndarray,
+        camera_ids: tuple[str, ...] | list[str],
+        scene_id: str,
+        artifact_id: str,
+        provider_id: str,
+        total_count: int | None = None,
+    ) -> None:
+        """Render persisted camera frustums/path in the canonical reconstruction frame.
+
+        The camera trajectory remains supporting geometry/presentation context.  This
+        method does not establish scale or canonical geometry authority.
+        """
+
+        from app.reconstruction_visualization import (
+            adaptive_camera_frustum_depth,
+            keyframe_centers_in_viewer,
+            keyframe_display_indices,
+            keyframe_frustum_segments_in_viewer,
+            trajectory_display_indices,
+        )
+
+        matrices = np.asarray(matrices_reconstruction, dtype=np.float64)
+        if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or matrices.shape[0] < 1:
+            raise ValueError("matrices_reconstruction must have shape (N, 4, 4) with N >= 1.")
+        if not np.isfinite(matrices).all():
+            raise ValueError("matrices_reconstruction must be finite.")
+        ids = tuple(str(value).strip() for value in camera_ids)
+        if len(ids) != matrices.shape[0] or any(not value for value in ids):
+            raise ValueError("camera_ids must contain one non-empty ID per canonical camera pose.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("camera_ids must be unique.")
+        scene_id = str(scene_id).strip()
+        artifact_id = str(artifact_id).strip()
+        provider_id = str(provider_id).strip()
+        if not scene_id or not artifact_id or not provider_id:
+            raise ValueError("Canonical camera scene/artifact/provider identity is required.")
+        total = matrices.shape[0] if total_count is None else int(total_count)
+        if total < matrices.shape[0]:
+            raise ValueError("total_count cannot be smaller than persisted canonical camera poses.")
+
+        positions = keyframe_centers_in_viewer(matrices)
+        frustum_indices = keyframe_display_indices(
+            matrices.shape[0], max_keyframes=self.MAX_CANONICAL_CAMERA_FRUSTUMS
+        )
+        trajectory_indices = trajectory_display_indices(
+            positions.shape[0], max_points=self.MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS
+        )
+        frustum_matrices = np.ascontiguousarray(matrices[frustum_indices])
+        frustum_positions = np.ascontiguousarray(positions[frustum_indices])
+        trajectory_positions = np.ascontiguousarray(positions[trajectory_indices])
+
+        depth = adaptive_camera_frustum_depth(self._world_axis_length)
+        frustum_segments = keyframe_frustum_segments_in_viewer(frustum_matrices, depth=depth)
+        self._canonical_camera_frustums.set_data(pos=frustum_segments, connect="segments")
+        self._canonical_camera_centers.set_data(
+            pos=frustum_positions,
+            face_color=(0.42, 0.78, 0.98, 0.82),
+            size=4.2,
+            edge_width=0,
+        )
+        self._canonical_camera_trajectory.set_data(pos=trajectory_positions, connect="strip")
+        self._canonical_camera_start.set_data(
+            pos=positions[:1],
+            face_color=(0.42, 0.78, 0.98, 0.95),
+            size=5.6,
+            edge_width=0,
+        )
+        self._canonical_camera_loaded = True
+        self._canonical_camera_scene_id = scene_id
+        self._canonical_camera_artifact_id = artifact_id
+        self._canonical_camera_provider_id = provider_id
+        self._canonical_camera_matrices = np.ascontiguousarray(matrices)
+        self._canonical_camera_positions = np.ascontiguousarray(positions)
+        self._canonical_camera_ids = ids
+        self._canonical_camera_total_count = total
+        self._canonical_camera_frustum_display_count = int(frustum_matrices.shape[0])
+        self._canonical_camera_trajectory_display_count = int(trajectory_positions.shape[0])
+        self._canonical_camera_frustums.visible = bool(self._keyframes_visible)
+        self._canonical_camera_centers.visible = bool(self._keyframes_visible)
+        self._canonical_camera_trajectory.visible = bool(
+            self._trajectory_visible and trajectory_positions.shape[0] >= 2
+        )
+        self._canonical_camera_start.visible = bool(self._trajectory_visible)
+        self._refresh_world_axis_scale()
+        # Frustum depth depends on the refreshed scene scale. Rebuild once if
+        # the axis scale changed materially after camera positions were added.
+        depth = adaptive_camera_frustum_depth(self._world_axis_length)
+        frustum_segments = keyframe_frustum_segments_in_viewer(frustum_matrices, depth=depth)
+        self._canonical_camera_frustums.set_data(pos=frustum_segments, connect="segments")
+        self._canvas.update()
+
+    def clear_canonical_camera_trajectory(self, *, update_canvas: bool = True) -> None:
+        self._canonical_camera_frustums.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
+        )
+        self._canonical_camera_centers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._canonical_camera_trajectory.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32), connect="strip"
+        )
+        self._canonical_camera_start.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._canonical_camera_frustums.visible = False
+        self._canonical_camera_centers.visible = False
+        self._canonical_camera_trajectory.visible = False
+        self._canonical_camera_start.visible = False
+        self._canonical_camera_loaded = False
+        self._canonical_camera_scene_id = ""
+        self._canonical_camera_artifact_id = ""
+        self._canonical_camera_provider_id = ""
+        self._canonical_camera_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+        self._canonical_camera_positions = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_camera_ids = ()
+        self._canonical_camera_total_count = 0
+        self._canonical_camera_frustum_display_count = 0
+        self._canonical_camera_trajectory_display_count = 0
+        self._refresh_world_axis_scale()
         if update_canvas:
             self._canvas.update()
 
@@ -1296,6 +1474,12 @@ class ReconstructionCanvas(QObject):
         )
         self._selected_offline_camera_frustum.visible = selected_visible
         self._selected_offline_camera_center.visible = selected_visible
+        self._canonical_camera_frustums.visible = bool(
+            self._keyframes_visible and self._canonical_camera_loaded
+        )
+        self._canonical_camera_centers.visible = bool(
+            self._keyframes_visible and self._canonical_camera_loaded
+        )
         if self._keyframes_visible:
             self._refresh_keyframe_visual()
             if self._selected_offline_camera_index is not None:
@@ -1355,6 +1539,8 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
         if self._keyframe_positions.size:
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+        if self._canonical_camera_positions.size:
+            groups.append(np.asarray(self._canonical_camera_positions, dtype=np.float64))
         if (
             self._canonical_mesh_loaded
             and self._canonical_mesh_bounds_min is not None
@@ -1385,6 +1571,21 @@ class ReconstructionCanvas(QObject):
             self._refresh_keyframe_visual()
         if self._selected_offline_camera_index is not None:
             self._refresh_selected_offline_camera()
+        if self._canonical_camera_loaded and self._canonical_camera_matrices.shape[0]:
+            from app.reconstruction_visualization import (
+                adaptive_camera_frustum_depth,
+                keyframe_display_indices,
+                keyframe_frustum_segments_in_viewer,
+            )
+            indices = keyframe_display_indices(
+                self._canonical_camera_matrices.shape[0],
+                max_keyframes=self.MAX_CANONICAL_CAMERA_FRUSTUMS,
+            )
+            segments = keyframe_frustum_segments_in_viewer(
+                self._canonical_camera_matrices[indices],
+                depth=adaptive_camera_frustum_depth(self._world_axis_length),
+            )
+            self._canonical_camera_frustums.set_data(pos=segments, connect="segments")
 
     def _create_world_axes_visuals(self):
         axis_x = scene.visuals.Line(
@@ -1448,6 +1649,26 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._sparse_landmark_positions, dtype=np.float64))
         if self._keyframe_positions.size:
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
+        if self._canonical_camera_positions.size:
+            groups.append(np.asarray(self._canonical_camera_positions, dtype=np.float64))
+        if (
+            self._canonical_mesh_loaded
+            and self._canonical_mesh_bounds_min is not None
+            and self._canonical_mesh_bounds_max is not None
+        ):
+            lower = np.asarray(self._canonical_mesh_bounds_min, dtype=np.float64)
+            upper = np.asarray(self._canonical_mesh_bounds_max, dtype=np.float64)
+            groups.append(
+                np.asarray(
+                    [
+                        [x, y, z]
+                        for x in (lower[0], upper[0])
+                        for y in (lower[1], upper[1])
+                        for z in (lower[2], upper[2])
+                    ],
+                    dtype=np.float64,
+                )
+            )
         if self._semantic_centroids_viewer.size:
             groups.append(np.asarray(self._semantic_centroids_viewer, dtype=np.float64))
         if groups:
@@ -1691,6 +1912,50 @@ class ReconstructionCanvas(QObject):
         )
 
     @property
+    def canonical_camera_loaded(self) -> bool:
+        return bool(self._canonical_camera_loaded)
+
+    @property
+    def canonical_camera_scene_id(self) -> str:
+        return self._canonical_camera_scene_id
+
+    @property
+    def canonical_camera_artifact_id(self) -> str:
+        return self._canonical_camera_artifact_id
+
+    @property
+    def canonical_camera_provider_id(self) -> str:
+        return self._canonical_camera_provider_id
+
+    @property
+    def canonical_camera_ids(self) -> tuple[str, ...]:
+        return self._canonical_camera_ids
+
+    @property
+    def canonical_camera_count(self) -> int:
+        return int(self._canonical_camera_total_count)
+
+    @property
+    def canonical_camera_persisted_count(self) -> int:
+        return int(self._canonical_camera_matrices.shape[0])
+
+    @property
+    def canonical_camera_frustum_display_count(self) -> int:
+        return int(self._canonical_camera_frustum_display_count)
+
+    @property
+    def canonical_camera_trajectory_display_count(self) -> int:
+        return int(self._canonical_camera_trajectory_display_count)
+
+    @property
+    def canonical_camera_frustums_visible(self) -> bool:
+        return bool(self._canonical_camera_loaded and self._canonical_camera_frustums.visible)
+
+    @property
+    def canonical_camera_trajectory_visible(self) -> bool:
+        return bool(self._canonical_camera_loaded and self._canonical_camera_trajectory.visible)
+
+    @property
     def semantic_objects_available(self) -> bool:
         return bool(self._semantic_objects_available)
 
@@ -1760,5 +2025,6 @@ class ReconstructionCanvas(QObject):
         if self._closed:
             return
         self._closed = True
+        self.clear_canonical_camera_trajectory(update_canvas=False)
         self.clear_canonical_mesh(update_canvas=False)
         self._canvas.close()
