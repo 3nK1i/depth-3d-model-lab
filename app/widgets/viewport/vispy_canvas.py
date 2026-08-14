@@ -396,6 +396,7 @@ class ReconstructionCanvas(QObject):
     MAX_CANONICAL_CAMERA_FRUSTUMS = 192
     MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
     MAX_SEMANTIC_OBJECT_DISPLAY = 256
+    MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -599,6 +600,62 @@ class ReconstructionCanvas(QObject):
             size=7.0,
             edge_width=0,
         )
+        # Phase 9.3D keeps semantic surface membership separate from the
+        # canonical MeshVisual. Only a selected object's already-persisted
+        # canonical face support is drawn as a transient presentation overlay.
+        self._selected_canonical_semantic_mesh = scene.visuals.Mesh(
+            parent=self._view.scene,
+            shading="smooth",
+            color=(1.0, 0.66, 0.12, 0.58),
+        )
+        self._selected_canonical_semantic_mesh.visible = False
+        try:
+            self._selected_canonical_semantic_mesh.set_gl_state(
+                "translucent",
+                depth_test=True,
+                blend=True,
+                polygon_offset_fill=True,
+                polygon_offset=(1.0, 1.0),
+            )
+        except (TypeError, ValueError):
+            # Older qualified VisPy releases may not expose polygon-offset
+            # keywords through Visual.set_gl_state(). The highlight remains
+            # valid without the optional depth-fighting mitigation.
+            self._selected_canonical_semantic_mesh.set_gl_state(
+                "translucent", depth_test=True, blend=True
+            )
+        self._canonical_semantic_labels = scene.visuals.Text(
+            text="",
+            pos=np.zeros((1, 3), dtype=np.float32),
+            color=(0.88, 0.82, 0.98, 0.78),
+            font_size=8.0,
+            anchor_x="center",
+            anchor_y="bottom",
+            parent=self._view.scene,
+        )
+        self._canonical_semantic_labels.visible = False
+        self._selected_canonical_semantic_label = scene.visuals.Text(
+            text="",
+            pos=np.zeros((1, 3), dtype=np.float32),
+            color=(1.0, 0.84, 0.34, 1.0),
+            font_size=10.0,
+            bold=True,
+            anchor_x="center",
+            anchor_y="bottom",
+            parent=self._view.scene,
+        )
+        self._selected_canonical_semantic_label.visible = False
+        self._canonical_semantic_loaded = False
+        self._canonical_semantic_scene_id = ""
+        self._canonical_semantic_artifact_id = ""
+        self._canonical_semantic_canonical_artifact_id = ""
+        self._canonical_semantic_object_ids: tuple[str, ...] = ()
+        self._canonical_semantic_labels_text: tuple[str, ...] = ()
+        self._canonical_semantic_label_positions = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_semantic_surface_vertices: tuple[np.ndarray, ...] = ()
+        self._canonical_semantic_surface_faces: tuple[np.ndarray, ...] = ()
+        self._canonical_semantic_label_display_count = 0
+        self._selected_canonical_semantic_surface_loaded = False
         self._semantic_objects_visible = True
         self._semantic_objects_available = False
         self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -1030,6 +1087,10 @@ class ReconstructionCanvas(QObject):
         self._canvas.update()
 
     def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
+        # Semantic surface overlays are valid only while this exact canonical
+        # mesh remains loaded. Clear them first so direct canvas lifecycle calls
+        # cannot leave stale membership visuals behind.
+        self.clear_canonical_semantic_objects(update_canvas=False)
         # MeshVisual.set_data() immediately recomputes bounds.  Some qualified
         # VisPy releases therefore reject a zero-vertex mesh before visibility
         # can be disabled.  Never use an empty set_data() call as a clear
@@ -1178,6 +1239,171 @@ class ReconstructionCanvas(QObject):
         if update_canvas:
             self._canvas.update()
 
+    def set_canonical_semantic_objects(
+        self,
+        *,
+        object_ids: tuple[str, ...] | list[str],
+        labels: tuple[str, ...] | list[str],
+        label_positions_viewer: np.ndarray,
+        surface_vertices_viewer: tuple[np.ndarray, ...] | list[np.ndarray],
+        surface_faces: tuple[np.ndarray, ...] | list[np.ndarray],
+        scene_id: str,
+        semantic_artifact_id: str,
+        canonical_artifact_id: str,
+    ) -> None:
+        """Load validated 9.3D semantic membership for canonical presentation.
+
+        The supplied compact surface meshes are derived from persisted semantic
+        face indices and the already-loaded canonical viewer mesh. They remain
+        presentation overlays only and never replace that canonical mesh.
+        """
+
+        if not self._canonical_mesh_loaded:
+            raise ValueError("Canonical semantic binding requires a loaded canonical mesh.")
+        scene_id = str(scene_id).strip()
+        semantic_artifact_id = str(semantic_artifact_id).strip()
+        canonical_artifact_id = str(canonical_artifact_id).strip()
+        if not scene_id or not semantic_artifact_id or not canonical_artifact_id:
+            raise ValueError("Canonical semantic scene/artifact identity is required.")
+        if scene_id != self._canonical_mesh_scene_id:
+            raise ValueError("Canonical semantic scene identity does not match the loaded mesh.")
+        if canonical_artifact_id != self._canonical_mesh_artifact_id:
+            raise ValueError("Canonical semantic binding targets a different canonical artifact.")
+
+        ids = tuple(str(value).strip() for value in object_ids)
+        label_values = tuple(str(value).strip() for value in labels)
+        positions = np.asarray(label_positions_viewer, dtype=np.float32)
+        vertices_values = tuple(np.asarray(value, dtype=np.float32) for value in surface_vertices_viewer)
+        face_values = tuple(np.asarray(value, dtype=np.uint32) for value in surface_faces)
+        count = len(ids)
+        if count > self.MAX_SEMANTIC_OBJECT_DISPLAY:
+            raise ValueError("Canonical semantic presentation exceeds the bounded display limit.")
+        if any(not value for value in ids) or len(set(ids)) != count:
+            raise ValueError("Canonical semantic object_ids must be unique and non-empty.")
+        if self._semantic_objects_available and ids != self._semantic_object_ids:
+            raise ValueError("Canonical semantic object ordering must match the active semantic presentation.")
+        if len(label_values) != count or any(not value for value in label_values):
+            raise ValueError("Canonical semantic labels must match object_ids and remain non-empty.")
+        if positions.shape != (count, 3) or not np.isfinite(positions).all():
+            raise ValueError("Canonical semantic label positions must be finite with shape (N, 3).")
+        if len(vertices_values) != count or len(face_values) != count:
+            raise ValueError("Canonical semantic surface arrays must match object_ids.")
+
+        normalized_vertices: list[np.ndarray] = []
+        normalized_faces: list[np.ndarray] = []
+        for vertices, faces in zip(vertices_values, face_values, strict=True):
+            if vertices.size == 0:
+                vertices = np.zeros((0, 3), dtype=np.float32)
+            if faces.size == 0:
+                faces = np.zeros((0, 3), dtype=np.uint32)
+            if vertices.ndim != 2 or vertices.shape[1:] != (3,) or not np.isfinite(vertices).all():
+                raise ValueError("Canonical semantic surface vertices must be finite (N, 3) arrays.")
+            if faces.ndim != 2 or faces.shape[1:] != (3,):
+                raise ValueError("Canonical semantic surface faces must have shape (M, 3).")
+            if faces.shape[0] and (not vertices.shape[0] or np.any(faces >= vertices.shape[0])):
+                raise ValueError("Canonical semantic surface faces reference missing local vertices.")
+            normalized_vertices.append(np.ascontiguousarray(vertices, dtype=np.float32))
+            normalized_faces.append(np.ascontiguousarray(faces, dtype=np.uint32))
+
+        self.clear_canonical_semantic_objects(update_canvas=False)
+        self._canonical_semantic_loaded = bool(count)
+        self._canonical_semantic_scene_id = scene_id
+        self._canonical_semantic_artifact_id = semantic_artifact_id
+        self._canonical_semantic_canonical_artifact_id = canonical_artifact_id
+        self._canonical_semantic_object_ids = ids
+        self._canonical_semantic_labels_text = label_values
+        self._canonical_semantic_label_positions = np.ascontiguousarray(positions)
+        self._canonical_semantic_surface_vertices = tuple(normalized_vertices)
+        self._canonical_semantic_surface_faces = tuple(normalized_faces)
+
+        label_count = min(count, self.MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY)
+        self._canonical_semantic_label_display_count = label_count
+        if label_count:
+            self._canonical_semantic_labels.text = list(label_values[:label_count])
+            self._canonical_semantic_labels.pos = self._canonical_semantic_label_positions[:label_count]
+        else:
+            self._canonical_semantic_labels.text = ""
+        self._canonical_semantic_labels.visible = bool(
+            self._semantic_objects_visible and self._canonical_semantic_loaded and label_count
+        )
+        if self._selected_semantic_object_index is not None:
+            self._refresh_selected_canonical_semantic_object()
+        self._canvas.update()
+
+    def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+        self._canonical_semantic_labels.visible = False
+        self._canonical_semantic_labels.text = ""
+        self._selected_canonical_semantic_label.visible = False
+        self._selected_canonical_semantic_label.text = ""
+        self._clear_selected_canonical_semantic_mesh()
+        self._canonical_semantic_loaded = False
+        self._canonical_semantic_scene_id = ""
+        self._canonical_semantic_artifact_id = ""
+        self._canonical_semantic_canonical_artifact_id = ""
+        self._canonical_semantic_object_ids = ()
+        self._canonical_semantic_labels_text = ()
+        self._canonical_semantic_label_positions = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_semantic_surface_vertices = ()
+        self._canonical_semantic_surface_faces = ()
+        self._canonical_semantic_label_display_count = 0
+        if update_canvas:
+            self._canvas.update()
+
+    def _clear_selected_canonical_semantic_mesh(self) -> None:
+        # Match the qualified 9.3B MeshVisual lifecycle: never submit a zero-
+        # vertex mesh to VisPy, because MeshData bounds reduction may crash.
+        self._selected_canonical_semantic_mesh.visible = False
+        if self._selected_canonical_semantic_surface_loaded:
+            self._selected_canonical_semantic_mesh.parent = None
+            self._selected_canonical_semantic_mesh = scene.visuals.Mesh(
+                parent=self._view.scene,
+                shading="smooth",
+                color=(1.0, 0.66, 0.12, 0.58),
+            )
+            self._selected_canonical_semantic_mesh.visible = False
+            try:
+                self._selected_canonical_semantic_mesh.set_gl_state(
+                    "translucent",
+                    depth_test=True,
+                    blend=True,
+                    polygon_offset_fill=True,
+                    polygon_offset=(1.0, 1.0),
+                )
+            except (TypeError, ValueError):
+                self._selected_canonical_semantic_mesh.set_gl_state(
+                    "translucent", depth_test=True, blend=True
+                )
+        self._selected_canonical_semantic_surface_loaded = False
+
+    def _refresh_selected_canonical_semantic_object(self) -> None:
+        self._selected_canonical_semantic_label.visible = False
+        self._selected_canonical_semantic_label.text = ""
+        self._clear_selected_canonical_semantic_mesh()
+        index = self._selected_semantic_object_index
+        if (
+            index is None
+            or not self._canonical_semantic_loaded
+            or index < 0
+            or index >= len(self._canonical_semantic_object_ids)
+        ):
+            return
+        if index >= len(self._semantic_object_ids) or (
+            self._canonical_semantic_object_ids[index] != self._semantic_object_ids[index]
+        ):
+            return
+
+        self._selected_canonical_semantic_label.text = self._canonical_semantic_labels_text[index]
+        self._selected_canonical_semantic_label.pos = self._canonical_semantic_label_positions[index : index + 1]
+        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        self._selected_canonical_semantic_label.visible = visible
+
+        vertices = self._canonical_semantic_surface_vertices[index]
+        faces = self._canonical_semantic_surface_faces[index]
+        if vertices.shape[0] and faces.shape[0]:
+            self._selected_canonical_semantic_mesh.set_data(vertices=vertices, faces=faces)
+            self._selected_canonical_semantic_surface_loaded = True
+            self._selected_canonical_semantic_mesh.visible = visible
+
     def set_semantic_objects(
         self,
         *,
@@ -1262,6 +1488,7 @@ class ReconstructionCanvas(QObject):
         self._canvas.update()
 
     def clear_semantic_objects(self, *, update_canvas: bool = True) -> None:
+        self.clear_canonical_semantic_objects(update_canvas=False)
         self._semantic_object_boxes.set_data(
             pos=np.zeros((0, 3), dtype=np.float32), connect="segments"
         )
@@ -1292,6 +1519,17 @@ class ReconstructionCanvas(QObject):
         selected = bool(show and self._selected_semantic_object_index is not None)
         self._selected_semantic_object_box.visible = selected
         self._selected_semantic_object_center.visible = selected
+        self._canonical_semantic_labels.visible = bool(
+            show and self._canonical_semantic_loaded and self._canonical_semantic_label_display_count
+        )
+        self._selected_canonical_semantic_label.visible = bool(
+            selected and self._canonical_semantic_loaded
+        )
+        self._selected_canonical_semantic_mesh.visible = bool(
+            selected
+            and self._canonical_semantic_loaded
+            and self._selected_canonical_semantic_surface_loaded
+        )
         self._canvas.update()
 
     def select_semantic_object(self, object_index: int) -> None:
@@ -1312,6 +1550,9 @@ class ReconstructionCanvas(QObject):
         self._selected_semantic_object_center.set_data(pos=np.zeros((0, 3), dtype=np.float32))
         self._selected_semantic_object_box.visible = False
         self._selected_semantic_object_center.visible = False
+        self._selected_canonical_semantic_label.visible = False
+        self._selected_canonical_semantic_label.text = ""
+        self._clear_selected_canonical_semantic_mesh()
         self._canvas.update()
 
     def _refresh_selected_semantic_object(self) -> None:
@@ -1337,6 +1578,7 @@ class ReconstructionCanvas(QObject):
         visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
         self._selected_semantic_object_box.visible = visible
         self._selected_semantic_object_center.visible = visible
+        self._refresh_selected_canonical_semantic_object()
 
     def focus_selected_semantic_object(self) -> None:
         index = self._selected_semantic_object_index
@@ -1956,6 +2198,45 @@ class ReconstructionCanvas(QObject):
         return bool(self._canonical_camera_loaded and self._canonical_camera_trajectory.visible)
 
     @property
+    def canonical_semantic_loaded(self) -> bool:
+        return bool(self._canonical_semantic_loaded)
+
+    @property
+    def canonical_semantic_scene_id(self) -> str:
+        return self._canonical_semantic_scene_id
+
+    @property
+    def canonical_semantic_artifact_id(self) -> str:
+        return self._canonical_semantic_artifact_id
+
+    @property
+    def canonical_semantic_object_ids(self) -> tuple[str, ...]:
+        return self._canonical_semantic_object_ids
+
+    @property
+    def canonical_semantic_surface_binding_count(self) -> int:
+        return sum(bool(faces.shape[0]) for faces in self._canonical_semantic_surface_faces)
+
+    @property
+    def canonical_semantic_label_display_count(self) -> int:
+        return int(self._canonical_semantic_label_display_count)
+
+    @property
+    def canonical_semantic_labels_visible(self) -> bool:
+        return bool(self._canonical_semantic_loaded and self._canonical_semantic_labels.visible)
+
+    @property
+    def selected_canonical_semantic_surface_visible(self) -> bool:
+        return bool(
+            self._selected_canonical_semantic_surface_loaded
+            and self._selected_canonical_semantic_mesh.visible
+        )
+
+    @property
+    def selected_canonical_semantic_label_visible(self) -> bool:
+        return bool(self._selected_canonical_semantic_label.visible)
+
+    @property
     def semantic_objects_available(self) -> bool:
         return bool(self._semantic_objects_available)
 
@@ -2026,5 +2307,6 @@ class ReconstructionCanvas(QObject):
             return
         self._closed = True
         self.clear_canonical_camera_trajectory(update_canvas=False)
+        self.clear_canonical_semantic_objects(update_canvas=False)
         self.clear_canonical_mesh(update_canvas=False)
         self._canvas.close()

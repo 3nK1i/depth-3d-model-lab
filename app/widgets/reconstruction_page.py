@@ -98,6 +98,10 @@ from app.reconstruction_canonical_cameras import (
     CanonicalCameraTrajectoryPresentation,
     load_persistent_canonical_camera_trajectory,
 )
+from app.reconstruction_canonical_semantics import (
+    CanonicalSemanticScenePresentation,
+    load_persistent_canonical_semantics,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -272,6 +276,8 @@ class ReconstructionPage(QWidget):
         self._canonical_viewer_error = ""
         self._canonical_camera_presentation: CanonicalCameraTrajectoryPresentation | None = None
         self._canonical_camera_error = ""
+        self._canonical_semantic_presentation: CanonicalSemanticScenePresentation | None = None
+        self._canonical_semantic_error = ""
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -990,6 +996,13 @@ class ReconstructionPage(QWidget):
     def set_semantic_geometry(self, payload: object, *, source: str = "semantic_geometry") -> None:
         """Present an already-built semantic result without recomputing semantics."""
 
+        # A direct/in-memory semantic payload is not automatically the persisted
+        # semantic artifact bound to the active canonical scene.  Keep the D5
+        # presentation path, but clear any prior 9.3D canonical-surface binding
+        # rather than silently associating unrelated semantic evidence.
+        self._reconstruction_canvas.clear_canonical_semantic_objects()
+        self._canonical_semantic_presentation = None
+        self._canonical_semantic_error = ""
         presentation = semantic_presentation_from_payload(payload, source=source)
         self._apply_semantic_presentation(presentation)
 
@@ -1078,6 +1091,9 @@ class ReconstructionPage(QWidget):
             self._refresh_semantic_navigation()
         if hasattr(self, "_reconstruction_canvas"):
             self._reconstruction_canvas.clear_semantic_objects()
+            self._reconstruction_canvas.clear_canonical_semantic_objects()
+        self._canonical_semantic_presentation = None
+        self._canonical_semantic_error = ""
         button = getattr(self, "_viewport_tool_buttons", {}).get("semantic_objects")
         if button is not None:
             button.setEnabled(False)
@@ -1120,6 +1136,26 @@ class ReconstructionPage(QWidget):
         self._semantic_quality_value.setToolTip(
             "Semantic/model confidence and mesh-vertex quality are context signals, not measurement accuracy."
         )
+        canonical_semantics = self._canonical_semantic_presentation
+        if (
+            canonical_semantics is not None
+            and index < len(canonical_semantics.objects)
+            and canonical_semantics.objects[index].object_id == item.object_id
+        ):
+            bound = canonical_semantics.objects[index]
+            membership = (
+                "Exact canonical-surface membership persisted and validated."
+                if bound.surface_membership_available
+                else "Legacy 3D semantic snapshot: exact surface membership was not persisted."
+            )
+            self._semantic_support_value.setToolTip(
+                f"{membership}\n{bound.provenance_text}\n"
+                "Semantic membership remains context only; canonical geometry, measurement, and QC authority are unchanged."
+            )
+        else:
+            self._semantic_support_value.setToolTip(
+                "Semantic support counts are context only; no canonical-surface association is currently validated."
+            )
         self._viewport_state.setToolTip(
             f"Selected semantic object {item.object_id}: {item.class_name} ({item.semantic_role})."
         )
@@ -1858,6 +1894,100 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.fit_scene()
         self._visualizer_fitted_once = True
         self.canonical_camera_presentation_changed.emit(presentation)
+
+    @property
+    def canonical_semantic_presentation(self) -> CanonicalSemanticScenePresentation | None:
+        return self._canonical_semantic_presentation
+
+    def _refresh_canonical_semantic_viewer(self) -> None:
+        """Bind persisted 3D semantic membership to the loaded canonical mesh."""
+
+        self._reconstruction_canvas.clear_canonical_semantic_objects()
+        self._canonical_semantic_presentation = None
+        self._canonical_semantic_error = ""
+        scene = self._persistent_scene
+        mesh = self._canonical_viewer_mesh
+        if scene is None or mesh is None:
+            return
+
+        try:
+            presentation = load_persistent_canonical_semantics(scene, mesh)
+        except (TypeError, ValueError) as exc:
+            # Semantic binding failure never revokes the persistent canonical
+            # surface or the already-normalized D5 semantic context.  It only
+            # disables the 9.3D surface highlight/labels and exposes the reason.
+            self._canonical_semantic_error = str(exc)
+            if hasattr(self, "_semantic_structure_value"):
+                self._semantic_structure_value.setToolTip(
+                    "Canonical semantic surface association rejected.\n" + str(exc)
+                )
+            return
+        if presentation is None:
+            if self._offline_semantics is not None and hasattr(self, "_semantic_structure_value"):
+                self._semantic_structure_value.setToolTip(
+                    "Persistent semantic context is available, but no detailed semantic payload snapshot "
+                    "is persisted for canonical-surface binding. No 3D membership is fabricated."
+                )
+            return
+
+        offline = self._offline_semantics
+        if offline is None:
+            self._canonical_semantic_error = (
+                "Canonical semantic binding requires the normalized semantic presentation."
+            )
+            return
+        offline_ids = tuple(item.object_id for item in offline.objects)
+        if presentation.object_ids != offline_ids:
+            self._canonical_semantic_error = (
+                "Canonical semantic object ordering does not match the active semantic presentation."
+            )
+            if hasattr(self, "_semantic_structure_value"):
+                self._semantic_structure_value.setToolTip(
+                    "Canonical semantic surface association rejected.\n"
+                    + self._canonical_semantic_error
+                )
+            return
+
+        try:
+            self._reconstruction_canvas.set_canonical_semantic_objects(
+                object_ids=presentation.object_ids,
+                labels=tuple(item.label_text for item in presentation.objects),
+                label_positions_viewer=np.asarray(
+                    [item.centroid_viewer for item in presentation.objects], dtype=np.float32
+                ).reshape((-1, 3)),
+                surface_vertices_viewer=tuple(
+                    item.surface_vertices_viewer for item in presentation.objects
+                ),
+                surface_faces=tuple(item.surface_faces for item in presentation.objects),
+                scene_id=presentation.scene_id,
+                semantic_artifact_id=presentation.semantic_artifact_id,
+                canonical_artifact_id=presentation.canonical_artifact_id,
+            )
+        except (TypeError, ValueError) as exc:
+            self._reconstruction_canvas.clear_canonical_semantic_objects()
+            self._canonical_semantic_error = str(exc)
+            if hasattr(self, "_semantic_structure_value"):
+                self._semantic_structure_value.setToolTip(
+                    "Canonical semantic viewer presentation rejected.\n" + str(exc)
+                )
+            return
+        self._canonical_semantic_presentation = presentation
+        self._semantic_structure_value.setToolTip(
+            f"{presentation.binding_text}\n"
+            f"Semantic provider: {presentation.semantic_provider_id}\n"
+            f"{presentation.authority_text}\n"
+            "No YOLO/SAM2 inference or 2D-to-3D promotion is performed while loading this scene."
+        )
+        if presentation.objects:
+            self._viewport_placeholder.setVisible(False)
+            if self._canonical_camera_presentation is not None:
+                self._viewport_state.setText("Canonical scene • cameras + semantic objects")
+            else:
+                self._viewport_state.setText("Canonical scene • semantic objects")
+            self._viewport_state.setToolTip(
+                f"{presentation.binding_text}. Semantic surfaces are supporting membership only; "
+                "canonical geometry authority remains with the persistent surface mesh."
+            )
 
     @property
     def appearance_representation_presentation(self) -> ReconstructionAppearancePresentation | None:
@@ -4996,6 +5126,12 @@ class ReconstructionPage(QWidget):
         self._hide_gaussian_preview()
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""
+        # Phase 9.3D semantic surface membership is scene-bound. Clear it before
+        # changing scene identity so no stale object highlight/label can survive
+        # while the next canonical mesh is being loaded.
+        self._reconstruction_canvas.clear_canonical_semantic_objects()
+        self._canonical_semantic_presentation = None
+        self._canonical_semantic_error = ""
         # Clear persistent camera visuals before changing the scene identity so
         # the 9.3B surface fit can never include stale camera positions from the
         # previously loaded scene. The camera presentation is rebuilt below only
@@ -5040,6 +5176,7 @@ class ReconstructionPage(QWidget):
             self._reset_semantic_presentation()
             return
         self._apply_semantic_presentation(presentation)
+        self._refresh_canonical_semantic_viewer()
 
     def set_persistent_authority_snapshot(
         self,
@@ -5119,6 +5256,8 @@ class ReconstructionPage(QWidget):
         self._canonical_viewer_error = ""
         self._canonical_camera_presentation = None
         self._canonical_camera_error = ""
+        self._canonical_semantic_presentation = None
+        self._canonical_semantic_error = ""
         self._reconstruction_canvas.close()
 
     @staticmethod

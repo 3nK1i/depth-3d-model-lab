@@ -413,6 +413,13 @@ class Semantic3DObject:
             "class_name": self.class_name,
             "semantic_role": self.semantic_role.value,
             "confidence": self.confidence,
+            # Phase 9.3D preserves the exact semantic membership that already
+            # exists in memory.  These indices reference the authoritative
+            # surface; they do not duplicate/deform it or promote semantics to
+            # canonical-geometry authority.  Legacy snapshots without these
+            # additive keys remain valid presentation inputs.
+            "vertex_indices": self.vertex_indices.astype(np.uint32, copy=False).tolist(),
+            "face_indices": self.face_indices.astype(np.uint32, copy=False).tolist(),
             "vertex_count": int(len(self.vertex_indices)),
             "face_count": int(len(self.face_indices)),
             "centroid_reconstruction": self.centroid_reconstruction.tolist(),

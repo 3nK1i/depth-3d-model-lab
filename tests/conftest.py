@@ -165,6 +165,7 @@ def _install_fake_vispy_canvas() -> None:
         MAX_CANONICAL_CAMERA_FRUSTUMS = 192
         MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
         MAX_SEMANTIC_OBJECT_DISPLAY = 256
+        MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
 
         def __init__(self, parent: QObject | None = None) -> None:
             super().__init__(parent)
@@ -215,6 +216,18 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_camera_trajectory_display_count = 0
             self._canonical_camera_frustums_visible = False
             self._canonical_camera_trajectory_visible = False
+            self._canonical_semantic_loaded = False
+            self._canonical_semantic_scene_id = ""
+            self._canonical_semantic_artifact_id = ""
+            self._canonical_semantic_canonical_artifact_id = ""
+            self._canonical_semantic_object_ids = ()
+            self._canonical_semantic_labels = ()
+            self._canonical_semantic_label_positions = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_semantic_surface_vertices = ()
+            self._canonical_semantic_surface_faces = ()
+            self._canonical_semantic_label_display_count = 0
+            self._selected_canonical_semantic_surface_visible = False
+            self._selected_canonical_semantic_label_visible = False
             self._semantic_objects_visible = True
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -457,6 +470,7 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_visible = True
 
         def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
+            self.clear_canonical_semantic_objects(update_canvas=False)
             self._canonical_mesh_loaded = False
             self._canonical_mesh_visible = False
             self._canonical_mesh_scene_id = ""
@@ -528,6 +542,82 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_camera_frustums_visible = False
             self._canonical_camera_trajectory_visible = False
 
+        def set_canonical_semantic_objects(
+            self,
+            *,
+            object_ids,
+            labels,
+            label_positions_viewer,
+            surface_vertices_viewer,
+            surface_faces,
+            scene_id: str,
+            semantic_artifact_id: str,
+            canonical_artifact_id: str,
+        ) -> None:
+            ids = tuple(str(value).strip() for value in object_ids)
+            labels = tuple(str(value).strip() for value in labels)
+            positions = np.asarray(label_positions_viewer, dtype=np.float32)
+            vertices = tuple(np.asarray(value, dtype=np.float32) for value in surface_vertices_viewer)
+            faces = tuple(np.asarray(value, dtype=np.uint32) for value in surface_faces)
+            count = len(ids)
+            if not self._canonical_mesh_loaded:
+                raise ValueError("Canonical semantic binding requires a loaded canonical mesh.")
+            if str(scene_id) != self._canonical_mesh_scene_id:
+                raise ValueError("Canonical semantic scene identity does not match the loaded mesh.")
+            if str(canonical_artifact_id) != self._canonical_mesh_artifact_id:
+                raise ValueError("Canonical semantic binding targets a different canonical artifact.")
+            if self._semantic_objects_available and ids != self._semantic_object_ids:
+                raise ValueError("Canonical semantic object ordering must match the active semantic presentation.")
+            if len(labels) != count or positions.shape != (count, 3):
+                raise ValueError("Canonical semantic labels and positions must match object_ids.")
+            if len(vertices) != count or len(faces) != count:
+                raise ValueError("Canonical semantic surface arrays must match object_ids.")
+            self.clear_canonical_semantic_objects(update_canvas=False)
+            self._canonical_semantic_loaded = bool(count)
+            self._canonical_semantic_scene_id = str(scene_id)
+            self._canonical_semantic_artifact_id = str(semantic_artifact_id)
+            self._canonical_semantic_canonical_artifact_id = str(canonical_artifact_id)
+            self._canonical_semantic_object_ids = ids
+            self._canonical_semantic_labels = labels
+            self._canonical_semantic_label_positions = positions.copy()
+            self._canonical_semantic_surface_vertices = tuple(value.copy() for value in vertices)
+            self._canonical_semantic_surface_faces = tuple(value.copy() for value in faces)
+            self._canonical_semantic_label_display_count = min(
+                count, self.MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY
+            )
+            if self._selected_semantic_object_index is not None:
+                self._refresh_selected_canonical_semantic_state()
+
+        def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+            self._canonical_semantic_loaded = False
+            self._canonical_semantic_scene_id = ""
+            self._canonical_semantic_artifact_id = ""
+            self._canonical_semantic_canonical_artifact_id = ""
+            self._canonical_semantic_object_ids = ()
+            self._canonical_semantic_labels = ()
+            self._canonical_semantic_label_positions = np.zeros((0, 3), dtype=np.float32)
+            self._canonical_semantic_surface_vertices = ()
+            self._canonical_semantic_surface_faces = ()
+            self._canonical_semantic_label_display_count = 0
+            self._selected_canonical_semantic_surface_visible = False
+            self._selected_canonical_semantic_label_visible = False
+
+        def _refresh_selected_canonical_semantic_state(self) -> None:
+            index = self._selected_semantic_object_index
+            active = bool(
+                self._semantic_objects_visible
+                and self._semantic_objects_available
+                and self._canonical_semantic_loaded
+                and index is not None
+                and 0 <= index < len(self._canonical_semantic_object_ids)
+                and index < len(self._semantic_object_ids)
+                and self._canonical_semantic_object_ids[index] == self._semantic_object_ids[index]
+            )
+            self._selected_canonical_semantic_label_visible = active
+            self._selected_canonical_semantic_surface_visible = bool(
+                active and self._canonical_semantic_surface_faces[index].shape[0]
+            ) if active else False
+
         def set_semantic_objects(
             self,
             *,
@@ -564,6 +654,7 @@ def _install_fake_vispy_canvas() -> None:
             self._selected_semantic_object_visible = False
 
         def clear_semantic_objects(self, *, update_canvas: bool = True) -> None:
+            self.clear_canonical_semantic_objects(update_canvas=False)
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
             self._semantic_bounds_max = np.zeros((0, 3), dtype=np.float64)
@@ -580,6 +671,7 @@ def _install_fake_vispy_canvas() -> None:
                 and self._semantic_objects_available
                 and self._selected_semantic_object_index is not None
             )
+            self._refresh_selected_canonical_semantic_state()
 
         def select_semantic_object(self, object_index: int) -> None:
             index = int(object_index)
@@ -589,10 +681,13 @@ def _install_fake_vispy_canvas() -> None:
                 raise IndexError("Semantic object index is out of range.")
             self._selected_semantic_object_index = index
             self._selected_semantic_object_visible = self._semantic_objects_visible
+            self._refresh_selected_canonical_semantic_state()
 
         def clear_semantic_object_selection(self) -> None:
             self._selected_semantic_object_index = None
             self._selected_semantic_object_visible = False
+            self._selected_canonical_semantic_surface_visible = False
+            self._selected_canonical_semantic_label_visible = False
 
         def focus_selected_semantic_object(self) -> None:
             self.focus_calls += 1
@@ -900,6 +995,47 @@ def _install_fake_vispy_canvas() -> None:
             return bool(self._canonical_camera_loaded and self._canonical_camera_trajectory_visible)
 
         @property
+        def canonical_semantic_loaded(self) -> bool:
+            return bool(self._canonical_semantic_loaded)
+
+        @property
+        def canonical_semantic_scene_id(self) -> str:
+            return self._canonical_semantic_scene_id
+
+        @property
+        def canonical_semantic_artifact_id(self) -> str:
+            return self._canonical_semantic_artifact_id
+
+        @property
+        def canonical_semantic_object_ids(self):
+            return self._canonical_semantic_object_ids
+
+        @property
+        def canonical_semantic_surface_binding_count(self) -> int:
+            return sum(bool(value.shape[0]) for value in self._canonical_semantic_surface_faces)
+
+        @property
+        def canonical_semantic_label_display_count(self) -> int:
+            return int(self._canonical_semantic_label_display_count)
+
+        @property
+        def canonical_semantic_labels_visible(self) -> bool:
+            return bool(
+                self._canonical_semantic_loaded
+                and self._semantic_objects_visible
+                and self._semantic_objects_available
+                and self._canonical_semantic_label_display_count
+            )
+
+        @property
+        def selected_canonical_semantic_surface_visible(self) -> bool:
+            return bool(self._selected_canonical_semantic_surface_visible)
+
+        @property
+        def selected_canonical_semantic_label_visible(self) -> bool:
+            return bool(self._selected_canonical_semantic_label_visible)
+
+        @property
         def semantic_objects_available(self) -> bool:
             return bool(self._semantic_objects_available)
 
@@ -964,6 +1100,7 @@ def _install_fake_vispy_canvas() -> None:
 
         def close(self) -> None:
             self.clear_canonical_camera_trajectory(update_canvas=False)
+            self.clear_canonical_semantic_objects(update_canvas=False)
             self.clear_canonical_mesh(update_canvas=False)
             self.closed = True
             self._native.close()
