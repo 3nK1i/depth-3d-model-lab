@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.auto_segment_controller import AutoSegmentControllerState
+from app.dialogs.manage_segmentation_classes_dialog import ManageSegmentationClassesDialog
 from app.widgets.auto_segment_canvas import AutoSegmentCanvas
 from core.contracts import FrameReference, ImageSize, ModelProvenance, PixelCoordinateSpace, PixelSpaceRole
 from core.contracts.validation import ContractValidationError
@@ -45,6 +46,8 @@ from core.perception.semantic_project import (
     create_segmentation_project,
     merge_project_catalog_into_workspace,
 )
+from core.perception.semantic_workspace_persistence import SegmentationWorkspaceStore
+from core.perception.reviewed_analysis import source_image_sha256
 from core.perception.semantic_workspace import (
     SemanticReviewStatus,
     SemanticWorkspace,
@@ -87,6 +90,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self.resize(1180, 700)
 
         self._store = project_store or SegmentationProjectStore(default_segmentation_project_root())
+        self._workspace_store = SegmentationWorkspaceStore(self._store.root.parent / "segmentation_workspaces")
         self._project: SegmentationProject | None = None
         self._workspace: SemanticWorkspace | None = None
         self._image_bgr: np.ndarray | None = None
@@ -155,6 +159,14 @@ class AutoSegmentWorkspaceDialog(QDialog):
         new_project.setObjectName("autoSegmentSecondaryButton")
         new_project.clicked.connect(self._create_project)
         layout.addWidget(new_project)
+        manage_classes = QPushButton("Manage Classes")
+        manage_classes.setObjectName("autoSegmentSecondaryButton")
+        manage_classes.clicked.connect(self._manage_classes)
+        layout.addWidget(manage_classes)
+        self._restore_workspace = QPushButton("Restore Saved")
+        self._restore_workspace.setObjectName("autoSegmentSecondaryButton")
+        self._restore_workspace.clicked.connect(self._restore_saved_workspace)
+        layout.addWidget(self._restore_workspace)
         return frame
 
     def _build_status(self) -> QFrame:
@@ -413,7 +425,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         frame = QFrame()
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(0, 2, 0, 0)
-        self._footer = QLabel("Project classes are reusable. Prompted masks remain session-local in 9.2E and never establish geometry, metric, or measurement authority.")
+        self._footer = QLabel("Project classes and reviewed masks persist per project. Semantic state never establishes geometry, metric, or measurement authority.")
         self._footer.setObjectName("autoSegmentMuted")
         layout.addWidget(self._footer, stretch=1)
         self._done = QPushButton("Done")
@@ -426,6 +438,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         if self._running:
             QMessageBox.information(self, "Auto Segment", "Cancel the active Auto Segment job before closing the workspace.")
             return
+        self._persist_workspace()
         super().accept()
 
     def reject(self) -> None:
@@ -447,8 +460,98 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._canvas.set_image(self._image_bgr)
         self._canvas.set_workspace(None)
         self._source_text.setText(f"{self._source_label} · {image.shape[1]} × {image.shape[0]}")
-        self._status_text.setText("Ready to generate unlabeled SAM2 proposals.")
+        restored = self._restore_saved_workspace_if_exact_source()
+        if not restored:
+            self._status_text.setText("Ready to generate unlabeled SAM2 proposals.")
         self._refresh_all()
+
+    def _persist_workspace(self) -> None:
+        if self._project is None or self._workspace is None or self._image_bgr is None:
+            return
+        try:
+            self._store.save(self._project)
+            self._workspace_store.save(
+                self._project,
+                self._workspace,
+                self._image_bgr,
+                source_label=self._source_label,
+            )
+        except (ContractValidationError, OSError, ValueError) as exc:
+            self._status_text.setText(f"Workspace persistence failed: {exc}")
+
+    def _adopt_persisted_workspace(self, persisted) -> None:
+        self._image_bgr = np.ascontiguousarray(persisted.image_bgr.copy())
+        self._source_label = persisted.source_label
+        self._workspace = persisted.workspace
+        self._selected_id = ""
+        self._merge_selected_ids.clear()
+        self._clear_prompt_points()
+        self._canvas.set_image(self._image_bgr)
+        self._canvas.set_workspace(self._workspace)
+        self._canvas.set_merge_selection(())
+        self._source_text.setText(
+            f"{self._source_label} · {self._image_bgr.shape[1]} × {self._image_bgr.shape[0]}"
+        )
+        self._status_text.setText(
+            f"Restored saved workspace · {len(self._workspace.objects)} proposal(s) · revision {self._workspace.revision}."
+        )
+
+    def _restore_saved_workspace_if_exact_source(self) -> bool:
+        if self._project is None or self._image_bgr is None or not self._workspace_store.contains(self._project.project_id):
+            return False
+        try:
+            persisted = self._workspace_store.load(self._project)
+        except (ContractValidationError, OSError, ValueError):
+            return False
+        if persisted.source_image_sha256 != source_image_sha256(self._image_bgr):
+            return False
+        self._adopt_persisted_workspace(persisted)
+        return True
+
+    def _restore_saved_workspace(self) -> None:
+        if self._project is None:
+            return
+        if not self._workspace_store.contains(self._project.project_id):
+            QMessageBox.information(self, "Restore workspace", "This project has no saved Auto Segment workspace yet.")
+            return
+        if self._workspace is not None and self._workspace.objects:
+            answer = QMessageBox.question(
+                self,
+                "Restore workspace",
+                "Restoring replaces the current in-dialog proposal review with the saved project workspace. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            persisted = self._workspace_store.load(self._project)
+            self._adopt_persisted_workspace(persisted)
+            self._refresh_all()
+        except (ContractValidationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Restore workspace", str(exc))
+
+    def _manage_classes(self) -> None:
+        if self._project is None:
+            return
+        dialog = ManageSegmentationClassesDialog(self._project, self._workspace, self)
+        dialog.exec()
+        project = dialog.project
+        workspace = dialog.workspace
+        if project == self._project and workspace == self._workspace:
+            return
+        try:
+            self._store.save(project)
+            self._project = project
+            self._workspace = workspace
+            if self._workspace is not None:
+                self._canvas.set_workspace(self._workspace)
+            self._refresh_projects(project.project_id)
+            self._persist_workspace()
+            self._refresh_all(keep_selection=True)
+            self._status_text.setText("Project classes updated and persisted.")
+        except (ContractValidationError, OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Manage classes", str(exc))
 
     def _open_image(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open image for Auto Segment", str(Path.home()), "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
@@ -524,6 +627,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
             self._refresh_projects(project.project_id)
             self._select_class_id(definition.class_id)
             self._suggest_instance_name()
+            self._persist_workspace()
         except (ContractValidationError, OSError, ValueError) as exc:
             QMessageBox.warning(self, "New class", str(exc))
 
@@ -579,6 +683,12 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._status_badge.style().polish(self._status_badge)
         self._run.setEnabled(not self._running and self._image_bgr is not None)
         self._cancel.setEnabled(self._running)
+        if hasattr(self, "_restore_workspace"):
+            self._restore_workspace.setEnabled(
+                not self._running
+                and self._project is not None
+                and self._workspace_store.contains(self._project.project_id)
+            )
         self._project_combo.setEnabled(not self._running)
         self._done.setEnabled(not self._running)
         self._refresh_prompt_controls()
@@ -666,6 +776,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._canvas.set_merge_selection(())
         self._status_text.setText(f"Generated {len(self._workspace.objects)} unlabeled proposal(s). Click a mask to review it.")
         self._progress.setValue(100)
+        self._persist_workspace()
         self._refresh_all()
 
     @staticmethod
@@ -739,6 +850,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
                 instance_name=self._instance_name.text().strip(),
             )
             self._canvas.set_workspace(self._workspace)
+            self._persist_workspace()
             self._refresh_all(keep_selection=True)
         except ContractValidationError as exc:
             QMessageBox.warning(self, "Assign class", str(exc))
@@ -753,6 +865,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         try:
             self._workspace = set_workspace_review_status(self._workspace, self._selected_id, status)
             self._canvas.set_workspace(self._workspace)
+            self._persist_workspace()
             self._refresh_all(keep_selection=True)
         except ContractValidationError as exc:
             QMessageBox.warning(self, "Review proposal", str(exc))
@@ -841,6 +954,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._status_text.setText(
             f"Merged {len(ordered)} masks. Review the combined result and accept it again when correct."
         )
+        self._persist_workspace()
         self._refresh_all(keep_selection=True)
         self.select_object(merged_id)
 
@@ -1066,6 +1180,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._canvas.set_workspace(self._workspace)
         self._clear_prompt_points()
         self._progress.setValue(100)
+        self._persist_workspace()
         self._refresh_all(keep_selection=True)
         self.select_object(object_id)
 
@@ -1077,6 +1192,12 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._sync_overlay_options()
         self._run.setEnabled(not self._running and self._image_bgr is not None)
         self._cancel.setEnabled(self._running)
+        if hasattr(self, "_restore_workspace"):
+            self._restore_workspace.setEnabled(
+                not self._running
+                and self._project is not None
+                and self._workspace_store.contains(self._project.project_id)
+            )
         self._refresh_prompt_controls()
         self._sync_merge_selection()
         if keep_selection and self._selected_id:

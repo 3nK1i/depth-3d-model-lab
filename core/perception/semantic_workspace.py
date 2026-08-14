@@ -657,6 +657,38 @@ def assign_workspace_class(
 
 
 
+
+def clear_workspace_class_assignment(
+    workspace: SemanticWorkspace,
+    object_id: str,
+) -> SemanticWorkspace:
+    """Return one object to Unlabeled/Pending without changing its mask.
+
+    Used by safe class retirement.  Removing a semantic class can never silently
+    preserve an accepted object with stale class identity.
+    """
+
+    key = require_nonempty(object_id, field_name="object_id")
+    current = workspace.object_by_id(key)
+    if current is None:
+        raise ContractValidationError(f"Unknown semantic workspace object: {key!r}.")
+    replacement = replace(
+        current,
+        class_id=None,
+        class_name="",
+        instance_name="",
+        label_source=SemanticLabelSource.UNASSIGNED,
+        review_status=SemanticReviewStatus.PENDING,
+        label_confidence=None,
+    )
+    return SemanticWorkspace(
+        workspace_id=workspace.workspace_id,
+        frame_reference=workspace.frame_reference,
+        class_catalog=workspace.class_catalog,
+        objects=tuple(replacement if item.object_id == key else item for item in workspace.objects),
+        revision=workspace.revision + 1,
+    )
+
 def set_workspace_review_status(
     workspace: SemanticWorkspace,
     object_id: str,

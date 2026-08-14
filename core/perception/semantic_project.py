@@ -109,6 +109,7 @@ class SegmentationProject:
     naming_policy: SemanticInstanceNamingPolicy = SemanticInstanceNamingPolicy()
     created_at_utc: str = ""
     updated_at_utc: str = ""
+    retired_class_ids: tuple[int, ...] = ()
     schema_version: int = SEGMENTATION_PROJECT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -134,6 +135,17 @@ class SegmentationProject:
             raise ContractValidationError("updated_at_utc cannot precede created_at_utc.")
         object.__setattr__(self, "created_at_utc", created)
         object.__setattr__(self, "updated_at_utc", updated)
+        retired: list[int] = []
+        for value in self.retired_class_ids:
+            if isinstance(value, bool) or int(value) < 0:
+                raise ContractValidationError("retired_class_ids must contain non-negative integers.")
+            retired.append(int(value))
+        if len(retired) != len(set(retired)):
+            raise ContractValidationError("retired_class_ids must be unique.")
+        active_ids = {item.class_id for item in self.class_catalog.classes}
+        if active_ids.intersection(retired):
+            raise ContractValidationError("A retired class ID cannot also be active.")
+        object.__setattr__(self, "retired_class_ids", tuple(sorted(retired)))
         if int(self.schema_version) != SEGMENTATION_PROJECT_SCHEMA_VERSION:
             raise ContractValidationError(
                 f"Unsupported segmentation-project schema version: {self.schema_version}."
@@ -182,6 +194,7 @@ class SegmentationProject:
             "created_at_utc": self.created_at_utc,
             "updated_at_utc": self.updated_at_utc,
             "naming_policy": self.naming_policy.as_dict(),
+            "retired_class_ids": list(self.retired_class_ids),
             "classes": [
                 {
                     "class_id": definition.class_id,
@@ -229,6 +242,7 @@ class SegmentationProject:
                 provenance=str(payload.get("provenance", "user_project")),
                 class_catalog=SemanticClassCatalog(tuple(classes)),
                 naming_policy=SemanticInstanceNamingPolicy.from_dict(naming_payload),
+                retired_class_ids=tuple(int(value) for value in payload.get("retired_class_ids", ())),
                 created_at_utc=str(payload["created_at_utc"]),
                 updated_at_utc=str(payload["updated_at_utc"]),
                 schema_version=int(payload.get("schema_version", SEGMENTATION_PROJECT_SCHEMA_VERSION)),
@@ -291,12 +305,19 @@ def add_project_class(
     description: str = "",
     updated_at_utc: str | None = None,
 ) -> tuple[SegmentationProject, SemanticClassDefinition]:
-    catalog, definition = project.class_catalog.with_custom_class(
-        class_name,
+    existing = project.class_catalog.by_name(class_name)
+    if existing is not None:
+        return project, existing
+    used_ids = {item.class_id for item in project.class_catalog.classes}
+    used_ids.update(project.retired_class_ids)
+    class_id = max(used_ids, default=-1) + 1
+    definition = SemanticClassDefinition(
+        class_id=class_id,
+        class_name=class_name,
+        origin=SemanticClassOrigin.CUSTOM,
         description=description,
     )
-    if catalog is project.class_catalog:
-        return project, definition
+    catalog = project.class_catalog.with_class(definition)
     return (
         replace(
             project,
@@ -352,6 +373,33 @@ def rename_project_class(
     )
 
 
+
+def retire_project_class(
+    project: SegmentationProject,
+    class_id: int,
+    *,
+    updated_at_utc: str | None = None,
+) -> SegmentationProject:
+    """Delete a non-model class while permanently reserving its stable ID.
+
+    Workspace usage must be resolved by the caller before this operation.  Model
+    ontology entries are protected and can never be deleted from a user project.
+    """
+
+    current = project.class_catalog.by_id(class_id)
+    if current is None:
+        raise ContractValidationError(f"Unknown project class_id: {class_id}.")
+    if current.origin is SemanticClassOrigin.MODEL:
+        raise ContractValidationError("Model-defined classes are protected and cannot be deleted.")
+    classes = tuple(item for item in project.class_catalog.classes if item.class_id != current.class_id)
+    retired = tuple(sorted(set(project.retired_class_ids + (current.class_id,))))
+    return replace(
+        project,
+        class_catalog=SemanticClassCatalog(classes),
+        retired_class_ids=retired,
+        updated_at_utc=updated_at_utc or _utc_now_iso(),
+    )
+
 def merge_project_catalog_into_workspace(
     workspace: SemanticWorkspace,
     project: SegmentationProject,
@@ -375,6 +423,43 @@ def merge_project_catalog_into_workspace(
         revision=workspace.revision + 1,
     )
 
+
+
+def rebind_project_catalog_to_workspace(
+    workspace: SemanticWorkspace,
+    project: SegmentationProject,
+) -> SemanticWorkspace:
+    """Rebind one project-owned workspace after class rename/retirement.
+
+    Every assigned class must remain active in the project.  Callers must clear
+    or reassign objects before retiring a class, so stale semantic identity can
+    never survive class management.
+    """
+
+    rebound_objects = []
+    for item in workspace.objects:
+        if item.class_id is None:
+            rebound_objects.append(item)
+            continue
+        definition = project.class_by_id(item.class_id)
+        if definition is None:
+            raise ContractValidationError(
+                f"Workspace object {item.object_id!r} references retired class_id {item.class_id}."
+            )
+        rebound_objects.append(
+            replace(item, class_name=definition.class_name)
+            if item.class_name != definition.class_name
+            else item
+        )
+    if workspace.class_catalog == project.class_catalog and tuple(rebound_objects) == workspace.objects:
+        return workspace
+    return SemanticWorkspace(
+        workspace_id=workspace.workspace_id,
+        frame_reference=workspace.frame_reference,
+        class_catalog=project.class_catalog,
+        objects=tuple(rebound_objects),
+        revision=workspace.revision + 1,
+    )
 
 def segmentation_project_to_json(project: SegmentationProject) -> str:
     if not isinstance(project, SegmentationProject):

@@ -26,6 +26,7 @@ from core.perception.semantic_workspace import (
     accepted_observations,
     append_workspace_mask_proposal,
     assign_workspace_class,
+    clear_workspace_class_assignment,
     merge_workspace_objects,
     replace_workspace_object_mask,
     set_workspace_review_status,
@@ -44,8 +45,16 @@ from core.perception.semantic_project import (
     load_segmentation_project,
     merge_project_catalog_into_workspace,
     rename_project_class,
+    retire_project_class,
+    rebind_project_catalog_to_workspace,
     save_segmentation_project,
     segmentation_project_to_json,
+)
+
+from core.perception.semantic_workspace_persistence import (
+    SEMANTIC_WORKSPACE_PERSISTENCE_SCHEMA_VERSION,
+    PersistedSemanticWorkspace,
+    SegmentationWorkspaceStore,
 )
 
 from core.perception.reviewed_analysis import (
