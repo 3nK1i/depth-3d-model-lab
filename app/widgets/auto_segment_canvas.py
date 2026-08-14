@@ -33,6 +33,7 @@ class AutoSegmentCanvas(QWidget):
         self._interaction_mode = "select"
         self._positive_points: tuple[tuple[float, float], ...] = ()
         self._negative_points: tuple[tuple[float, float], ...] = ()
+        self._merge_selection: tuple[str, ...] = ()
 
     @property
     def interaction_mode(self) -> str:
@@ -76,6 +77,10 @@ class AutoSegmentCanvas(QWidget):
         self.setCursor(
             Qt.CursorShape.ArrowCursor if value == "select" else Qt.CursorShape.CrossCursor
         )
+        self.update()
+
+    def set_merge_selection(self, object_ids: tuple[str, ...] = ()) -> None:
+        self._merge_selection = tuple(str(value).strip() for value in object_ids if str(value).strip())
         self.update()
 
     def set_prompt_points(
@@ -141,6 +146,14 @@ class AutoSegmentCanvas(QWidget):
                     QImage.Format.Format_RGBA8888,
                 ).copy()
                 painter.drawImage(target, overlay)
+            if item.object_id in self._merge_selection:
+                ys, xs = np.nonzero(mask)
+                if xs.size:
+                    x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
+                    p0 = self._map_point(float(x0), float(y0), target)
+                    p1 = self._map_point(float(x1 + 1), float(y1 + 1), target)
+                    painter.setPen(QPen(QColor("#43d8e8"), 2.0, Qt.PenStyle.DotLine))
+                    painter.drawRect(QRectF(p0, p1).normalized())
             if item.object_id == self._selected_id:
                 ys, xs = np.nonzero(mask)
                 if xs.size:

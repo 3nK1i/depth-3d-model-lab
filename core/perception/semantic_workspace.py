@@ -13,12 +13,19 @@ existing ``ObjectObservation`` structure so downstream consumers remain unchange
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from hashlib import sha256
 from enum import Enum
 from typing import Iterable, Mapping
 
-from core.contracts.common import FrameReference
+from core.contracts.common import FrameReference, ModelProvenance
 from core.contracts.validation import ContractValidationError, require_nonempty
-from core.perception.result import InstanceMask, ObjectObservation, PerceptionFrameResult
+from core.perception.result import (
+    DenseMaskPayload,
+    InstanceMask,
+    MaskSource,
+    ObjectObservation,
+    PerceptionFrameResult,
+)
 
 
 SEMANTIC_WORKSPACE_SCHEMA_VERSION = 1
@@ -172,6 +179,8 @@ class SemanticWorkspaceObject:
     review_status: SemanticReviewStatus = SemanticReviewStatus.PENDING
     label_confidence: float | None = None
     notes: str = ""
+    merged_from_object_ids: tuple[str, ...] = ()
+    merged_from_mask_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -217,6 +226,21 @@ class SemanticWorkspaceObject:
                 )
         object.__setattr__(self, "instance_name", str(self.instance_name).strip())
         object.__setattr__(self, "notes", str(self.notes).strip())
+        merged_objects = tuple(require_nonempty(value, field_name="merged_from_object_id") for value in self.merged_from_object_ids)
+        merged_masks = tuple(require_nonempty(value, field_name="merged_from_mask_id") for value in self.merged_from_mask_ids)
+        if bool(merged_objects) != bool(merged_masks):
+            raise ContractValidationError("Merged-object and merged-mask provenance must be present together.")
+        if merged_objects:
+            if len(merged_objects) < 2 or len(merged_masks) < 2:
+                raise ContractValidationError("A semantic merge requires at least two source objects/masks.")
+            if len(merged_objects) != len(merged_masks):
+                raise ContractValidationError("Merged-object and merged-mask provenance lengths must match.")
+            if len(set(merged_objects)) != len(merged_objects) or len(set(merged_masks)) != len(merged_masks):
+                raise ContractValidationError("Semantic merge provenance IDs must be unique.")
+            if self.object_id in merged_objects:
+                raise ContractValidationError("A merged object cannot name itself as a merge source.")
+        object.__setattr__(self, "merged_from_object_ids", merged_objects)
+        object.__setattr__(self, "merged_from_mask_ids", merged_masks)
         if self.label_confidence is not None:
             value = float(self.label_confidence)
             if not 0.0 <= value <= 1.0:
@@ -421,6 +445,141 @@ def replace_workspace_object_mask(
         revision=workspace.revision + 1,
     )
 
+
+
+def merge_workspace_objects(
+    workspace: SemanticWorkspace,
+    object_ids: Iterable[str],
+    *,
+    primary_object_id: str = "",
+) -> tuple[SemanticWorkspace, str]:
+    """Union two or more proposal-backed masks into one reviewed semantic object.
+
+    The operation is deterministic and purely semantic: no model is rerun and no
+    geometry/metric/measurement authority is created.  The primary object's class
+    and instance identity are preserved when assigned, while the merged result
+    always returns to ``PENDING`` review.
+    """
+
+    if not isinstance(workspace, SemanticWorkspace):
+        raise TypeError("workspace must be SemanticWorkspace.")
+    requested = tuple(require_nonempty(value, field_name="object_id") for value in object_ids)
+    if len(requested) < 2:
+        raise ContractValidationError("Merge requires at least two semantic workspace objects.")
+    if len(set(requested)) != len(requested):
+        raise ContractValidationError("Merge object IDs must be unique.")
+
+    requested_set = set(requested)
+    ordered = tuple(item for item in workspace.objects if item.object_id in requested_set)
+    if len(ordered) != len(requested):
+        missing = sorted(requested_set - {item.object_id for item in ordered})
+        raise ContractValidationError(f"Unknown semantic workspace merge object(s): {missing!r}.")
+    if any(item.proposal_mask is None for item in ordered):
+        raise ContractValidationError("Semantic merge currently requires proposal-backed objects.")
+
+    primary_key = str(primary_object_id).strip() or ordered[0].object_id
+    primary = next((item for item in ordered if item.object_id == primary_key), None)
+    if primary is None:
+        raise ContractValidationError("primary_object_id must be one of the merged objects.")
+
+    masks = tuple(item.proposal_mask for item in ordered)
+    assert all(mask is not None for mask in masks)
+    typed_masks = tuple(mask for mask in masks if mask is not None)
+    first = typed_masks[0]
+    first_shape = tuple(first.payload.data.shape) if isinstance(first.payload, DenseMaskPayload) else None
+    if first_shape is None:
+        raise ContractValidationError("Semantic merge requires dense boolean masks.")
+    for mask in typed_masks[1:]:
+        if mask.frame_reference != workspace.frame_reference:
+            raise ContractValidationError("All merged masks must belong to the workspace frame.")
+        if mask.pixel_space.space_id != first.pixel_space.space_id:
+            raise ContractValidationError("All merged masks must use the same pixel coordinate space.")
+        if not isinstance(mask.payload, DenseMaskPayload) or tuple(mask.payload.data.shape) != first_shape:
+            raise ContractValidationError("All merged masks must use equal-size dense boolean payloads.")
+
+    union = typed_masks[0].payload.data.copy()
+    for mask in typed_masks[1:]:
+        union = union | mask.payload.data
+    if not bool(union.any()):
+        raise ContractValidationError("Merged semantic mask must contain foreground pixels.")
+
+    source_object_ids: list[str] = []
+    source_mask_ids: list[str] = []
+    for item in ordered:
+        assert item.proposal_mask is not None
+        object_sources = item.merged_from_object_ids or (item.object_id,)
+        mask_sources = item.merged_from_mask_ids or (item.proposal_mask.mask_id,)
+        for value in object_sources:
+            if value not in source_object_ids:
+                source_object_ids.append(value)
+        for value in mask_sources:
+            if value not in source_mask_ids:
+                source_mask_ids.append(value)
+
+    digest_seed = "\x1f".join(source_mask_ids).encode("utf-8")
+    digest = sha256(digest_seed).hexdigest()[:16]
+    merged_object_id = f"merge:{digest}"
+    if workspace.object_by_id(merged_object_id) is not None and merged_object_id not in requested_set:
+        raise ContractValidationError(f"Deterministic merge object ID already exists: {merged_object_id!r}.")
+    mask_id = f"merge-mask:{digest}:r{workspace.revision + 1}"
+    provenance = ModelProvenance(
+        model_id="semantic-mask-merge",
+        display_name="Semantic Mask Merge",
+        task="semantic_merge",
+        metadata=(
+            ("source_object_ids", ",".join(source_object_ids)),
+            ("source_mask_ids", ",".join(source_mask_ids)),
+        ),
+    )
+    merged_mask = InstanceMask(
+        mask_id=mask_id,
+        frame_reference=workspace.frame_reference,
+        pixel_space=first.pixel_space,
+        payload=DenseMaskPayload(union),
+        source=MaskSource.SEMANTIC_MERGE,
+        model_provenance=provenance,
+        revision=max(mask.revision for mask in typed_masks) + 1,
+        foreground_valid=True,
+    )
+
+    if primary.class_id is None:
+        class_id = None
+        class_name = ""
+        instance_name = ""
+        label_source = SemanticLabelSource.UNASSIGNED
+    else:
+        class_id = primary.class_id
+        class_name = primary.class_name
+        instance_name = primary.instance_name
+        label_source = primary.label_source
+
+    merged = SemanticWorkspaceObject(
+        object_id=merged_object_id,
+        proposal_mask=merged_mask,
+        class_id=class_id,
+        class_name=class_name,
+        instance_name=instance_name,
+        label_source=label_source,
+        review_status=SemanticReviewStatus.PENDING,
+        label_confidence=None,
+        notes=f"Merged {len(ordered)} semantic masks.",
+        merged_from_object_ids=tuple(source_object_ids),
+        merged_from_mask_ids=tuple(source_mask_ids),
+    )
+
+    first_index = min(index for index, item in enumerate(workspace.objects) if item.object_id in requested_set)
+    remaining = [item for item in workspace.objects if item.object_id not in requested_set]
+    remaining.insert(first_index, merged)
+    return (
+        SemanticWorkspace(
+            workspace_id=workspace.workspace_id,
+            frame_reference=workspace.frame_reference,
+            class_catalog=workspace.class_catalog,
+            objects=tuple(remaining),
+            revision=workspace.revision + 1,
+        ),
+        merged_object_id,
+    )
 
 def workspace_from_perception_result(
     result: PerceptionFrameResult,

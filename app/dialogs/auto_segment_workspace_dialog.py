@@ -50,6 +50,7 @@ from core.perception.semantic_workspace import (
     SemanticWorkspace,
     append_workspace_mask_proposal,
     assign_workspace_class,
+    merge_workspace_objects,
     replace_workspace_object_mask,
     set_workspace_review_status,
     workspace_from_mask_proposals,
@@ -96,6 +97,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._prompt_positive: list[tuple[float, float]] = []
         self._prompt_negative: list[tuple[float, float]] = []
         self._prompt_target_id = ""
+        self._merge_selected_ids: set[str] = set()
 
         self._build_ui()
         self._refresh_projects()
@@ -218,6 +220,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         side.setSpacing(8)
         side.addWidget(self._build_generation_card())
         side.addWidget(self._build_prompt_card())
+        side.addWidget(self._build_merge_card())
         side.addWidget(self._build_objects_card(), stretch=1)
         side.addWidget(self._build_selected_card())
         side.addWidget(self._build_summary_card())
@@ -317,12 +320,34 @@ class AutoSegmentWorkspaceDialog(QDialog):
         layout.addLayout(apply_row)
         return card
 
+    def _build_merge_card(self) -> QFrame:
+        card, layout = self._card("MASK EDITING")
+        help_text = QLabel("Check two or more proposals below, then merge them into one deterministic semantic mask.")
+        help_text.setObjectName("autoSegmentMuted")
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+        self._merge_summary = QLabel("0 selected for merge")
+        self._merge_summary.setObjectName("autoSegmentMuted")
+        layout.addWidget(self._merge_summary)
+        row = QHBoxLayout()
+        self._merge_masks = QPushButton("Merge Selected")
+        self._merge_masks.setObjectName("autoSegmentPrimaryButton")
+        self._merge_masks.clicked.connect(self._merge_checked_objects)
+        row.addWidget(self._merge_masks, stretch=1)
+        self._clear_merge = QPushButton("Clear")
+        self._clear_merge.setObjectName("autoSegmentMiniButton")
+        self._clear_merge.clicked.connect(self._clear_merge_selection)
+        row.addWidget(self._clear_merge)
+        layout.addLayout(row)
+        return card
+
     def _build_objects_card(self) -> QFrame:
         card, layout = self._card("PROPOSALS")
         self._object_list = QListWidget()
         self._object_list.setObjectName("autoSegmentObjectList")
         self._object_list.setMinimumHeight(150)
         self._object_list.currentItemChanged.connect(self._on_list_selection)
+        self._object_list.itemChanged.connect(self._on_merge_item_changed)
         layout.addWidget(self._object_list)
         return card
 
@@ -413,6 +438,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._source_label = str(label).strip() or "Image"
         self._workspace = None
         self._selected_id = ""
+        self._merge_selected_ids.clear()
         self._clear_prompt_points()
         self._canvas.set_image(self._image_bgr)
         self._canvas.set_workspace(None)
@@ -552,6 +578,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._project_combo.setEnabled(not self._running)
         self._done.setEnabled(not self._running)
         self._refresh_prompt_controls()
+        self._sync_merge_selection()
 
     def set_progress(self, progress: int, stage: str, message: str) -> None:
         self._progress.setValue(max(0, min(100, int(progress))))
@@ -630,7 +657,9 @@ class AutoSegmentWorkspaceDialog(QDialog):
                 objects=(),
             )
         self._selected_id = ""
+        self._merge_selected_ids.clear()
         self._canvas.set_workspace(self._workspace)
+        self._canvas.set_merge_selection(())
         self._status_text.setText(f"Generated {len(self._workspace.objects)} unlabeled proposal(s). Click a mask to review it.")
         self._progress.setValue(100)
         self._refresh_all()
@@ -723,6 +752,93 @@ class AutoSegmentWorkspaceDialog(QDialog):
             self._refresh_all(keep_selection=True)
         except ContractValidationError as exc:
             QMessageBox.warning(self, "Review proposal", str(exc))
+
+    def _on_merge_item_changed(self, item: QListWidgetItem) -> None:
+        object_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        if not object_id:
+            return
+        if item.checkState() == Qt.CheckState.Checked:
+            self._merge_selected_ids.add(object_id)
+        else:
+            self._merge_selected_ids.discard(object_id)
+        self._sync_merge_selection()
+
+    def _sync_merge_selection(self) -> None:
+        if self._workspace is not None:
+            valid = {item.object_id for item in self._workspace.objects}
+            self._merge_selected_ids.intersection_update(valid)
+            ordered = tuple(
+                item.object_id for item in self._workspace.objects
+                if item.object_id in self._merge_selected_ids
+            )
+        else:
+            self._merge_selected_ids.clear()
+            ordered = ()
+        if hasattr(self, "_canvas"):
+            self._canvas.set_merge_selection(ordered)
+        if hasattr(self, "_merge_summary"):
+            count = len(ordered)
+            self._merge_summary.setText(f"{count} selected for merge")
+            self._merge_masks.setEnabled(count >= 2 and not self._running)
+            self._clear_merge.setEnabled(count > 0 and not self._running)
+
+    def _clear_merge_selection(self) -> None:
+        self._merge_selected_ids.clear()
+        if hasattr(self, "_object_list"):
+            self._object_list.blockSignals(True)
+            try:
+                for row in range(self._object_list.count()):
+                    self._object_list.item(row).setCheckState(Qt.CheckState.Unchecked)
+            finally:
+                self._object_list.blockSignals(False)
+        self._sync_merge_selection()
+
+    def _merge_checked_objects(self) -> None:
+        if self._workspace is None or self._running:
+            return
+        ordered = tuple(
+            item.object_id for item in self._workspace.objects
+            if item.object_id in self._merge_selected_ids
+        )
+        if len(ordered) < 2:
+            QMessageBox.information(self, "Merge masks", "Check at least two proposal masks to merge.")
+            return
+        primary_id = self._selected_id if self._selected_id in self._merge_selected_ids else ordered[0]
+        primary = self._workspace.object_by_id(primary_id)
+        identity = (
+            primary.instance_name or primary.class_name
+            if primary is not None and primary.class_id is not None
+            else "unlabeled merged proposal"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Merge masks",
+            f"Merge {len(ordered)} proposal masks into one {identity}?\n\n"
+            "The source proposals will be replaced and the merged result will return to Pending review.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._workspace, merged_id = merge_workspace_objects(
+                self._workspace,
+                ordered,
+                primary_object_id=primary_id,
+            )
+        except ContractValidationError as exc:
+            QMessageBox.warning(self, "Merge masks", str(exc))
+            return
+        self._merge_selected_ids.clear()
+        self._selected_id = merged_id
+        self._canvas.set_workspace(self._workspace)
+        self._canvas.set_merge_selection(())
+        self._clear_prompt_points()
+        self._status_text.setText(
+            f"Merged {len(ordered)} masks. Review the combined result and accept it again when correct."
+        )
+        self._refresh_all(keep_selection=True)
+        self.select_object(merged_id)
 
     def _begin_segment_object(self) -> None:
         if self._image_bgr is None:
@@ -958,6 +1074,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._run.setEnabled(not self._running and self._image_bgr is not None)
         self._cancel.setEnabled(self._running)
         self._refresh_prompt_controls()
+        self._sync_merge_selection()
         if keep_selection and self._selected_id:
             self._canvas.set_selected_object(self._selected_id)
 
@@ -974,6 +1091,12 @@ class AutoSegmentWorkspaceDialog(QDialog):
                 name = obj.instance_name or obj.class_name or f"Proposal {index:02d}"
                 item = QListWidgetItem(f"{state}  {name}")
                 item.setData(Qt.ItemDataRole.UserRole, obj.object_id)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if obj.object_id in self._merge_selected_ids
+                    else Qt.CheckState.Unchecked
+                )
                 self._object_list.addItem(item)
                 if obj.object_id == self._selected_id:
                     self._object_list.setCurrentItem(item)

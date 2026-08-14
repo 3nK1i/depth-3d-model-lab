@@ -26,6 +26,7 @@ from core.perception.semantic_workspace import (
     accepted_observations,
     append_workspace_mask_proposal,
     assign_workspace_class,
+    merge_workspace_objects,
     replace_workspace_object_mask,
     set_workspace_review_status,
     workspace_from_mask_proposals,

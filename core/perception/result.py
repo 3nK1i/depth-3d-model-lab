@@ -33,6 +33,7 @@ class MaskSource(str, Enum):
     PROMPTED_REFINEMENT = "prompted_refinement"
     DETECTION_BOX_FALLBACK = "detection_box_fallback"
     MANUAL_CORRECTION = "manual_correction"
+    SEMANTIC_MERGE = "semantic_merge"
 
 
 class ApprovalStatus(str, Enum):
@@ -412,7 +413,8 @@ def select_authoritative_mask(masks: tuple[InstanceMask, ...]) -> InstanceMask |
     priority = {
         MaskSource.NATIVE_INSTANCE: 0,
         MaskSource.PROMPTED_REFINEMENT: 1,
-        MaskSource.DETECTION_BOX_FALLBACK: 2,
+        MaskSource.SEMANTIC_MERGE: 2,
+        MaskSource.DETECTION_BOX_FALLBACK: 3,
     }
     automatic = [
         mask
