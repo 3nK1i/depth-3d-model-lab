@@ -21,4 +21,19 @@ from core.perception.semantic_workspace import (
     workspace_from_mask_proposals,
     workspace_from_perception_result,
 )
+
+from core.perception.semantic_project import (
+    SEGMENTATION_PROJECT_SCHEMA_VERSION,
+    SegmentationProject,
+    SegmentationProjectStore,
+    SemanticInstanceNamingPolicy,
+    add_project_class,
+    create_segmentation_project,
+    create_segmentation_project_from_model_names,
+    load_segmentation_project,
+    merge_project_catalog_into_workspace,
+    rename_project_class,
+    save_segmentation_project,
+    segmentation_project_to_json,
+)
 __all__ = [name for name in globals() if not name.startswith('_')]
