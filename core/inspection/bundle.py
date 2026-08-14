@@ -59,6 +59,9 @@ def load_inspection_bundle(bundle_dir: str | Path) -> tuple[InspectionBundleSumm
                 boxes=_pairs(value.get("boxes")),
                 measurements=tuple(value.get("measurements", ())),
                 diagnostics=_pairs(value.get("diagnostics")),
+                instance_name=str(value.get("instance_name", "")),
+                semantic_source=str(value.get("semantic_source", "perception_model")),
+                semantic_review_status=str(value.get("semantic_review_status", "")),
                 warnings=tuple(value.get("warnings", ())),
             )
         )
@@ -88,6 +91,9 @@ def load_inspection_bundle(bundle_dir: str | Path) -> tuple[InspectionBundleSumm
         calibration_validation_state=str(payload.get("calibration_validation_state", "")),
         calibration_application_mode=str(payload.get("calibration_application_mode", "")),
         calibration_rectified=bool(payload.get("calibration_rectified", False)),
+        semantic_source=str(payload.get("semantic_source", "perception_model")),
+        semantic_workspace_id=str(payload.get("semantic_workspace_id", "")),
+        semantic_workspace_revision=int(payload.get("semantic_workspace_revision", 0)),
     )
     if not summary.arrays_path.is_file():
         raise ContractValidationError(f"Inspection array archive is missing: {summary.arrays_path}")

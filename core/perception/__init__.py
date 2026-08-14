@@ -47,4 +47,15 @@ from core.perception.semantic_project import (
     save_segmentation_project,
     segmentation_project_to_json,
 )
+
+from core.perception.reviewed_analysis import (
+    ReviewedSemanticObject,
+    ReviewedSemanticSelection,
+    load_reviewed_semantic_selection,
+    perception_from_reviewed_selection,
+    reviewed_selection_from_workspace,
+    save_reviewed_semantic_selection,
+    source_image_sha256,
+)
+
 __all__ = [name for name in globals() if not name.startswith('_')]

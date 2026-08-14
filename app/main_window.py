@@ -19,6 +19,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QDialog,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -68,6 +69,10 @@ from app.widgets.source_runtime_bar import SourceRuntimeBar
 from app.widgets.viewport.viewport_panel import ViewportPanel
 from core.inspection import load_inspection_bundle
 from core.models.registry import get_model_descriptor
+from core.perception.reviewed_analysis import (
+    ReviewedSemanticSelection,
+    reviewed_selection_from_workspace,
+)
 from core.runtime.state_machine import ApplicationState
 
 MIN_WINDOW_WIDTH = 1366
@@ -170,6 +175,9 @@ class MainWindow(QMainWindow):
             self._on_reconstruction_activity_changed
         )
         self._inspection_frame: np.ndarray | None = None
+        self._reviewed_semantic_selection: ReviewedSemanticSelection | None = None
+        self._reviewed_semantic_image_bgr: np.ndarray | None = None
+        self._reviewed_semantic_source_label = ""
         self._snapshot_frame: np.ndarray | None = None
         self._stable_previous_smoothing: float | None = None
         self._snapshot_page.capture_requested.connect(self._capture_snapshot_frame)
@@ -505,6 +513,7 @@ class MainWindow(QMainWindow):
                 "No source frame is available. Connect or load a source in Live 3D first."
             )
             return
+        self._clear_reviewed_semantic_context()
         self._inspection_frame = np.array(frame.image, dtype=np.uint8, copy=True)
         self._inspection_page.set_context(
             source_available=True,
@@ -543,6 +552,13 @@ class MainWindow(QMainWindow):
                 "Stop or finish the active Live 3D inference operation before analysis."
             )
             return
+        use_reviewed = bool(configuration.get("use_reviewed_semantics", False))
+        reviewed = self._reviewed_semantic_selection if use_reviewed else None
+        if use_reviewed and reviewed is None:
+            self._inspection_page.show_failure(
+                "Reviewed-mask analysis was requested, but no accepted Auto Segment workspace is available."
+            )
+            return
         try:
             self._inspection_controller.start_analysis(
                 image_bgr=image,
@@ -554,6 +570,7 @@ class MainWindow(QMainWindow):
                 max_objects=int(configuration["max_objects"]),
                 box_method=str(configuration.get("box_method", "auto")),
                 calibration_profile=self._reconstruction_page.selected_camera_calibration_profile,
+                reviewed_semantics=reviewed,
             )
             self._mode_tabs.set_navigation_locked(True)
         except (OSError, RuntimeError, ValueError, KeyError) as exc:
@@ -580,8 +597,39 @@ class MainWindow(QMainWindow):
         self._auto_segment_controller.result_ready.connect(dialog.load_job_result)
         self._auto_segment_controller.prompt_result_ready.connect(dialog.load_prompt_result)
         self._auto_segment_controller.failure_received.connect(dialog.show_failure)
-        dialog.finished.connect(lambda _result: self._clear_auto_segment_dialog(dialog))
-        dialog.exec()
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted.value:
+            self._adopt_reviewed_semantic_context(dialog)
+        self._clear_auto_segment_dialog(dialog)
+
+    def _adopt_reviewed_semantic_context(self, dialog: AutoSegmentWorkspaceDialog) -> None:
+        workspace = dialog.workspace
+        image = dialog.source_image_bgr
+        if workspace is None or image is None or not workspace.accepted_objects:
+            self._clear_reviewed_semantic_context()
+            return
+        try:
+            selection = reviewed_selection_from_workspace(workspace, image)
+        except (TypeError, ValueError) as exc:
+            self._inspection_page.show_failure(f"Reviewed Auto Segment handoff failed: {exc}")
+            return
+        self._reviewed_semantic_selection = selection
+        self._reviewed_semantic_image_bgr = np.array(image, dtype=np.uint8, copy=True)
+        self._reviewed_semantic_source_label = dialog.source_label
+        # The reviewed masks and Analyze Frame must always refer to the exact same pixels.
+        # If the workspace opened a different image, make that image the current inspection frame.
+        self._inspection_frame = np.array(image, dtype=np.uint8, copy=True)
+        self._inspection_page.set_captured_frame(self._inspection_frame)
+        self._inspection_page.set_reviewed_semantic_context(
+            selection, source_label=self._reviewed_semantic_source_label
+        )
+
+    def _clear_reviewed_semantic_context(self) -> None:
+        self._reviewed_semantic_selection = None
+        self._reviewed_semantic_image_bgr = None
+        self._reviewed_semantic_source_label = ""
+        if hasattr(self, "_inspection_page"):
+            self._inspection_page.set_reviewed_semantic_context(None)
 
     def _clear_auto_segment_dialog(self, dialog: AutoSegmentWorkspaceDialog) -> None:
         for signal, slot in (

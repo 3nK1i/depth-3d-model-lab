@@ -13,6 +13,12 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal
 
+from core.perception.reviewed_analysis import (
+    ReviewedSemanticSelection,
+    save_reviewed_semantic_selection,
+    source_image_sha256,
+)
+
 from core.reconstruction.calibration_profile import (
     CameraCalibrationProfile,
     CameraCalibrationValidationState,
@@ -80,6 +86,7 @@ class MeasurementInspectionController(QObject):
         max_objects: int,
         box_method: str = "auto",
         calibration_profile: CameraCalibrationProfile | None = None,
+        reviewed_semantics: ReviewedSemanticSelection | None = None,
     ) -> None:
         if self.is_running:
             raise RuntimeError("An inspection analysis is already running.")
@@ -91,6 +98,16 @@ class MeasurementInspectionController(QObject):
                 raise TypeError("calibration_profile must be CameraCalibrationProfile or None.")
             if calibration_profile.validation_state is CameraCalibrationValidationState.REJECTED:
                 raise ValueError("Rejected camera-calibration profiles cannot be used for measurement inspection.")
+        if reviewed_semantics is not None:
+            if not isinstance(reviewed_semantics, ReviewedSemanticSelection):
+                raise TypeError("reviewed_semantics must be ReviewedSemanticSelection or None.")
+            if reviewed_semantics.source_image_sha256 != source_image_sha256(image):
+                raise ValueError("Reviewed semantic masks belong to a different source frame.")
+            if len(reviewed_semantics.objects) > int(max_objects):
+                raise ValueError(
+                    f"{len(reviewed_semantics.objects)} reviewed object(s) are accepted, but Objects is limited to "
+                    f"{int(max_objects)}. Increase the object limit or review fewer objects before analysis."
+                )
         self._prepare_temp()
         assert self._temp_dir is not None
         input_path = self._temp_dir / "frame.npy"
@@ -113,6 +130,11 @@ class MeasurementInspectionController(QObject):
             calibration_path = self._temp_dir / "camera_calibration_profile.json"
             save_camera_calibration_profile(calibration_profile, calibration_path)
             args += ["--calibration-profile", str(calibration_path)]
+        if reviewed_semantics is not None:
+            reviewed_path, _arrays_path = save_reviewed_semantic_selection(
+                reviewed_semantics, self._temp_dir / "reviewed_semantics"
+            )
+            args += ["--reviewed-semantics", str(reviewed_path)]
         self._result_dir = output
         self._job_log_path = self._temp_dir / "job.log"
         self._start_process(args, InspectionControllerState.RUNNING)

@@ -46,6 +46,7 @@ from core.measurement.contracts import ReliabilityLevel
 from core.reconstruction.calibration_profile import CameraCalibrationProfile
 from core.perception.metadata import PerceptionTask
 from core.perception.registry import PERCEPTION_MODEL_REGISTRY
+from core.perception.reviewed_analysis import ReviewedSemanticSelection
 
 
 class InspectionPage(QWidget):
@@ -74,6 +75,8 @@ class InspectionPage(QWidget):
         self._state = InspectionControllerState.IDLE
         self._export_running = False
         self._camera_calibration_profile: CameraCalibrationProfile | None = None
+        self._reviewed_semantics: ReviewedSemanticSelection | None = None
+        self._reviewed_semantic_source_label = ""
         self._build_ui()
         self._populate_perception_models()
         self.set_controller_state(InspectionControllerState.IDLE)
@@ -281,17 +284,73 @@ class InspectionPage(QWidget):
     def _build_semantic_workspace_card(self) -> QFrame:
         frame, layout = self._card("SEMANTIC WORKSPACE")
         detail = QLabel(
-            "Generate SAM2 mask proposals, then assign stable project classes and instance names. "
-            "Semantic review remains separate from geometry and metric authority."
+            "Review SAM2 masks and stable project classes before 3D analysis. "
+            "Reviewed masks define object membership only; depth/calibration/scale remain separate authorities."
         )
         detail.setObjectName("inspectionMuted")
         detail.setWordWrap(True)
         layout.addWidget(detail)
+        self._reviewed_semantic_status = QLabel(
+            "No accepted reviewed masks — Analyze Frame uses the selected perception model."
+        )
+        self._reviewed_semantic_status.setObjectName("inspectionMuted")
+        self._reviewed_semantic_status.setWordWrap(True)
+        layout.addWidget(self._reviewed_semantic_status)
+        self._use_reviewed_semantics = QCheckBox("Use reviewed masks for Analyze Frame")
+        self._use_reviewed_semantics.setChecked(False)
+        self._use_reviewed_semantics.setEnabled(False)
+        self._use_reviewed_semantics.toggled.connect(lambda _checked: self._apply_state())
+        layout.addWidget(self._use_reviewed_semantics)
         button = QPushButton("Open Auto Segment")
         button.setObjectName("inspectionSecondaryButton")
         button.clicked.connect(self.auto_segment_requested.emit)
         layout.addWidget(button)
         return frame
+
+    def set_reviewed_semantic_context(
+        self,
+        selection: ReviewedSemanticSelection | None,
+        *,
+        source_label: str = "",
+    ) -> None:
+        if selection is not None and not isinstance(selection, ReviewedSemanticSelection):
+            raise TypeError("selection must be ReviewedSemanticSelection or None.")
+        self._reviewed_semantics = selection
+        self._reviewed_semantic_source_label = str(source_label).strip()
+        if selection is None:
+            self._use_reviewed_semantics.blockSignals(True)
+            self._use_reviewed_semantics.setChecked(False)
+            self._use_reviewed_semantics.setEnabled(False)
+            self._use_reviewed_semantics.blockSignals(False)
+            self._reviewed_semantic_status.setText(
+                "No accepted reviewed masks — Analyze Frame uses the selected perception model."
+            )
+            self._apply_state()
+            return
+        count = len(selection.objects)
+        if count <= self._max_objects.maximum() and self._max_objects.value() < count:
+            self._max_objects.setValue(count)
+        source = f" • {self._reviewed_semantic_source_label}" if self._reviewed_semantic_source_label else ""
+        limit_note = (
+            "" if count <= self._max_objects.maximum()
+            else f" • reduce accepted objects to ≤ {self._max_objects.maximum()} before analysis"
+        )
+        self._reviewed_semantic_status.setText(
+            f"{count} accepted reviewed object(s){source}. Analyze Frame can use these masks directly and skip YOLO/perception inference{limit_note}."
+        )
+        self._use_reviewed_semantics.blockSignals(True)
+        self._use_reviewed_semantics.setEnabled(True)
+        self._use_reviewed_semantics.setChecked(True)
+        self._use_reviewed_semantics.blockSignals(False)
+        self._apply_state()
+
+    @property
+    def use_reviewed_semantics_for_analysis(self) -> bool:
+        return bool(
+            self._reviewed_semantics is not None
+            and self._use_reviewed_semantics.isEnabled()
+            and self._use_reviewed_semantics.isChecked()
+        )
 
     def _build_display_card(self) -> QFrame:
         frame, layout = self._card("DISPLAY")
@@ -533,7 +592,9 @@ class InspectionPage(QWidget):
     def _object_item_text(self, obj: InspectionObjectSummary) -> str:
         confidence = f"{obj.detection_confidence:.2f}" if obj.detection_confidence is not None else "—"
         track = f" · {obj.track_id}" if obj.track_id else ""
-        return f"{obj.object_index + 1}. {obj.class_name}  ·  {confidence}{track}\n{obj.measurement_status.upper()} · {obj.reliability_level.value.upper()}"
+        identity = obj.instance_name or obj.class_name
+        class_note = f" · {obj.class_name}" if obj.instance_name else ""
+        return f"{obj.object_index + 1}. {identity}{class_note}  ·  {confidence}{track}\n{obj.measurement_status.upper()} · {obj.reliability_level.value.upper()}"
 
     def select_object(self, observation_id: str) -> None:
         if self._summary is None:
@@ -570,6 +631,9 @@ class InspectionPage(QWidget):
         details = [
             f"Object ID: {obj.observation_id}",
             f"Class: {obj.class_name} ({obj.class_id})",
+            f"Instance: {obj.instance_name or 'not assigned'}",
+            f"Semantic source: {obj.semantic_source}",
+            f"Semantic review: {obj.semantic_review_status or 'not reviewed'}",
             f"Detection confidence: {obj.detection_confidence if obj.detection_confidence is not None else 'unavailable'}",
             f"Mask: {obj.mask_source} · revision {obj.mask_revision} · {obj.approval_status}",
             f"Extraction: {obj.extraction_status}",
@@ -654,6 +718,7 @@ class InspectionPage(QWidget):
             "perception_profile": self._profile_combo.currentText().lower(),
             "max_objects": self._max_objects.value(),
             "box_method": self.current_box_method.value,
+            "use_reviewed_semantics": self.use_reviewed_semantics_for_analysis,
         })
 
     def _emit_recompute(self) -> None:
@@ -836,7 +901,8 @@ class InspectionPage(QWidget):
         self._capture_btn.setEnabled(self._source_available and not running)
         self._analyze_btn.setEnabled(has_capture and bool(self._depth_model_id) and not running)
         self._cancel_btn.setEnabled(running)
-        self._perception_combo.setEnabled(not running)
+        use_reviewed = self.use_reviewed_semantics_for_analysis
+        self._perception_combo.setEnabled(not running and not use_reviewed)
         self._profile_combo.setEnabled(not running)
         self._max_objects.setEnabled(not running)
         self._object_list.setEnabled(has_result and not running)

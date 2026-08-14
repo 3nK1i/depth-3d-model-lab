@@ -78,6 +78,9 @@ class InspectionObjectSummary:
     boxes: tuple[tuple[str, dict[str, Any]], ...] = ()
     measurements: tuple[dict[str, Any], ...] = ()
     diagnostics: tuple[tuple[str, Any], ...] = ()
+    instance_name: str = ""
+    semantic_source: str = "perception_model"
+    semantic_review_status: str = ""
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -107,6 +110,9 @@ class InspectionObjectSummary:
         object.__setattr__(self, "boxes", tuple((str(name), dict(payload)) for name, payload in self.boxes))
         object.__setattr__(self, "measurements", tuple(dict(value) for value in self.measurements))
         object.__setattr__(self, "diagnostics", tuple((str(name), value) for name, value in self.diagnostics))
+        object.__setattr__(self, "instance_name", str(self.instance_name).strip())
+        object.__setattr__(self, "semantic_source", str(self.semantic_source).strip() or "perception_model")
+        object.__setattr__(self, "semantic_review_status", str(self.semantic_review_status).strip())
         object.__setattr__(self, "warnings", tuple(str(value).strip() for value in self.warnings if str(value).strip()))
 
     @property
@@ -164,6 +170,9 @@ class InspectionBundleSummary:
     calibration_validation_state: str = ""
     calibration_application_mode: str = ""
     calibration_rectified: bool = False
+    semantic_source: str = "perception_model"
+    semantic_workspace_id: str = ""
+    semantic_workspace_revision: int = 0
 
     def __post_init__(self) -> None:
         directory = Path(self.bundle_dir)
@@ -190,6 +199,11 @@ class InspectionBundleSummary:
         ):
             object.__setattr__(self, name, str(getattr(self, name)).strip())
         object.__setattr__(self, "calibration_rectified", bool(self.calibration_rectified))
+        object.__setattr__(self, "semantic_source", str(self.semantic_source).strip() or "perception_model")
+        object.__setattr__(self, "semantic_workspace_id", str(self.semantic_workspace_id).strip())
+        if isinstance(self.semantic_workspace_revision, bool) or int(self.semantic_workspace_revision) < 0:
+            raise ContractValidationError("semantic_workspace_revision must be a non-negative integer.")
+        object.__setattr__(self, "semantic_workspace_revision", int(self.semantic_workspace_revision))
 
     @property
     def arrays_path(self) -> Path:

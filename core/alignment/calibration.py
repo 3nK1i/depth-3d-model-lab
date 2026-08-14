@@ -51,6 +51,62 @@ class RectifiedCalibrationFrame:
         object.__setattr__(self, "warnings", tuple(str(value).strip() for value in self.warnings if str(value).strip()))
 
 
+
+def _rectification_maps(application: AppliedCameraCalibration) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return OpenCV maps for the applied calibration, or None for ideal pinhole input."""
+
+    camera = application.camera
+    model = camera.distortion_model
+    if model is CameraDistortionModel.NONE:
+        return None
+    K = np.asarray(camera.intrinsics.matrix, dtype=np.float64)
+    D = np.asarray(camera.distortion_coefficients, dtype=np.float64)
+    size = (camera.image_size.width, camera.image_size.height)
+    if model is CameraDistortionModel.BROWN_CONRADY:
+        return cv2.initUndistortRectifyMap(K, D, None, K, size, cv2.CV_32FC1)
+    if model is CameraDistortionModel.OPENCV_FISHEYE:
+        return cv2.fisheye.initUndistortRectifyMap(
+            K,
+            D.reshape(-1, 1),
+            np.eye(3, dtype=np.float64),
+            K,
+            size,
+            cv2.CV_32FC1,
+        )
+    raise ContractValidationError(
+        f"Unsupported calibration distortion model for measurement rectification: {model.value}."
+    )
+
+
+def rectify_boolean_mask_with_applied_calibration(
+    mask: np.ndarray,
+    application: AppliedCameraCalibration,
+) -> np.ndarray:
+    """Rectify one source-grid semantic mask onto the same ideal grid as calibrated RGB."""
+
+    expected = (application.target_image_size.height, application.target_image_size.width)
+    dense = np.asarray(mask, dtype=np.bool_)
+    if dense.shape != expected:
+        raise ContractValidationError(
+            f"Calibration mask shape {dense.shape} does not match applied target {expected}."
+        )
+    maps = _rectification_maps(application)
+    if maps is None:
+        output = np.array(dense, dtype=np.bool_, copy=True)
+        output.setflags(write=False)
+        return output
+    map_x, map_y = maps
+    rectified = cv2.remap(
+        dense.astype(np.uint8),
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    ).astype(np.bool_)
+    rectified.setflags(write=False)
+    return rectified
+
 def rectify_bgr_with_camera_calibration(
     image_bgr: np.ndarray,
     profile: CameraCalibrationProfile,
@@ -87,31 +143,9 @@ def rectify_bgr_with_camera_calibration(
             warnings=application.warnings,
         )
 
-    K = np.asarray(camera.intrinsics.matrix, dtype=np.float64)
-    D = np.asarray(camera.distortion_coefficients, dtype=np.float64)
-    size = (camera.image_size.width, camera.image_size.height)
-    if model is CameraDistortionModel.BROWN_CONRADY:
-        map_x, map_y = cv2.initUndistortRectifyMap(
-            K,
-            D,
-            None,
-            K,
-            size,
-            cv2.CV_32FC1,
-        )
-    elif model is CameraDistortionModel.OPENCV_FISHEYE:
-        map_x, map_y = cv2.fisheye.initUndistortRectifyMap(
-            K,
-            D.reshape(-1, 1),
-            np.eye(3, dtype=np.float64),
-            K,
-            size,
-            cv2.CV_32FC1,
-        )
-    else:  # Defensive: CameraCalibrationProfile currently rejects backend-specific distortion.
-        raise ContractValidationError(
-            f"Unsupported calibration distortion model for measurement rectification: {model.value}."
-        )
+    maps = _rectification_maps(application)
+    assert maps is not None
+    map_x, map_y = maps
 
     rectified = cv2.remap(
         image,

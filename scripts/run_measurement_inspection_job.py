@@ -36,7 +36,10 @@ from core.alignment import (
     resample_boolean_mask,
     transform_intrinsics,
 )
-from core.alignment.calibration import rectify_bgr_with_camera_calibration
+from core.alignment.calibration import (
+    rectify_bgr_with_camera_calibration,
+    rectify_boolean_mask_with_applied_calibration,
+)
 from core.contracts.common import FrameReference, ImageSize
 from core.contracts.spatial import PixelCoordinateSpace, PixelSpaceRole
 from core.inspection import ARRAYS_FILENAME, BUNDLE_FILENAME, STATE_FILENAME, InspectionBoxMethod
@@ -60,6 +63,11 @@ from core.object_geometry import (
 )
 from core.object_geometry.policy import DepthDiscontinuityPolicy, ObjectPointExtractionPolicy
 from core.perception.result import ApprovalStatus, MaskSource, PerceptionFrameResult
+from core.perception.reviewed_analysis import (
+    load_reviewed_semantic_selection,
+    perception_from_reviewed_selection,
+    source_image_sha256,
+)
 from scripts.run_real_measurement_validation import (
     _box_corners,
     _depth_preview,
@@ -87,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth-model", default="depth-pro")
     parser.add_argument("--depth-config")
     parser.add_argument("--calibration-profile", help="Phase 9 camera-calibration profile JSON")
+    parser.add_argument("--reviewed-semantics", help="Transient accepted Auto Segment semantic handoff JSON")
     parser.add_argument("--perception-model", default="ultralytics-yolo-seg")
     parser.add_argument("--depth-profile", default="efficient")
     parser.add_argument("--perception-profile", default="efficient")
@@ -283,6 +292,17 @@ def _initial_analysis(args):
     if bgr.ndim != 3 or bgr.shape[2] != 3:
         raise ValueError("Inspection input must be an HxWx3 BGR image.")
 
+    reviewed_selection = None
+    if args.reviewed_semantics:
+        reviewed_selection = load_reviewed_semantic_selection(args.reviewed_semantics)
+        if reviewed_selection.source_image_sha256 != source_image_sha256(bgr):
+            raise ValueError("Reviewed semantic masks belong to a different source frame.")
+        if len(reviewed_selection.objects) > int(args.max_objects):
+            raise ValueError(
+                f"Reviewed semantic input contains {len(reviewed_selection.objects)} object(s), "
+                f"exceeding --max-objects={int(args.max_objects)}."
+            )
+
     calibration_meta: dict[str, Any] = {
         "calibration_profile_id": "",
         "calibration_record_id": "",
@@ -336,27 +356,63 @@ def _initial_analysis(args):
     )
     rgb_space = PixelCoordinateSpace(rgb_space_id, frame, frame.source_size, PixelSpaceRole.RGB)
 
-    _event("perception", 8, "Loading the perception model")
-    perception = _run_perception(rgb, frame, rgb_space, args.perception_model, args.perception_profile)
-    observations = sorted(
-        perception.observations,
-        key=lambda observation: int(np.count_nonzero(observation.selected_mask.payload.data))
-        if observation.selected_mask is not None and hasattr(observation.selected_mask.payload, "data")
-        else 0,
-        reverse=True,
-    )
-    observations = [
-        observation for observation in observations
-        if observation.selected_mask is not None
-        and hasattr(observation.selected_mask.payload, "data")
-        and np.count_nonzero(observation.selected_mask.payload.data) >= args.minimum_mask_pixels
-    ][: max(1, args.max_objects)]
-    if not observations:
-        raise RuntimeError("No usable segmented objects were produced.")
-    perception = replace(perception, observations=tuple(observations))
-    metadata = _observation_metadata(perception)
+    if reviewed_selection is not None:
+        reviewed_masks = {item.object_id: np.asarray(item.mask, dtype=np.bool_) for item in reviewed_selection.objects}
+        transformed = False
+        if applied_calibration is not None and bool(calibration_meta["calibration_rectified"]):
+            reviewed_masks = {
+                item.object_id: np.logical_and(
+                    rectify_boolean_mask_with_applied_calibration(item.mask, applied_calibration),
+                    rectification_support,
+                )
+                for item in reviewed_selection.objects
+            }
+            transformed = True
+        too_small = [
+            item.object_id for item in reviewed_selection.objects
+            if int(np.count_nonzero(reviewed_masks[item.object_id])) < int(args.minimum_mask_pixels)
+        ]
+        if too_small:
+            raise RuntimeError(
+                "Reviewed semantic mask(s) became too small for analysis: " + ", ".join(too_small)
+            )
+        perception, metadata = perception_from_reviewed_selection(
+            reviewed_selection,
+            frame,
+            rgb_space,
+            masks_by_object_id=reviewed_masks,
+            transformed=transformed,
+        )
+        observations = list(perception.observations)
+        _event(
+            "perception",
+            8,
+            "Using accepted reviewed Auto Segment masks; perception model inference skipped",
+            object_count=len(observations),
+            workspace_id=reviewed_selection.workspace_id,
+        )
+    else:
+        _event("perception", 8, "Loading the perception model")
+        perception = _run_perception(rgb, frame, rgb_space, args.perception_model, args.perception_profile)
+        observations = sorted(
+            perception.observations,
+            key=lambda observation: int(np.count_nonzero(observation.selected_mask.payload.data))
+            if observation.selected_mask is not None and hasattr(observation.selected_mask.payload, "data")
+            else 0,
+            reverse=True,
+        )
+        observations = [
+            observation for observation in observations
+            if observation.selected_mask is not None
+            and hasattr(observation.selected_mask.payload, "data")
+            and np.count_nonzero(observation.selected_mask.payload.data) >= args.minimum_mask_pixels
+        ][: max(1, args.max_objects)]
+        if not observations:
+            raise RuntimeError("No usable segmented objects were produced.")
+        perception = replace(perception, observations=tuple(observations))
+        metadata = _observation_metadata(perception)
 
-    _event("depth", 30, "Perception released; loading the depth model", object_count=len(observations))
+    _event("depth", 30, "Semantic input ready; loading the depth model", object_count=len(observations))
     depth_result = _run_depth_configured(bgr, args.depth_model, args.depth_profile, args.depth_config)
     inference = _to_inference_result(depth_result)
     depth_space = make_depth_space(frame, inference.depth)
@@ -399,8 +455,11 @@ def _initial_analysis(args):
     return aligned, metadata, preview, {
         "depth_model_id": args.depth_model,
         "depth_model_name": aligned.depth_model_provenance.display_name,
-        "perception_model_id": args.perception_model,
+        "perception_model_id": ("reviewed-auto-segment" if reviewed_selection is not None else args.perception_model),
         "perception_model_name": perception.model_provenance[0].display_name if perception.model_provenance else args.perception_model,
+        "semantic_source": ("reviewed_auto_segment" if reviewed_selection is not None else "perception_model"),
+        "semantic_workspace_id": reviewed_selection.workspace_id if reviewed_selection is not None else "",
+        "semantic_workspace_revision": reviewed_selection.workspace_revision if reviewed_selection is not None else 0,
         **calibration_meta,
     }
 
@@ -467,6 +526,9 @@ def _write_bundle(output: Path, aligned, extraction, fitting, measurements, obse
             "observation_id": oid,
             "class_id": int(meta.get("class_id", observation.class_id)),
             "class_name": str(meta.get("class_name", observation.class_name)),
+            "instance_name": str(meta.get("instance_name", "")),
+            "semantic_source": str(meta.get("semantic_source", models.get("semantic_source", "perception_model"))),
+            "semantic_review_status": str(meta.get("semantic_review_status", "")),
             "detection_confidence": meta.get("detection_confidence"),
             "detection_box_xyxy": meta.get("detection_box_xyxy"),
             "track_id": meta.get("track_id", ""),
@@ -543,6 +605,9 @@ def _write_bundle(output: Path, aligned, extraction, fitting, measurements, obse
         "calibration_validation_state": str(models.get("calibration_validation_state", "")),
         "calibration_application_mode": str(models.get("calibration_application_mode", "")),
         "calibration_rectified": bool(models.get("calibration_rectified", False)),
+        "semantic_source": str(models.get("semantic_source", "perception_model")),
+        "semantic_workspace_id": str(models.get("semantic_workspace_id", "")),
+        "semantic_workspace_revision": int(models.get("semantic_workspace_revision", 0)),
     }
     (output / BUNDLE_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

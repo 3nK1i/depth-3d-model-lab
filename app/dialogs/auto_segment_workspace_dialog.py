@@ -117,6 +117,10 @@ class AutoSegmentWorkspaceDialog(QDialog):
     def source_image_bgr(self) -> np.ndarray | None:
         return None if self._image_bgr is None else self._image_bgr.copy()
 
+    @property
+    def source_label(self) -> str:
+        return self._source_label
+
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 12, 14, 12)
