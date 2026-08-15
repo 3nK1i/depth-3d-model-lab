@@ -109,6 +109,11 @@ from app.reconstruction_canonical_inspection_overlays import (
     build_canonical_object_inspection_overlay,
 )
 from app.reconstruction_scene_layers import build_reconstruction_scene_layer_availability
+from app.reconstruction_dense_provider_presentation import (
+    DenseProviderEntry,
+    DenseProviderPresentation,
+    build_dense_provider_presentation,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -246,6 +251,7 @@ class ReconstructionPage(QWidget):
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
+    dense_provider_presentation_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
@@ -289,6 +295,8 @@ class ReconstructionPage(QWidget):
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation: CanonicalObjectInspectionOverlayPresentation | None = None
         self._canonical_inspection_overlay_error = ""
+        self._dense_provider_presentation: DenseProviderPresentation | None = None
+        self._selected_dense_provider_id = ""
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -2941,6 +2949,66 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._scene_layers_group)
         self._refresh_scene_layer_controls()
 
+        # Phase 9.3G exposes the already-established dense/surface/depth provider
+        # provenance as a professional read-only inspector. Selecting an entry
+        # changes only which provider details are shown; it never replans the
+        # pipeline, probes an isolated runtime, or launches a backend. DA3 remains
+        # a supporting external provider until the separate 9.3H integration step.
+        self._advanced_reconstruction_group = self._settings_group("ADVANCED RECONSTRUCTION")
+        self._advanced_reconstruction_group.set_expanded(False)
+        advanced_layout = self._advanced_reconstruction_group.content_layout
+        provider_hint = QLabel(
+            "Provider inspection only • no backend launch. DA3 remains isolated and its canonical integration is Phase 9.3H."
+        )
+        provider_hint.setObjectName("reconstructionSettingsHint")
+        provider_hint.setWordWrap(True)
+        advanced_layout.addWidget(provider_hint)
+
+        provider_selector = QHBoxLayout()
+        provider_selector.setSpacing(6)
+        provider_label = QLabel("Provider")
+        provider_label.setObjectName("reconstructionRowLabel")
+        provider_selector.addWidget(provider_label)
+        self._dense_provider_combo = QComboBox()
+        self._dense_provider_combo.setObjectName("reconstructionDenseProviderCombo")
+        self._dense_provider_combo.setMinimumContentsLength(4)
+        self._dense_provider_combo.setMinimumWidth(0)
+        self._dense_provider_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._dense_provider_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._dense_provider_combo.setToolTip(
+            "Inspect persisted/known reconstruction provider provenance. Changing this selection never activates a provider."
+        )
+        self._dense_provider_combo.currentIndexChanged.connect(self._on_dense_provider_selected)
+        provider_selector.addWidget(self._dense_provider_combo, stretch=1)
+        advanced_layout.addLayout(provider_selector)
+
+        self._dense_pipeline_value = self._settings_value("No persistent reconstruction scene")
+        self._dense_role_value = self._settings_value("—")
+        self._dense_execution_value = self._settings_value("—")
+        self._dense_scene_use_value = self._settings_value("—")
+        self._dense_scale_value = self._settings_value("—")
+        self._dense_integration_value = self._settings_value("DA3 integration available in Phase 9.3H")
+        self._dense_state_value = self._settings_value("Waiting for persistent reconstruction scene")
+        self._dense_authority_value = self._settings_value("No provider authority presented")
+        self._add_status_row(advanced_layout, "Pipeline", self._dense_pipeline_value)
+        self._add_status_row(advanced_layout, "Role", self._dense_role_value)
+        self._add_status_row(advanced_layout, "Execution", self._dense_execution_value)
+        self._add_status_row(advanced_layout, "Scene use", self._dense_scene_use_value)
+        self._add_status_row(advanced_layout, "Scale", self._dense_scale_value)
+        self._add_status_row(advanced_layout, "DA3 bridge", self._dense_integration_value)
+        self._add_status_row(advanced_layout, "State", self._dense_state_value)
+        self._add_status_row(advanced_layout, "Authority", self._dense_authority_value)
+        self._dense_authority_value.setToolTip(
+            "9.3G is presentation-only. Dense/surface canonical authority and supporting depth-provider authority come from the persistent scene; visibility or provider inspection never changes them."
+        )
+        layout.addWidget(self._advanced_reconstruction_group)
+        self._refresh_dense_provider_controls()
+
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
         inspection_layout = self._offline_inspection_group.content_layout
         selector_row = QHBoxLayout()
@@ -3470,6 +3538,116 @@ class ReconstructionPage(QWidget):
         self._settings_scroll.setWidget(settings_body)
         panel_layout.addWidget(self._settings_scroll, stretch=1)
         return panel
+
+    @property
+    def dense_provider_presentation(self) -> DenseProviderPresentation | None:
+        return self._dense_provider_presentation
+
+    @property
+    def selected_dense_provider_entry(self) -> DenseProviderEntry | None:
+        presentation = self._dense_provider_presentation
+        if presentation is None:
+            return None
+        provider_id = str(self._selected_dense_provider_id).strip()
+        return next((item for item in presentation.entries if item.provider_id == provider_id), None)
+
+    def _on_dense_provider_selected(self, combo_index: int) -> None:
+        if not hasattr(self, "_dense_provider_combo"):
+            return
+        self._selected_dense_provider_id = str(
+            self._dense_provider_combo.itemData(combo_index) or ""
+        ).strip()
+        self._refresh_dense_provider_values()
+
+    def _refresh_dense_provider_controls(self) -> None:
+        if not hasattr(self, "_dense_provider_combo"):
+            return
+        previous = self._dense_provider_presentation
+        try:
+            presentation = build_dense_provider_presentation(
+                self._persistent_scene,
+                self._canonical_scene_presentation,
+            )
+        except (TypeError, ValueError) as exc:
+            self._dense_provider_presentation = None
+            self._selected_dense_provider_id = ""
+            self._dense_provider_combo.blockSignals(True)
+            self._dense_provider_combo.clear()
+            self._dense_provider_combo.addItem("Provider evidence unavailable", "")
+            self._dense_provider_combo.setEnabled(False)
+            self._dense_provider_combo.blockSignals(False)
+            self._dense_pipeline_value.setText("Provider presentation rejected")
+            self._dense_role_value.setText("—")
+            self._dense_execution_value.setText("—")
+            self._dense_scene_use_value.setText("—")
+            self._dense_scale_value.setText("—")
+            self._dense_integration_value.setText("DA3 integration remains deferred to Phase 9.3H")
+            self._dense_state_value.setText("Provider evidence unavailable")
+            self._dense_state_value.setToolTip(str(exc))
+            self._dense_authority_value.setText("No authority promoted")
+            if previous is not None:
+                self.dense_provider_presentation_changed.emit(None)
+            return
+
+        self._dense_provider_presentation = presentation
+        self._dense_provider_combo.blockSignals(True)
+        self._dense_provider_combo.clear()
+        if not presentation.available:
+            self._dense_provider_combo.addItem("No persistent scene", "")
+            self._dense_provider_combo.setEnabled(False)
+            self._selected_dense_provider_id = ""
+        else:
+            for entry in presentation.entries:
+                label = f"{entry.label} • {entry.provider_id}"
+                self._dense_provider_combo.addItem(label, entry.provider_id)
+            self._dense_provider_combo.setEnabled(bool(presentation.entries))
+            if not any(
+                item.provider_id == self._selected_dense_provider_id
+                for item in presentation.entries
+            ):
+                self._selected_dense_provider_id = (
+                    presentation.entries[0].provider_id if presentation.entries else ""
+                )
+            index = self._dense_provider_combo.findData(self._selected_dense_provider_id)
+            if index >= 0:
+                self._dense_provider_combo.setCurrentIndex(index)
+        self._dense_provider_combo.blockSignals(False)
+        self._refresh_dense_provider_values()
+        if presentation != previous:
+            self.dense_provider_presentation_changed.emit(presentation)
+
+    def _refresh_dense_provider_values(self) -> None:
+        if not hasattr(self, "_dense_pipeline_value"):
+            return
+        presentation = self._dense_provider_presentation
+        if presentation is None:
+            return
+        self._dense_pipeline_value.setText(presentation.pipeline_text)
+        self._dense_scale_value.setText(presentation.scale_text)
+        self._dense_integration_value.setText(presentation.integration_text)
+        entry = self.selected_dense_provider_entry
+        if entry is None:
+            self._dense_role_value.setText("—")
+            self._dense_execution_value.setText("—")
+            self._dense_scene_use_value.setText("—")
+            self._dense_state_value.setText(
+                "Waiting for persistent reconstruction scene"
+                if not presentation.available
+                else "Provider not selected"
+            )
+            self._dense_authority_value.setText(presentation.authority_text)
+            return
+        self._dense_role_value.setText(entry.role_text)
+        self._dense_execution_value.setText(entry.execution_text)
+        self._dense_scene_use_value.setText(entry.scene_use_text)
+        self._dense_state_value.setText(entry.state_text)
+        self._dense_state_value.setToolTip(
+            f"Provider ID: {entry.provider_id}\n"
+            f"Scene bound: {entry.scene_bound}\n"
+            f"External: {entry.external}\n"
+            "9.3G selection is inspection-only and never launches a provider."
+        )
+        self._dense_authority_value.setText(entry.authority_text)
 
     @staticmethod
     def _card(title_text: str) -> QFrame:
@@ -5386,6 +5564,7 @@ class ReconstructionPage(QWidget):
         self._persisted_metric_assessment = None
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
+        self._refresh_dense_provider_controls()
         self._refresh_canonical_geometry_viewer()
         self._refresh_canonical_camera_viewer()
         self._refresh_scene_layer_controls()
@@ -5441,6 +5620,7 @@ class ReconstructionPage(QWidget):
             self.clear_camera_calibration_profile()
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
+        self._refresh_dense_provider_controls()
         self._apply_canonical_viewer_status()
 
     def set_checkpoint(self, checkpoint, manifest_path: str) -> None:
