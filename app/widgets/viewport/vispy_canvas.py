@@ -1307,6 +1307,7 @@ class ReconstructionCanvas(QObject):
         scene_id: str,
         semantic_artifact_id: str,
         canonical_artifact_id: str,
+        preserve_selected_mesh_visual: bool = False,
     ) -> None:
         """Load validated 9.3D semantic membership for canonical presentation.
 
@@ -1362,7 +1363,10 @@ class ReconstructionCanvas(QObject):
             normalized_vertices.append(np.ascontiguousarray(vertices, dtype=np.float32))
             normalized_faces.append(np.ascontiguousarray(faces, dtype=np.uint32))
 
-        self.clear_canonical_semantic_objects(update_canvas=False)
+        self.clear_canonical_semantic_objects(
+            update_canvas=False,
+            preserve_selected_mesh_visual=preserve_selected_mesh_visual,
+        )
         self._canonical_semantic_loaded = bool(count)
         self._canonical_semantic_scene_id = scene_id
         self._canonical_semantic_artifact_id = semantic_artifact_id
@@ -1385,13 +1389,20 @@ class ReconstructionCanvas(QObject):
             self._refresh_selected_canonical_semantic_object()
         self._canvas.update()
 
-    def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+    def clear_canonical_semantic_objects(
+        self,
+        *,
+        update_canvas: bool = True,
+        preserve_selected_mesh_visual: bool = False,
+    ) -> None:
         self.clear_canonical_inspection_overlay(update_canvas=False)
         self._canonical_semantic_labels.visible = False
         self._canonical_semantic_labels.text = ""
         self._selected_canonical_semantic_label.visible = False
         self._selected_canonical_semantic_label.text = ""
-        self._clear_selected_canonical_semantic_mesh()
+        self._clear_selected_canonical_semantic_mesh(
+            preserve_visual=preserve_selected_mesh_visual
+        )
         self._canonical_semantic_loaded = False
         self._canonical_semantic_scene_id = ""
         self._canonical_semantic_artifact_id = ""
@@ -1470,10 +1481,16 @@ class ReconstructionCanvas(QObject):
             and self._canonical_inspection_overlay_scene_id == self._canonical_semantic_scene_id
         )
 
-    def _clear_selected_canonical_semantic_mesh(self) -> None:
+    def _clear_selected_canonical_semantic_mesh(self, *, preserve_visual: bool = False) -> None:
         # Match the qualified 9.3B MeshVisual lifecycle: never submit a zero-
         # vertex mesh to VisPy, because MeshData bounds reduction may crash.
+        # An exact same-scene rebind may safely keep the previous non-empty
+        # MeshVisual hidden until new non-empty membership is validated and
+        # written in place. Genuine clear/different-scene paths still detach
+        # and recreate the node so stale semantic geometry cannot survive.
         self._selected_canonical_semantic_mesh.visible = False
+        if preserve_visual and self._selected_canonical_semantic_surface_loaded:
+            return
         if self._selected_canonical_semantic_surface_loaded:
             self._selected_canonical_semantic_mesh.parent = None
             self._selected_canonical_semantic_mesh = scene.visuals.Mesh(
@@ -1499,7 +1516,6 @@ class ReconstructionCanvas(QObject):
     def _refresh_selected_canonical_semantic_object(self) -> None:
         self._selected_canonical_semantic_label.visible = False
         self._selected_canonical_semantic_label.text = ""
-        self._clear_selected_canonical_semantic_mesh()
         index = self._selected_semantic_object_index
         if (
             index is None
@@ -1507,10 +1523,12 @@ class ReconstructionCanvas(QObject):
             or index < 0
             or index >= len(self._canonical_semantic_object_ids)
         ):
+            self._clear_selected_canonical_semantic_mesh()
             return
         if index >= len(self._semantic_object_ids) or (
             self._canonical_semantic_object_ids[index] != self._semantic_object_ids[index]
         ):
+            self._clear_selected_canonical_semantic_mesh()
             return
 
         self._selected_canonical_semantic_label.text = self._canonical_semantic_labels_text[index]
@@ -1523,11 +1541,17 @@ class ReconstructionCanvas(QObject):
         vertices = self._canonical_semantic_surface_vertices[index]
         faces = self._canonical_semantic_surface_faces[index]
         if vertices.shape[0] and faces.shape[0]:
+            # Switching directly between two valid non-empty object surfaces does
+            # not require the 9.3B empty-mesh clear lifecycle. Reuse the existing
+            # MeshVisual and replace its non-empty data in place; detach/recreate is
+            # reserved for a genuine clear/unavailable surface.
             self._selected_canonical_semantic_mesh.set_data(vertices=vertices, faces=faces)
             self._selected_canonical_semantic_surface_loaded = True
             self._selected_canonical_semantic_mesh.visible = bool(
                 master and self._canonical_semantic_selection_layer_visible
             )
+        else:
+            self._clear_selected_canonical_semantic_mesh()
 
     def set_semantic_objects(
         self,

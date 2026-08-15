@@ -115,6 +115,11 @@ from app.reconstruction_dense_provider_presentation import (
     DenseProviderPresentation,
     build_dense_provider_presentation,
 )
+from app.reconstruction_scene_runtime_health import (
+    ReconstructionSceneRuntimeHealth,
+    build_reconstruction_scene_bind_plan,
+    build_reconstruction_scene_runtime_health,
+)
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -299,6 +304,13 @@ class ReconstructionPage(QWidget):
         self._canonical_inspection_overlay_error = ""
         self._dense_provider_presentation: DenseProviderPresentation | None = None
         self._selected_dense_provider_id = ""
+        self._scene_runtime_health: ReconstructionSceneRuntimeHealth | None = None
+        self._scene_bind_count = 0
+        self._same_scene_reload_count = 0
+        self._last_scene_bind_latency_ms = 0.0
+        self._last_scene_mesh_visual_reused = False
+        self._last_scene_view_preserved = False
+        self._last_scene_selection_preserved = False
         self._offline_sparse_export_source: OfflineSparseExportSource | None = None
         self._canonical_surface_export_source: CanonicalSurfaceMeshExportSource | None = None
         self._inspection_qc_export_source: InspectionReportExportSource | None = None
@@ -1819,29 +1831,37 @@ class ReconstructionPage(QWidget):
                 "metrology is not certified."
             )
 
-    def _refresh_canonical_geometry_viewer(self) -> None:
-        """Load/clear the persisted canonical surface without changing scene authority."""
+    def _refresh_canonical_geometry_viewer(self, *, fit_scene: bool = True) -> bool:
+        """Load/replace the persisted canonical surface without changing scene authority.
 
-        self._reconstruction_canvas.clear_canonical_mesh()
+        9.3I validates/materializes the replacement before clearing the active non-empty
+        MeshVisual. Successful scene-to-scene replacement can therefore reuse the existing
+        VisPy node and avoid one detach/recreate allocation cycle.
+        """
+
+        was_loaded = self._reconstruction_canvas.canonical_mesh_loaded
         self._canonical_viewer_mesh = None
         self._canonical_viewer_error = ""
         scene = self._persistent_scene
         if scene is None:
+            self._reconstruction_canvas.clear_canonical_mesh()
             self._refresh_viewport_state()
-            return
+            return False
 
         presentation = self._canonical_scene_presentation
         if presentation is None or not presentation.viewer_resource_ready:
+            self._reconstruction_canvas.clear_canonical_mesh()
             self._apply_canonical_viewer_status()
             self._refresh_viewport_state()
-            return
+            return False
 
         try:
             mesh = load_canonical_viewer_mesh(scene)
             if mesh is None:
+                self._reconstruction_canvas.clear_canonical_mesh()
                 self._apply_canonical_viewer_status()
                 self._refresh_viewport_state()
-                return
+                return False
             self._reconstruction_canvas.set_canonical_mesh(
                 vertices_viewer=mesh.vertices_viewer,
                 faces=mesh.faces,
@@ -1858,7 +1878,7 @@ class ReconstructionPage(QWidget):
             self._viewport_state.setText("Canonical surface unavailable")
             self._viewport_state.setToolTip(str(exc))
             self._apply_canonical_viewer_status()
-            return
+            return False
 
         self._canonical_viewer_mesh = mesh
         self._viewport_placeholder.setVisible(False)
@@ -1867,15 +1887,17 @@ class ReconstructionPage(QWidget):
             f"Persistent canonical surface: {mesh.vertex_count:,} vertices, {mesh.face_count:,} faces. "
             "Viewer coordinates are presentation-only; persistent canonical geometry remains authoritative."
         )
-        self._reconstruction_canvas.fit_scene()
-        self._visualizer_fitted_once = True
+        if fit_scene:
+            self._reconstruction_canvas.fit_scene()
+            self._visualizer_fitted_once = True
         self._apply_canonical_viewer_status()
+        return bool(was_loaded and self._reconstruction_canvas.canonical_mesh_loaded)
 
     @property
     def canonical_camera_presentation(self) -> CanonicalCameraTrajectoryPresentation | None:
         return self._canonical_camera_presentation
 
-    def _refresh_canonical_camera_viewer(self) -> None:
+    def _refresh_canonical_camera_viewer(self, *, fit_scene: bool = True) -> None:
         """Bind only explicitly persisted camera poses to the canonical scene viewer."""
 
         self._reconstruction_canvas.clear_canonical_camera_trajectory()
@@ -1961,18 +1983,23 @@ class ReconstructionPage(QWidget):
             "Phase 9.3C camera frustums and trajectory are loaded from explicitly persisted "
             "T_reconstruction_from_camera evidence. No camera pose or metric scale is invented."
         )
-        self._reconstruction_canvas.fit_scene()
-        self._visualizer_fitted_once = True
+        if fit_scene:
+            self._reconstruction_canvas.fit_scene()
+            self._visualizer_fitted_once = True
         self.canonical_camera_presentation_changed.emit(presentation)
 
     @property
     def canonical_semantic_presentation(self) -> CanonicalSemanticScenePresentation | None:
         return self._canonical_semantic_presentation
 
-    def _refresh_canonical_semantic_viewer(self) -> None:
+    def _refresh_canonical_semantic_viewer(
+        self, *, preserve_selected_mesh_visual: bool = False
+    ) -> None:
         """Bind persisted 3D semantic membership to the loaded canonical mesh."""
 
-        self._reconstruction_canvas.clear_canonical_semantic_objects()
+        self._reconstruction_canvas.clear_canonical_semantic_objects(
+            preserve_selected_mesh_visual=preserve_selected_mesh_visual
+        )
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation = None
@@ -2034,6 +2061,7 @@ class ReconstructionPage(QWidget):
                 scene_id=presentation.scene_id,
                 semantic_artifact_id=presentation.semantic_artifact_id,
                 canonical_artifact_id=presentation.canonical_artifact_id,
+                preserve_selected_mesh_visual=preserve_selected_mesh_visual,
             )
         except (TypeError, ValueError) as exc:
             self._reconstruction_canvas.clear_canonical_semantic_objects()
@@ -2952,6 +2980,31 @@ class ReconstructionPage(QWidget):
         )
         layout.addWidget(self._scene_layers_group)
         self._refresh_scene_layer_controls()
+
+        # Phase 9.3I exposes bounded UI-side bind/resource diagnostics only.
+        # These values measure presentation work already performed in this process;
+        # they never probe a backend or change geometry/metric authority.
+        self._scene_health_group = self._settings_group("SCENE HEALTH")
+        self._scene_health_group.set_expanded(False)
+        health_layout = self._scene_health_group.content_layout
+        health_hint = QLabel(
+            "UI bind/resource diagnostics only • no backend benchmark or authority promotion."
+        )
+        health_hint.setObjectName("reconstructionSettingsHint")
+        health_hint.setWordWrap(True)
+        health_layout.addWidget(health_hint)
+        self._scene_health_bind_value = self._settings_value("No persistent scene")
+        self._scene_health_resources_value = self._settings_value("No canonical viewer resources")
+        self._scene_health_lifecycle_value = self._settings_value("Idle • no scene-bound resources")
+        self._scene_health_authority_value = self._settings_value(
+            "Diagnostics only • no scene authority"
+        )
+        self._add_status_row(health_layout, "Bind", self._scene_health_bind_value)
+        self._add_status_row(health_layout, "Resources", self._scene_health_resources_value)
+        self._add_status_row(health_layout, "Lifecycle", self._scene_health_lifecycle_value)
+        self._add_status_row(health_layout, "Authority", self._scene_health_authority_value)
+        layout.addWidget(self._scene_health_group)
+        self._refresh_scene_runtime_health()
 
         # Phase 9.3G established the read-only provider inspector. Phase 9.3H
         # adds an explicit source-driven DA3 integration action while preserving
@@ -3960,6 +4013,69 @@ class ReconstructionPage(QWidget):
             toggle = self._scene_layer_toggles.get(key)
             if toggle is not None:
                 toggle.setEnabled(True)
+
+    @property
+    def scene_runtime_health(self) -> ReconstructionSceneRuntimeHealth | None:
+        return self._scene_runtime_health
+
+    def _refresh_scene_runtime_health(self) -> None:
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        scene = self._persistent_scene
+        if canvas is None:
+            return
+        health = build_reconstruction_scene_runtime_health(
+            scene_id=str(getattr(scene, "scene_id", "")).strip() if scene is not None else "",
+            bind_latency_ms=self._last_scene_bind_latency_ms,
+            bind_count=self._scene_bind_count,
+            same_scene_reload_count=self._same_scene_reload_count,
+            canonical_vertex_count=canvas.canonical_mesh_vertex_count,
+            canonical_face_count=canvas.canonical_mesh_face_count,
+            canonical_camera_count=canvas.canonical_camera_count,
+            semantic_object_count=canvas.semantic_object_count,
+            mesh_visual_reused=self._last_scene_mesh_visual_reused,
+            view_preserved=self._last_scene_view_preserved,
+            selection_preserved=self._last_scene_selection_preserved,
+            canonical_geometry_authoritative=bool(
+                getattr(scene, "canonical_geometry_authoritative", False)
+            ) if scene is not None else False,
+        )
+        self._scene_runtime_health = health
+        if not hasattr(self, "_scene_health_bind_value"):
+            return
+        self._scene_health_bind_value.setText(health.bind_text)
+        self._scene_health_resources_value.setText(health.resources_text)
+        self._scene_health_lifecycle_value.setText(health.lifecycle_text)
+        self._scene_health_authority_value.setText(health.authority_text)
+        self._scene_health_bind_value.setToolTip(
+            "UI-side persistent-scene presentation binding time only. This is not reconstruction, DA3, GPU, or backend performance."
+        )
+        self._scene_health_resources_value.setToolTip(
+            "Counts reflect currently materialized viewer resources after bounded presentation limits; they do not change scene authority."
+        )
+        self._scene_health_lifecycle_value.setToolTip(
+            "9.3I preserves camera/selection on exact same-scene reloads and performs one final Fit only for a different scene."
+        )
+        self._scene_health_authority_value.setToolTip(
+            "Scene-health diagnostics are presentation-only and never establish geometry, metric scale, measurement, QC, or certified-metrology authority."
+        )
+
+    def _record_scene_bind_runtime_health(
+        self,
+        *,
+        started_at: float,
+        same_scene_reload: bool,
+        mesh_visual_reused: bool,
+        view_preserved: bool,
+        selection_preserved: bool,
+    ) -> None:
+        self._scene_bind_count += 1
+        if same_scene_reload:
+            self._same_scene_reload_count += 1
+        self._last_scene_bind_latency_ms = max(0.0, (monotonic() - float(started_at)) * 1000.0)
+        self._last_scene_mesh_visual_reused = bool(mesh_visual_reused)
+        self._last_scene_view_preserved = bool(view_preserved)
+        self._last_scene_selection_preserved = bool(selection_preserved)
+        self._refresh_scene_runtime_health()
 
     @staticmethod
     def _settings_group(title_text: str) -> ReconstructionSettingsDisclosureGroup:
@@ -5763,21 +5879,36 @@ class ReconstructionPage(QWidget):
         self._refresh_viewport_state()
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
+        bind_started = monotonic()
+        previous_scene_id = (
+            str(getattr(self._persistent_scene, "scene_id", "")).strip()
+            if self._persistent_scene is not None
+            else ""
+        )
+        next_scene_id = str(getattr(scene, "scene_id", "")).strip() if scene is not None else ""
+        selected_before = str(self._reconstruction_canvas.selected_semantic_object_id or "").strip()
+        bind_plan = build_reconstruction_scene_bind_plan(
+            previous_scene_id,
+            next_scene_id,
+            selected_object_id=selected_before,
+        )
+
         self._hide_gaussian_preview()
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""
-        # Phase 9.3D semantic surface membership is scene-bound. Clear it before
-        # changing scene identity so no stale object highlight/label can survive
-        # while the next canonical mesh is being loaded.
-        self._reconstruction_canvas.clear_canonical_semantic_objects()
+        # Semantic/camera resources remain scene-bound. Clear them before changing
+        # identity, but keep the current non-empty canonical MeshVisual alive until
+        # the replacement resource has been validated. 9.3I then overwrites that
+        # node in place on success instead of detach/recreate churn. Exact same-scene
+        # semantic rebinding also keeps the non-empty selected highlight visual hidden
+        # and reuses it once the persisted membership is validated again.
+        self._reconstruction_canvas.clear_canonical_semantic_objects(
+            preserve_selected_mesh_visual=bind_plan.same_scene_reload
+        )
         self._canonical_semantic_presentation = None
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation = None
         self._canonical_inspection_overlay_error = ""
-        # Clear persistent camera visuals before changing the scene identity so
-        # the 9.3B surface fit can never include stale camera positions from the
-        # previously loaded scene. The camera presentation is rebuilt below only
-        # from the new scene's explicitly persisted evidence.
         self._reconstruction_canvas.clear_canonical_camera_trajectory()
         self._canonical_camera_presentation = None
         self._canonical_camera_error = ""
@@ -5791,14 +5922,15 @@ class ReconstructionPage(QWidget):
         self._refresh_camera_authority()
         self._refresh_canonical_scene_presentation()
         self._refresh_dense_provider_controls()
-        self._refresh_canonical_geometry_viewer()
-        self._refresh_canonical_camera_viewer()
+        mesh_visual_reused = self._refresh_canonical_geometry_viewer(fit_scene=False)
+        self._refresh_canonical_camera_viewer(fit_scene=False)
         self._refresh_scene_layer_controls()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
+
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
             self.clear_reconstruction_measurement_evidence()
@@ -5806,22 +5938,63 @@ class ReconstructionPage(QWidget):
             self.clear_reconstruction_reference_comparison()
             self._reset_semantic_presentation()
             self._refresh_inspection_selection()
-            return
-        path = Path(manifest_path).name if manifest_path else "Persistent scene ready"
-        self._scene_manifest_value.setText(path)
-        try:
-            presentation = semantic_presentation_from_persistent_scene(scene)
-        except (TypeError, ValueError) as exc:
-            self._reset_semantic_presentation(hide=False)
-            self._semantic_structure_value.setText("Semantic context unavailable")
-            self._semantic_structure_value.setToolTip(str(exc))
-            return
-        if presentation is None:
-            self._reset_semantic_presentation()
-            return
-        self._apply_semantic_presentation(presentation)
-        self._refresh_canonical_semantic_viewer()
-        self._refresh_scene_layer_controls()
+        else:
+            path = Path(manifest_path).name if manifest_path else "Persistent scene ready"
+            self._scene_manifest_value.setText(path)
+            try:
+                presentation = semantic_presentation_from_persistent_scene(scene)
+            except (TypeError, ValueError) as exc:
+                self._reset_semantic_presentation(hide=False)
+                self._semantic_structure_value.setText("Semantic context unavailable")
+                self._semantic_structure_value.setToolTip(str(exc))
+            else:
+                if presentation is None:
+                    self._reset_semantic_presentation()
+                else:
+                    self._apply_semantic_presentation(presentation)
+                    self._refresh_canonical_semantic_viewer(
+                        preserve_selected_mesh_visual=bind_plan.same_scene_reload
+                    )
+                    preserve_id = bind_plan.preserve_selected_object_id
+                    if preserve_id:
+                        for index, item in enumerate(presentation.objects):
+                            if item.object_id == preserve_id:
+                                self._semantic_object_combo.setCurrentIndex(index + 1)
+                                break
+                    self._refresh_scene_layer_controls()
+
+        # 9.3B/9.3C previously fitted once for mesh and again for camera context.
+        # 9.3I performs one final Fit only after a different scene is fully bound;
+        # an exact same-scene reload preserves the user's current orbit/pan/zoom.
+        if bind_plan.fit_after_bind and (
+            self._reconstruction_canvas.canonical_mesh_loaded
+            or self._reconstruction_canvas.canonical_camera_loaded
+        ):
+            self._reconstruction_canvas.fit_scene()
+            self._visualizer_fitted_once = True
+
+        selection_preserved = bool(
+            bind_plan.preserve_selected_object_id
+            and self._reconstruction_canvas.selected_semantic_object_id
+            == bind_plan.preserve_selected_object_id
+        )
+        # Count only real persistent-scene binds. Controller attachment and an
+        # explicit scene clear both call set_persistent_scene(None, ...); those
+        # are lifecycle transitions, not scene binds, and must not inflate the
+        # user-facing bind/reload diagnostics.
+        if next_scene_id:
+            self._record_scene_bind_runtime_health(
+                started_at=bind_started,
+                same_scene_reload=bind_plan.same_scene_reload,
+                mesh_visual_reused=mesh_visual_reused,
+                view_preserved=bind_plan.preserve_view,
+                selection_preserved=selection_preserved,
+            )
+        else:
+            self._last_scene_mesh_visual_reused = False
+            self._last_scene_view_preserved = False
+            self._last_scene_selection_preserved = False
+            self._refresh_scene_runtime_health()
 
     def set_persistent_authority_snapshot(
         self,

@@ -148,7 +148,9 @@ def test_3b_real_vispy_canvas_contract_uses_one_mesh_visual_and_page_loader() ->
     assert "self._canonical_mesh_bounds_max" in canvas_source
     assert "self.clear_canonical_mesh(update_canvas=False)" in canvas_source
     assert "load_canonical_viewer_mesh(scene)" in page_source
-    assert "_refresh_canonical_geometry_viewer()" in page_source
+    # Phase 9.3I keeps the established loader path but defers Fit until all
+    # scene resources are bound so mesh+camera loading produces one final Fit.
+    assert "_refresh_canonical_geometry_viewer(fit_scene=False)" in page_source
     assert "SurfaceMeshResult(" not in page_source
 
 

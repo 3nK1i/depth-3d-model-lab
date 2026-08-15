@@ -586,6 +586,7 @@ def _install_fake_vispy_canvas() -> None:
             scene_id: str,
             semantic_artifact_id: str,
             canonical_artifact_id: str,
+            preserve_selected_mesh_visual: bool = False,
         ) -> None:
             ids = tuple(str(value).strip() for value in object_ids)
             labels = tuple(str(value).strip() for value in labels)
@@ -605,7 +606,10 @@ def _install_fake_vispy_canvas() -> None:
                 raise ValueError("Canonical semantic labels and positions must match object_ids.")
             if len(vertices) != count or len(faces) != count:
                 raise ValueError("Canonical semantic surface arrays must match object_ids.")
-            self.clear_canonical_semantic_objects(update_canvas=False)
+            self.clear_canonical_semantic_objects(
+                update_canvas=False,
+                preserve_selected_mesh_visual=preserve_selected_mesh_visual,
+            )
             self._canonical_semantic_loaded = bool(count)
             self._canonical_semantic_scene_id = str(scene_id)
             self._canonical_semantic_artifact_id = str(semantic_artifact_id)
@@ -621,7 +625,12 @@ def _install_fake_vispy_canvas() -> None:
             if self._selected_semantic_object_index is not None:
                 self._refresh_selected_canonical_semantic_state()
 
-        def clear_canonical_semantic_objects(self, *, update_canvas: bool = True) -> None:
+        def clear_canonical_semantic_objects(
+            self,
+            *,
+            update_canvas: bool = True,
+            preserve_selected_mesh_visual: bool = False,
+        ) -> None:
             self.clear_canonical_inspection_overlay(update_canvas=False)
             self._canonical_semantic_loaded = False
             self._canonical_semantic_scene_id = ""

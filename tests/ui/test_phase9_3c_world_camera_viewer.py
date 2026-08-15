@@ -101,7 +101,9 @@ def test_3c_persistent_scene_renders_world_frame_camera_frustums_and_trajectory(
     assert "frustums + trajectory" in page._canonical_scene_cameras_value.text()
     assert page._viewport_state.text() == "Canonical scene • cameras + trajectory"
     assert page._viewport_safety.text() == "VIEWER Z-UP • ARBITRARY GAUGE"
-    assert canvas.fit_calls >= 2
+    # Phase 9.3I coalesces the former mesh-fit + camera-fit pair into one
+    # final Fit after the complete canonical scene is bound.
+    assert canvas.fit_calls == 1
     window.close()
 
 
