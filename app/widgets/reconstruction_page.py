@@ -181,6 +181,10 @@ from app.reconstruction_digital_twin_workspace import (
     DigitalTwinWorkspacePresentation,
     build_digital_twin_workspace_presentation,
 )
+from app.reconstruction_digital_twin_composition import (
+    DigitalTwinSceneComposition,
+    build_digital_twin_scene_composition,
+)
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -321,6 +325,7 @@ class ReconstructionPage(QWidget):
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
     digital_twin_workspace_changed = pyqtSignal(object)
+    digital_twin_scene_composition_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -441,6 +446,7 @@ class ReconstructionPage(QWidget):
         self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
         self._appearance_fallback_reason = ""
         self._digital_twin_workspace_presentation: DigitalTwinWorkspacePresentation | None = None
+        self._digital_twin_scene_composition: DigitalTwinSceneComposition | None = None
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
@@ -2093,6 +2099,55 @@ class ReconstructionPage(QWidget):
     def digital_twin_workspace_presentation(self) -> DigitalTwinWorkspacePresentation | None:
         return self._digital_twin_workspace_presentation
 
+    @property
+    def digital_twin_scene_composition(self) -> DigitalTwinSceneComposition | None:
+        return self._digital_twin_scene_composition
+
+    def _refresh_digital_twin_scene_composition(self) -> None:
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        previous = self._digital_twin_scene_composition
+        try:
+            composition = build_digital_twin_scene_composition(
+                self._canonical_scene_presentation,
+                canonical_surface_loaded=bool(canvas and canvas.canonical_mesh_loaded),
+                canonical_surface_visible=bool(canvas and canvas.canonical_mesh_visible),
+                semantic_presentation=self._canonical_semantic_presentation,
+                semantic_visible=bool(canvas and canvas.semantic_objects_visible),
+                camera_presentation=self._canonical_camera_presentation,
+                camera_visible=bool(
+                    canvas
+                    and (
+                        canvas.canonical_camera_frustums_visible
+                        or canvas.canonical_camera_trajectory_visible
+                    )
+                ),
+                appearance_presentation=self._appearance_presentation,
+                active_view_representation=self.active_view_representation,
+                gaussian_visible=bool(self.interactive_gaussian_visible or self.gaussian_preview_visible),
+                nerf_visible=bool(self.interactive_nerf_visible or self.nerf_preview_visible),
+            )
+        except (TypeError, ValueError) as exc:
+            self._digital_twin_scene_composition = None
+            if hasattr(self, "_digital_twin_composition_value"):
+                self._digital_twin_composition_value.setText(
+                    "Composition unavailable • canonical authority retained"
+                )
+                self._digital_twin_composition_value.setToolTip(str(exc))
+            if previous is not None:
+                self.digital_twin_scene_composition_changed.emit(None)
+            return
+
+        self._digital_twin_scene_composition = composition
+        if hasattr(self, "_digital_twin_composition_value"):
+            self._digital_twin_composition_value.setText(composition.composition_text)
+            self._digital_twin_composition_value.setToolTip(
+                composition.visibility_text
+                + "\n"
+                + composition.authority_text
+            )
+        if composition != previous:
+            self.digital_twin_scene_composition_changed.emit(composition)
+
     def _refresh_digital_twin_workspace_presentation(self) -> None:
         canvas = getattr(self, "_reconstruction_canvas", None)
         try:
@@ -2125,6 +2180,7 @@ class ReconstructionPage(QWidget):
                 )
             if previous is not None:
                 self.digital_twin_workspace_changed.emit(None)
+            self._refresh_digital_twin_scene_composition()
             return
 
         changed = presentation != self._digital_twin_workspace_presentation
@@ -2144,6 +2200,7 @@ class ReconstructionPage(QWidget):
             self._digital_twin_safety_value.setText(presentation.safety_text)
         if changed:
             self.digital_twin_workspace_changed.emit(presentation)
+        self._refresh_digital_twin_scene_composition()
 
     @property
     def canonical_scene_presentation(self) -> CanonicalScenePresentation | None:
@@ -5441,6 +5498,10 @@ class ReconstructionPage(QWidget):
             button.toggled.connect(switch.setChecked)
         else:
             switch.toggled.connect(callback)
+        # Phase 9.6B keeps the unified composition projection synchronized with
+        # existing visibility controls. This callback observes presentation state
+        # only; it never changes layer authority or persistence.
+        switch.toggled.connect(lambda _checked: self._refresh_digital_twin_scene_composition())
         row.addWidget(switch, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(row)
         return switch
