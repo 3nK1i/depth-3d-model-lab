@@ -373,6 +373,15 @@ from core.reconstruction.gaussian_persistence import (
     reload_persistent_gaussian_representation,
 )
 
+from core.reconstruction.nerf_persistence import (
+    PHASE9_5D_NERF_PERSISTENCE_PHASE,
+    PHASE9_5D_NERF_PERSISTENCE_SCHEMA_VERSION,
+    NerfPersistenceState,
+    NerfPersistentRepresentationResult,
+    persist_nerf_representation,
+    reload_persistent_nerf_representation,
+)
+
 from core.reconstruction.gaussian_benchmarking import (
     GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
     GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION,
@@ -1168,6 +1177,12 @@ __all__ = [
     "GaussianPersistentRepresentationResult",
     "persist_gaussian_representation",
     "reload_persistent_gaussian_representation",
+    "PHASE9_5D_NERF_PERSISTENCE_PHASE",
+    "PHASE9_5D_NERF_PERSISTENCE_SCHEMA_VERSION",
+    "NerfPersistenceState",
+    "NerfPersistentRepresentationResult",
+    "persist_nerf_representation",
+    "reload_persistent_nerf_representation",
     "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
     "GaussianBenchmarkBackendResult",
     "GaussianBenchmarkHardwareProfile",
