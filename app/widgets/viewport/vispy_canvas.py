@@ -2366,6 +2366,30 @@ class ReconstructionCanvas(QObject):
         self._camera.elevation = 24.0
         self._camera.view_changed()
 
+    def interactive_render_camera_state(self) -> dict[str, object]:
+        """Return the current presentation camera without exposing VisPy internals.
+
+        Phase 9.5E uses this dependency-light snapshot only to request an
+        appearance render from the isolated NeRF process. Canonical geometry
+        remains the picking/measurement authority.
+        """
+
+        center = np.asarray(self._camera.center, dtype=np.float64).reshape(-1)
+        if center.size != 3 or not np.isfinite(center).all():
+            center = np.zeros(3, dtype=np.float64)
+        values = {
+            "center_viewer": tuple(float(v) for v in center),
+            "distance": float(self._camera.distance or DEFAULT_CAMERA_DISTANCE),
+            "azimuth_degrees": float(self._camera.azimuth),
+            "elevation_degrees": float(self._camera.elevation),
+            "fov_degrees": float(self._camera.fov or DEFAULT_FOV),
+        }
+        if not all(np.isfinite(float(values[key])) for key in (
+            "distance", "azimuth_degrees", "elevation_degrees", "fov_degrees"
+        )):
+            raise ValueError("Reconstruction presentation camera contains non-finite values.")
+        return values
+
     def set_interaction_mode(self, mode: str) -> None:
         self._camera.set_interaction_mode(mode)
         cursors = {

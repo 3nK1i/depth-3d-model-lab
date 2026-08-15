@@ -41,6 +41,8 @@ Gaussian viewer resources without launching a Gaussian backend.
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import tempfile
 from time import monotonic
 
 import numpy as np
@@ -198,6 +200,12 @@ from app.reconstruction_nerf_visualization import (
     build_nerf_visualization_presentation,
     empty_nerf_visualization_text,
 )
+from app.reconstruction_nerf_interactive import (
+    InteractiveNerfPresentation,
+    build_interactive_nerf_presentation,
+    verify_interactive_nerf_integrity,
+    turntable_state_to_nerf_render_request,
+)
 from app.reconstruction_representation_switching import (
     RepresentationSwitchTarget,
     build_representation_switch_target,
@@ -251,6 +259,7 @@ from app.widgets.toggle_switch import ToggleSwitch
 from app.widgets.reconstruction_diagnostics_hud import ReconstructionDiagnosticsHud
 from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientationGizmo
 from app.widgets.reconstruction_appearance_preview import ReconstructionAppearancePreview
+from app.widgets.reconstruction_nerf_worker_client import ReconstructionNerfWorkerClient
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
 from core.reconstruction import (
     CanonicalSurfaceMeshExportSource,
@@ -387,6 +396,17 @@ class ReconstructionPage(QWidget):
         self._gaussian_display_update_pending = False
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
+        self._interactive_nerf_presentation: InteractiveNerfPresentation | None = None
+        self._interactive_nerf_visible = False
+        self._interactive_nerf_request_id = 0
+        self._interactive_nerf_latest_frame_path = ""
+        self._interactive_nerf_last_render_ms = 0.0
+        self._interactive_nerf_session_dir: Path | None = None
+        self._nerf_worker_client = ReconstructionNerfWorkerClient(self)
+        self._nerf_worker_client.ready.connect(self._on_interactive_nerf_worker_ready)
+        self._nerf_worker_client.frame_ready.connect(self._on_interactive_nerf_frame_ready)
+        self._nerf_worker_client.failed.connect(self._on_interactive_nerf_worker_failed)
+        self._nerf_worker_client.state_changed.connect(self._on_interactive_nerf_worker_state_changed)
         self._representation_switch_target: RepresentationSwitchTarget | None = None
         self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
         self._appearance_fallback_reason = ""
@@ -631,6 +651,12 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.measurement_point_picked.connect(
             self._on_reconstruction_interactive_measurement_point
         )
+        self._reconstruction_canvas.interaction_started.connect(
+            self._on_reconstruction_view_interaction_started
+        )
+        self._reconstruction_canvas.interaction_ended.connect(
+            self._on_reconstruction_view_interaction_ended
+        )
         grid.addWidget(self._reconstruction_canvas.native, 0, 0)
 
         self._viewport_placeholder = QWidget()
@@ -686,13 +712,13 @@ class ReconstructionPage(QWidget):
         self._viewport_tool_buttons["orbit"].setChecked(True)
 
         fit_button = IconButton("fit", size=28, icon_size=15, tooltip="Fit available scene geometry and camera context to view")
-        fit_button.clicked.connect(self._reconstruction_canvas.fit_scene)
+        fit_button.clicked.connect(self._fit_reconstruction_view)
         tool_row.addWidget(fit_button)
         focus_button = IconButton("camera", size=28, icon_size=15, tooltip="Focus current camera")
-        focus_button.clicked.connect(self._reconstruction_canvas.focus_current_camera)
+        focus_button.clicked.connect(self._focus_reconstruction_camera)
         tool_row.addWidget(focus_button)
         reset_button = IconButton("reset", size=28, icon_size=15, tooltip="Reset reconstruction view")
-        reset_button.clicked.connect(self._reconstruction_canvas.reset_view)
+        reset_button.clicked.connect(self._reset_reconstruction_view)
         tool_row.addWidget(reset_button)
         fullscreen_button = IconButton(
             "fullscreen",
@@ -846,9 +872,45 @@ class ReconstructionPage(QWidget):
 
     def _set_viewport_tool(self, mode: str) -> None:
         if mode == "measure":
+            if self._interactive_nerf_visible:
+                self._appearance_preview.hide()
+                self._nerf_state_value.setText(
+                    "Canonical measurement active • NeRF appearance paused"
+                )
             self._begin_reconstruction_interactive_measurement()
             return
         self._reconstruction_canvas.set_interaction_mode(mode)
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render()
+
+    def _fit_reconstruction_view(self) -> None:
+        self._reconstruction_canvas.fit_scene()
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render()
+
+    def _focus_reconstruction_camera(self) -> None:
+        self._reconstruction_canvas.focus_current_camera()
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render()
+
+    def _reset_reconstruction_view(self) -> None:
+        self._reconstruction_canvas.reset_view()
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render()
+
+    def _on_reconstruction_view_interaction_started(self) -> None:
+        if not self._interactive_nerf_visible:
+            return
+        if self._reconstruction_canvas.interaction_mode == "measure":
+            return
+        # During drag, reveal the canonical guide underneath. This keeps viewport
+        # interaction immediate while the isolated renderer is sampled on release.
+        self._appearance_preview.hide()
+        self._viewport_state.setText("Canonical navigation guide • NeRF updates on release")
+
+    def _on_reconstruction_view_interaction_ended(self) -> None:
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render()
 
     def _reconstruction_interactive_measurement_available(self) -> bool:
         return bool(self._reconstruction_canvas.canonical_mesh_loaded)
@@ -2399,10 +2461,10 @@ class ReconstructionPage(QWidget):
             selected is None or selected.representation_kind != "gaussian_scene"
         ):
             self._hide_gaussian_preview()
-        if self._nerf_preview_visible and (
+        if (self._interactive_nerf_visible or self._nerf_preview_visible) and (
             selected is None or selected.representation_kind != "nerf_scene"
         ):
-            self._hide_nerf_preview()
+            self._hide_nerf_visualization()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
@@ -2500,7 +2562,7 @@ class ReconstructionPage(QWidget):
     def active_view_representation(self) -> str:
         if self.interactive_gaussian_visible or self.gaussian_preview_visible:
             return "gaussian_scene"
-        if self.nerf_preview_visible:
+        if self.interactive_nerf_visible or self.nerf_preview_visible:
             return "nerf_scene"
         return "canonical_geometry"
 
@@ -2524,8 +2586,12 @@ class ReconstructionPage(QWidget):
                 text = "Gaussian appearance • appearance only"
                 tooltip = "F4 is showing the already-qualified F2 Gaussian preview. Canonical geometry remains authoritative."
         elif active == "nerf_scene":
-            text = "NeRF appearance • appearance only"
-            tooltip = "F4 is showing the already-qualified F3 NeRF preview. Canonical geometry remains authoritative."
+            if self.interactive_nerf_visible:
+                text = "Interactive NeRF appearance • appearance only"
+                tooltip = "9.5E is showing external Nerfacto renders driven by the canonical viewer camera; canonical geometry remains the picking/measurement authority."
+            else:
+                text = "NeRF appearance • appearance only"
+                tooltip = "The qualified static NeRF preview is visible. Canonical geometry remains authoritative."
         elif target is not None and not target.ready:
             text = target.unavailable_text
             tooltip = (
@@ -2631,8 +2697,8 @@ class ReconstructionPage(QWidget):
             self._hide_interactive_gaussian()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
-        if self._nerf_preview_visible:
-            self._hide_nerf_preview()
+        if self._interactive_nerf_visible or self._nerf_preview_visible:
+            self._hide_nerf_visualization()
 
     def _gaussian_settings_from_controls(self) -> GaussianDisplaySettings:
         density = int(self._gaussian_density_combo.currentData() or 100)
@@ -2939,13 +3005,17 @@ class ReconstructionPage(QWidget):
             return
         if self._interactive_gaussian_visible:
             self._hide_interactive_gaussian()
-        if self._nerf_preview_visible:
-            self._hide_nerf_preview()
+        if self._interactive_nerf_visible or self._nerf_preview_visible:
+            self._hide_nerf_visualization()
         try:
             self._appearance_preview.set_preview(
                 presentation.preview_path,
                 title="GAUSSIAN SPLATTING PREVIEW • APPEARANCE ONLY",
             )
+            self._appearance_preview.set_footer(
+                "Backend-authored static render • canonical geometry remains authoritative"
+            )
+            self._appearance_preview.set_mouse_passthrough(False)
         except (OSError, ValueError) as exc:
             self._appearance_fallback_reason = "Gaussian preview image could not be displayed"
             self._gaussian_state_value.setText(self._appearance_fallback_reason)
@@ -2997,8 +3067,8 @@ class ReconstructionPage(QWidget):
         if selected.artifact_id != interactive.artifact_id:
             self._gaussian_state_value.setText("Interactive Gaussian artifact does not match current selection")
             return
-        if self._nerf_preview_visible:
-            self._hide_nerf_preview()
+        if self._interactive_nerf_visible or self._nerf_preview_visible:
+            self._hide_nerf_visualization()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
         self._last_gaussian_load_latency_ms = max(0.0, (monotonic() - load_started_at) * 1000.0)
@@ -3113,6 +3183,10 @@ class ReconstructionPage(QWidget):
     def nerf_preview_visible(self) -> bool:
         return bool(self._nerf_preview_visible and not self._appearance_preview.isHidden())
 
+    @property
+    def interactive_nerf_visible(self) -> bool:
+        return bool(self._interactive_nerf_visible)
+
     def _refresh_nerf_visualization_controls(self) -> None:
         values = empty_nerf_visualization_text()
         previous = self._nerf_visualization_presentation
@@ -3120,58 +3194,80 @@ class ReconstructionPage(QWidget):
             presentation = build_nerf_visualization_presentation(self._persistent_scene)
         except (OSError, TypeError, ValueError) as exc:
             presentation = None
-            self._nerf_provider_value.setText(values["provider"])
-            self._nerf_scene_value.setText(values["scene"])
-            self._nerf_preview_value.setText("Preview metadata rejected")
-            self._nerf_preview_value.setToolTip(str(exc))
-            self._nerf_scale_value.setText(values["scale"])
-            self._nerf_state_value.setText("NeRF visualization unavailable")
-            self._nerf_state_value.setToolTip(str(exc))
-            self._nerf_authority_value.setText(values["authority"])
-            self._nerf_show_button.setEnabled(False)
-            self._nerf_hide_button.setEnabled(False)
-            self._hide_nerf_preview()
-            self._nerf_visualization_presentation = None
-            if previous is not None:
-                self.nerf_visualization_changed.emit(None)
-            return
+            interactive = None
+            interactive_error = str(exc)
+        else:
+            interactive_error = ""
+            try:
+                interactive = build_interactive_nerf_presentation(self._persistent_scene)
+            except (OSError, TypeError, ValueError) as exc:
+                interactive = None
+                interactive_error = str(exc)
 
         self._nerf_visualization_presentation = presentation
+        self._interactive_nerf_presentation = interactive
         selected = self.selected_appearance_representation
         nerf_selected = bool(
             selected is not None and selected.representation_kind == "nerf_scene"
         )
+
         if presentation is None:
             self._nerf_provider_value.setText(values["provider"])
             self._nerf_scene_value.setText(values["scene"])
             self._nerf_preview_value.setText(values["preview"])
             self._nerf_scale_value.setText(values["scale"])
-            self._nerf_state_value.setText(values["state"])
+            self._nerf_state_value.setText("NeRF visualization unavailable")
+            self._nerf_state_value.setToolTip(interactive_error)
             self._nerf_authority_value.setText(values["authority"])
+            self._nerf_interactive_button.setEnabled(False)
             self._nerf_show_button.setEnabled(False)
             self._nerf_hide_button.setEnabled(False)
-            self._hide_nerf_preview()
+            self._hide_nerf_visualization(refresh=False)
         else:
             self._nerf_provider_value.setText(presentation.provider_text)
             self._nerf_scene_value.setText(presentation.scene_text)
             self._nerf_preview_value.setText(presentation.preview_text)
             self._nerf_preview_value.setToolTip(presentation.preview_path or presentation.state_text)
             self._nerf_scale_value.setText(presentation.scale_text)
-            if presentation.ready and not nerf_selected:
+            if self._interactive_nerf_visible:
+                state = self._nerf_worker_client.state
+                if state == "rendering":
+                    text = "Interactive Nerfacto • rendering current canonical view"
+                elif self._nerf_worker_client.is_ready:
+                    text = "Interactive Nerfacto ready • navigate canonical view to update"
+                elif state in {"starting", "stopping"}:
+                    text = f"Interactive Nerfacto • {state}"
+                else:
+                    text = "Interactive Nerfacto • external renderer unavailable"
+                self._nerf_state_value.setText(text)
+            elif presentation.ready and not nerf_selected:
                 self._nerf_state_value.setText(
-                    "NeRF preview ready • select NeRF above to visualize"
+                    "NeRF appearance ready • select NeRF above to visualize"
+                )
+            elif interactive is None and interactive_error:
+                self._nerf_state_value.setText(presentation.state_text)
+                self._nerf_state_value.setToolTip(
+                    "Static preview remains available. Interactive 9.5E validation failed closed: "
+                    + interactive_error
                 )
             else:
                 self._nerf_state_value.setText(presentation.state_text)
-            self._nerf_state_value.setToolTip(
-                "F3 supplies an existing backend-authored static NeRF render. "
-                "F4 coordinates switching; F5 reports resource state and canonical fallback without launching a backend."
-            )
+            if not self._nerf_state_value.toolTip():
+                self._nerf_state_value.setToolTip(
+                    "9.5E launches Nerfstudio only in the isolated external runtime. Navigation is driven by the canonical viewer; ruler picking always uses canonical geometry."
+                )
             self._nerf_authority_value.setText(presentation.authority_text)
-            self._nerf_show_button.setEnabled(bool(presentation.ready and nerf_selected))
-            self._nerf_hide_button.setEnabled(self.nerf_preview_visible)
-            if not nerf_selected and self._nerf_preview_visible:
-                self._hide_nerf_preview()
+            self._nerf_interactive_button.setEnabled(
+                bool(interactive is not None and interactive.ready and nerf_selected and not self._interactive_nerf_visible)
+            )
+            self._nerf_show_button.setEnabled(
+                bool(presentation.ready and nerf_selected and not self._nerf_preview_visible)
+            )
+            self._nerf_hide_button.setEnabled(
+                bool(self._interactive_nerf_visible or self._nerf_preview_visible)
+            )
+            if not nerf_selected and (self._interactive_nerf_visible or self._nerf_preview_visible):
+                self._hide_nerf_visualization(refresh=False)
 
         if presentation != previous:
             self.nerf_visualization_changed.emit(presentation)
@@ -3191,6 +3287,10 @@ class ReconstructionPage(QWidget):
             self._nerf_state_value.setText(self._appearance_fallback_reason)
             self._refresh_appearance_resource_fallback_controls()
             return
+        if self._interactive_nerf_visible:
+            self._hide_interactive_nerf()
+        if self._interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
         try:
@@ -3198,6 +3298,10 @@ class ReconstructionPage(QWidget):
                 presentation.preview_path,
                 title="NERF PREVIEW • APPEARANCE ONLY",
             )
+            self._appearance_preview.set_footer(
+                "Backend-authored static render • canonical geometry remains authoritative"
+            )
+            self._appearance_preview.set_mouse_passthrough(False)
         except (OSError, ValueError) as exc:
             self._appearance_fallback_reason = "NeRF preview image could not be displayed"
             self._nerf_state_value.setText(self._appearance_fallback_reason)
@@ -3211,45 +3315,218 @@ class ReconstructionPage(QWidget):
         self._viewport_placeholder.setVisible(False)
         self._viewport_state.setText("NeRF preview • appearance only")
         self._viewport_state.setToolTip(
-            "Backend-authored static NeRF render. Canonical geometry remains authoritative; "
-            "F3 performs no NeRF rendering in the application process."
+            "Backend-authored static NeRF render. Canonical geometry remains authoritative; no NeRF runtime is launched for Preview."
         )
-        self._nerf_state_value.setText("NeRF backend preview visible • static F3 visualization")
-        self._nerf_show_button.setEnabled(False)
-        self._nerf_hide_button.setEnabled(True)
+        self._nerf_state_value.setText("NeRF backend preview visible • static")
+        self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
+
+    def _show_interactive_nerf(self) -> None:
+        presentation = self._interactive_nerf_presentation
+        selected = self.selected_appearance_representation
+        if (
+            presentation is None
+            or not presentation.ready
+            or selected is None
+            or selected.representation_kind != "nerf_scene"
+            or selected.artifact_id != presentation.artifact_id
+        ):
+            self._appearance_fallback_reason = "Interactive NeRF is unavailable for the current selection"
+            self._nerf_state_value.setText(self._appearance_fallback_reason)
+            self._refresh_appearance_resource_fallback_controls()
+            return
+        try:
+            verify_interactive_nerf_integrity(self._persistent_scene, presentation)
+        except (OSError, TypeError, ValueError) as exc:
+            self._appearance_fallback_reason = "Interactive NeRF integrity verification failed"
+            self._nerf_state_value.setText(self._appearance_fallback_reason)
+            self._nerf_state_value.setToolTip(str(exc))
+            self._refresh_appearance_resource_fallback_controls()
+            return
+        if self._interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
+
+        self._interactive_nerf_visible = True
+        self._nerf_preview_visible = False
+        self._appearance_fallback_reason = ""
+        self._appearance_preview.set_mouse_passthrough(True)
+        if presentation.preview_path:
+            try:
+                self._appearance_preview.set_preview(
+                    presentation.preview_path,
+                    title="INTERACTIVE NERFACTO • APPEARANCE ONLY",
+                )
+                self._appearance_preview.set_footer(
+                    "Starting isolated renderer • canonical geometry remains picking/measurement authority"
+                )
+                if self._reconstruction_canvas.interaction_mode != "measure":
+                    self._appearance_preview.show()
+            except (OSError, ValueError):
+                self._appearance_preview.hide()
+        self._viewport_placeholder.setVisible(False)
+        self._viewport_state.setText("Interactive Nerfacto • starting isolated renderer")
+
+        if self._interactive_nerf_session_dir is not None:
+            self._schedule_interactive_nerf_session_cleanup(self._interactive_nerf_session_dir)
+        self._interactive_nerf_session_dir = Path(
+            tempfile.mkdtemp(prefix="eia-phase9-5e-nerf-")
+        ).resolve()
+        worker = Path(__file__).resolve().parents[2] / "scripts" / "nerf_workers" / "nerfstudio_interactive_worker.py"
+        try:
+            self._nerf_worker_client.start(
+                load_spec_path=presentation.load_spec_path,
+                session_dir=self._interactive_nerf_session_dir,
+                worker_script=worker,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._interactive_nerf_visible = False
+            self._appearance_preview.hide()
+            self._appearance_fallback_reason = "Interactive NeRF renderer could not start"
+            self._nerf_state_value.setText(self._appearance_fallback_reason)
+            self._nerf_state_value.setToolTip(str(exc))
+            self._refresh_nerf_visualization_controls()
+            self._refresh_representation_switching_controls()
+            return
+        self._refresh_nerf_visualization_controls()
+        self._refresh_representation_switching_controls()
+
+    def _request_interactive_nerf_render(self) -> None:
+        presentation = self._interactive_nerf_presentation
+        if (
+            not self._interactive_nerf_visible
+            or presentation is None
+            or not self._nerf_worker_client.is_ready
+            or self._reconstruction_canvas.interaction_mode == "measure"
+        ):
+            return
+        try:
+            state = self._reconstruction_canvas.interactive_render_camera_state()
+            self._interactive_nerf_request_id += 1
+            request = turntable_state_to_nerf_render_request(
+                request_id=self._interactive_nerf_request_id,
+                scene_id=presentation.scene_id,
+                artifact_id=presentation.artifact_id,
+                **state,
+            )
+            self._nerf_worker_client.request_render(request.as_protocol_payload())
+        except (RuntimeError, TypeError, ValueError) as exc:
+            self._on_interactive_nerf_worker_failed(str(exc))
+            return
+        self._nerf_state_value.setText("Interactive Nerfacto • rendering current canonical view")
+        self._viewport_state.setText("Interactive Nerfacto • rendering…")
+
+    def _on_interactive_nerf_worker_ready(self, payload: object) -> None:
+        if not self._interactive_nerf_visible or self._interactive_nerf_presentation is None:
+            self._nerf_worker_client.stop()
+            return
+        data = payload if isinstance(payload, dict) else {}
+        if str(data.get("scene_role", "appearance_only")) != "appearance_only":
+            self._on_interactive_nerf_worker_failed("Interactive NeRF worker violated appearance-only authority.")
+            return
+        self._nerf_state_value.setText("Interactive Nerfacto ready • requesting current view")
+        self._request_interactive_nerf_render()
+
+    def _on_interactive_nerf_frame_ready(self, payload: object) -> None:
+        if not self._interactive_nerf_visible or self._interactive_nerf_presentation is None:
+            return
+        data = payload if isinstance(payload, dict) else {}
+        request_id = int(data.get("request_id", -1))
+        if request_id < self._interactive_nerf_request_id:
+            return
+        if str(data.get("scene_id", "")) not in {"", self._interactive_nerf_presentation.scene_id}:
+            return
+        path = str(data.get("frame_path", "")).strip()
+        if not path:
+            self._on_interactive_nerf_worker_failed("Interactive NeRF worker returned no frame path.")
+            return
+        try:
+            self._appearance_preview.set_preview(
+                path,
+                title="INTERACTIVE NERFACTO • APPEARANCE ONLY",
+            )
+        except (OSError, ValueError) as exc:
+            self._on_interactive_nerf_worker_failed(str(exc))
+            return
+        self._interactive_nerf_latest_frame_path = path
+        self._interactive_nerf_last_render_ms = float(data.get("render_ms", 0.0) or 0.0)
+        self._appearance_preview.set_mouse_passthrough(True)
+        self._appearance_preview.set_footer(
+            f"External Nerfacto render • {self._interactive_nerf_last_render_ms:.0f} ms observed • canonical geometry remains picking/measurement authority"
+        )
+        if self._reconstruction_canvas.interaction_mode != "measure":
+            self._appearance_preview.show()
+        self._viewport_state.setText("Interactive Nerfacto • appearance only")
+        self._viewport_state.setToolTip(
+            "The displayed image comes from the isolated Nerfstudio renderer. Navigation and ruler picking remain bound to the canonical VisPy scene underneath."
+        )
+        self._nerf_state_value.setText(
+            f"Interactive Nerfacto ready • last render {self._interactive_nerf_last_render_ms:.0f} ms"
+        )
+        self._refresh_representation_switching_controls()
+
+    def _on_interactive_nerf_worker_failed(self, message: str) -> None:
+        text = str(message).strip() or "Interactive NeRF renderer failed"
+        self._appearance_fallback_reason = text
+        self._appearance_preview.hide()
+        self._nerf_state_value.setText("Interactive NeRF unavailable • canonical view retained")
+        self._nerf_state_value.setToolTip(text)
+        self._viewport_state.setText("Canonical scene • interactive NeRF unavailable")
+        self._refresh_representation_switching_controls()
+
+    def _on_interactive_nerf_worker_state_changed(self, _state: str) -> None:
+        if self._interactive_nerf_visible and hasattr(self, "_nerf_state_value"):
+            self._refresh_nerf_visualization_controls()
 
     def _hide_nerf_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
             return
-        presentation = self._nerf_visualization_presentation
-        selected = self.selected_appearance_representation
         if self._nerf_preview_visible:
             self._appearance_preview.hide()
         self._nerf_preview_visible = False
-        if hasattr(self, "_nerf_hide_button"):
-            self._nerf_hide_button.setEnabled(False)
-        if hasattr(self, "_nerf_show_button"):
-            self._nerf_show_button.setEnabled(
-                bool(
-                    presentation is not None
-                    and presentation.ready
-                    and selected is not None
-                    and selected.representation_kind == "nerf_scene"
-                )
-            )
-        if (
-            hasattr(self, "_nerf_state_value")
-            and self._nerf_state_value.text()
-            == "NeRF backend preview visible • static F3 visualization"
-            and presentation is not None
-            and presentation.ready
-            and selected is not None
-            and selected.representation_kind == "nerf_scene"
-        ):
-            self._nerf_state_value.setText(presentation.state_text)
+        self._appearance_preview.set_mouse_passthrough(False)
         self._refresh_viewport_state()
-        self._refresh_representation_switching_controls()
+
+    def _hide_interactive_nerf(self, *, blocking: bool = False) -> None:
+        if not self._interactive_nerf_visible and not self._nerf_worker_client.is_running:
+            return
+        self._interactive_nerf_visible = False
+        self._appearance_preview.hide()
+        self._appearance_preview.set_mouse_passthrough(False)
+        if blocking:
+            self._nerf_worker_client.stop_blocking()
+        else:
+            self._nerf_worker_client.stop()
+        session = self._interactive_nerf_session_dir
+        self._interactive_nerf_session_dir = None
+        if session is not None:
+            if blocking:
+                self._cleanup_interactive_nerf_session_dir(session)
+            else:
+                self._schedule_interactive_nerf_session_cleanup(session)
+        self._refresh_viewport_state()
+
+    def _hide_nerf_visualization(self, *, refresh: bool = True) -> None:
+        if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
+            self._hide_interactive_nerf()
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
+        if refresh:
+            self._refresh_nerf_visualization_controls()
+            self._refresh_representation_switching_controls()
+
+    @staticmethod
+    def _cleanup_interactive_nerf_session_dir(path: Path) -> None:
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+    def _schedule_interactive_nerf_session_cleanup(self, path: Path) -> None:
+        QTimer.singleShot(3000, lambda p=Path(path): self._cleanup_interactive_nerf_session_dir(p))
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -4263,9 +4540,10 @@ class ReconstructionPage(QWidget):
         self._refresh_gaussian_visualization_controls()
         self._refresh_gaussian_runtime_health()
 
-        # F3 presents only an already-produced NeRF render from the persisted
-        # appearance artifact. It does not parse checkpoints or launch a neural
-        # backend. F4 only coordinates this already-qualified preview.
+        # Phase 9.5E retains the qualified static preview and adds an explicit
+        # Interactive mode backed by the isolated Nerfstudio process. The UI
+        # process never imports Nerfstudio/tiny-cuda-nn and canonical geometry
+        # remains the only picking/measurement authority.
         self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")
         self._nerf_visualization_group.set_expanded(False)
         nerf_layout = self._nerf_visualization_group.content_layout
@@ -4288,16 +4566,22 @@ class ReconstructionPage(QWidget):
         self._add_status_row(nerf_layout, "Authority", self._nerf_authority_value)
         nerf_buttons = QHBoxLayout()
         nerf_buttons.setSpacing(6)
-        self._nerf_show_button = QPushButton("Show preview")
+        self._nerf_interactive_button = QPushButton("Interactive")
+        self._nerf_interactive_button.setObjectName("reconstructionNerfPreviewAction")
+        self._nerf_interactive_button.setToolTip(
+            "Start the isolated persisted Nerfacto renderer. Navigation stays on the canonical viewer; NeRF remains appearance only."
+        )
+        self._nerf_interactive_button.clicked.connect(self._show_interactive_nerf)
+        self._nerf_show_button = QPushButton("Preview")
         self._nerf_show_button.setObjectName("reconstructionNerfPreviewAction")
         self._nerf_show_button.setToolTip(
-            "Show the existing backend-authored NeRF preview image. No NeRF runtime is launched."
+            "Show the existing backend-authored NeRF preview image without starting the NeRF runtime."
         )
         self._nerf_show_button.clicked.connect(self._show_nerf_preview)
         self._nerf_hide_button = QPushButton("Hide")
         self._nerf_hide_button.setObjectName("reconstructionNerfPreviewAction")
-        self._nerf_hide_button.clicked.connect(self._hide_nerf_preview)
-        for button in (self._nerf_show_button, self._nerf_hide_button):
+        self._nerf_hide_button.clicked.connect(lambda _checked=False: self._hide_nerf_visualization())
+        for button in (self._nerf_interactive_button, self._nerf_show_button, self._nerf_hide_button):
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             nerf_buttons.addWidget(button)
@@ -6663,7 +6947,7 @@ class ReconstructionPage(QWidget):
 
         self._hide_interactive_gaussian()
         self._hide_gaussian_preview()
-        self._hide_nerf_preview()
+        self._hide_nerf_visualization(refresh=False)
         self._appearance_fallback_reason = ""
         # Semantic/camera resources remain scene-bound. Clear them before changing
         # identity, but keep the current non-empty canonical MeshVisual alive until
@@ -6842,6 +7126,8 @@ class ReconstructionPage(QWidget):
         self._gaussian_display_update_pending = False
         if self._interactive_gaussian_scene is not None or self._gaussian_display_buffers is not None:
             self._hide_interactive_gaussian()
+        if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
+            self._hide_interactive_nerf(blocking=True)
         self._pending_visual_pose = None
         self._pending_sparse_landmarks = None
         self._pending_keyframes = None

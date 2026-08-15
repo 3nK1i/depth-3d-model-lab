@@ -52,6 +52,14 @@ class ReconstructionAppearancePreview(QFrame):
     def has_image(self) -> bool:
         return not self._source.isNull()
 
+    def set_footer(self, text: str) -> None:
+        self._footer.setText(str(text).strip() or "Canonical geometry remains authoritative")
+
+    def set_mouse_passthrough(self, enabled: bool) -> None:
+        """Allow the canonical VisPy canvas to receive navigation/picking events."""
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, bool(enabled))
+
     def set_preview(self, path: str | Path, *, title: str = "GAUSSIAN PREVIEW • APPEARANCE ONLY") -> None:
         source = Path(path).expanduser().resolve()
         pixmap = QPixmap(str(source))

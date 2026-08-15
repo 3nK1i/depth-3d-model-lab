@@ -49,7 +49,11 @@ def test_f3_ui_has_one_nerf_visualization_group_with_explicit_preview_actions() 
     start = page.index('self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")')
     end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
     group = page[start:end]
-    assert 'QPushButton("Show preview")' in group
+    # Phase 9.5E preserves the original static-preview capability while adding
+    # an explicit isolated interactive mode; this legacy contract must test the
+    # capability, not the obsolete literal button copy.
+    assert 'QPushButton("Interactive")' in group
+    assert 'QPushButton("Preview")' in group
     assert 'QPushButton("Hide")' in group
     assert "QFileDialog" not in group
     assert "QComboBox(" not in group
@@ -68,7 +72,7 @@ def test_f3_uses_backend_authored_images_not_nerf_scene_runtime_payload() -> Non
     assert "heldout_render_manifest.json" in module
     assert "config.yml" not in module
     assert ".ckpt" not in module
-    assert "F3 performs no NeRF rendering" in page
+    assert "no NeRF runtime is launched for Preview" in page
     assert "F5 reports resource state and canonical fallback" in PAGE.read_text(encoding="utf-8")
 
 
