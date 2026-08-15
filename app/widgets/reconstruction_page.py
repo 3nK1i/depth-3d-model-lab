@@ -36,6 +36,9 @@ visibility control without changing canonical picking or any authority contract.
 Phase 9.4G adds adaptive display budgets, coalesced slider updates, explicit CPU
 staging/UI timing diagnostics, and deterministic release/reload of interactive
 Gaussian viewer resources without launching a Gaussian backend.
+Phase 9.5E adds isolated interactive persisted Nerfacto viewing. Phase 9.5F adds
+presentation-only NeRF render-detail/opacity/refresh controls plus a NeRF appearance
+scene-layer toggle while canonical geometry remains the only picking/measurement authority.
 """
 
 from __future__ import annotations
@@ -205,6 +208,13 @@ from app.reconstruction_nerf_interactive import (
     build_interactive_nerf_presentation,
     verify_interactive_nerf_integrity,
     turntable_state_to_nerf_render_request,
+)
+from app.reconstruction_nerf_controls import (
+    NERF_DEFAULT_RENDER_PROFILE,
+    NERF_OPACITY_PERCENT_MAX,
+    NERF_OPACITY_PERCENT_MIN,
+    NERF_RENDER_PROFILES,
+    NerfDisplaySettings,
 )
 from app.reconstruction_representation_switching import (
     RepresentationSwitchTarget,
@@ -398,6 +408,7 @@ class ReconstructionPage(QWidget):
         self._nerf_preview_visible = False
         self._interactive_nerf_presentation: InteractiveNerfPresentation | None = None
         self._interactive_nerf_visible = False
+        self._nerf_display_settings = NerfDisplaySettings()
         self._interactive_nerf_request_id = 0
         self._interactive_nerf_latest_frame_path = ""
         self._interactive_nerf_last_render_ms = 0.0
@@ -906,11 +917,19 @@ class ReconstructionPage(QWidget):
         # During drag, reveal the canonical guide underneath. This keeps viewport
         # interaction immediate while the isolated renderer is sampled on release.
         self._appearance_preview.hide()
-        self._viewport_state.setText("Canonical navigation guide • NeRF updates on release")
+        refresh_text = (
+            "NeRF updates on release"
+            if self._nerf_display_settings.auto_refresh
+            else "use Refresh view for NeRF update"
+        )
+        self._viewport_state.setText(f"Canonical navigation guide • {refresh_text}")
 
     def _on_reconstruction_view_interaction_ended(self) -> None:
         if self._interactive_nerf_visible:
             self._request_interactive_nerf_render()
+            if not self._nerf_display_settings.auto_refresh:
+                self._appearance_preview.show()
+                self._viewport_state.setText("Interactive Nerfacto • manual refresh")
 
     def _reconstruction_interactive_measurement_available(self) -> bool:
         return bool(self._reconstruction_canvas.canonical_mesh_loaded)
@@ -2700,6 +2719,81 @@ class ReconstructionPage(QWidget):
         if self._interactive_nerf_visible or self._nerf_preview_visible:
             self._hide_nerf_visualization()
 
+    def _nerf_settings_from_controls(self) -> NerfDisplaySettings:
+        profile = str(self._nerf_render_profile_combo.currentData() or NERF_DEFAULT_RENDER_PROFILE)
+        return NerfDisplaySettings(
+            render_profile=profile,
+            opacity_percent=int(self._nerf_opacity_slider.value()),
+            auto_refresh=bool(self._nerf_auto_refresh_toggle.isChecked()),
+        )
+
+    def _set_nerf_scene_layer_checked(self, checked: bool) -> None:
+        toggle = getattr(self, "_nerf_scene_layer_toggle", None)
+        if toggle is None or toggle.isChecked() == bool(checked):
+            return
+        toggle.blockSignals(True)
+        toggle.setChecked(bool(checked))
+        toggle.blockSignals(False)
+
+    def _on_nerf_scene_layer_toggled(self, checked: bool) -> None:
+        if checked:
+            if not self.interactive_nerf_visible:
+                self._show_interactive_nerf()
+            if not self.interactive_nerf_visible:
+                self._set_nerf_scene_layer_checked(False)
+        elif self.interactive_nerf_visible:
+            self._hide_interactive_nerf()
+            self._refresh_nerf_visualization_controls()
+
+    def _on_nerf_display_controls_changed(self, _value: object = None) -> None:
+        try:
+            settings = self._nerf_settings_from_controls()
+        except ValueError:
+            return
+        previous = self._nerf_display_settings
+        self._nerf_display_settings = settings
+        self._nerf_opacity_value.setText(f"{settings.opacity_percent}%")
+        if self._interactive_nerf_visible:
+            self._appearance_preview.set_image_opacity(settings.opacity_percent)
+            if (
+                settings.auto_refresh
+                and (settings.render_width, settings.render_height)
+                != (previous.render_width, previous.render_height)
+            ):
+                self._request_interactive_nerf_render(force=True)
+        self._refresh_nerf_display_summary()
+
+    def _reset_nerf_display_controls(self) -> None:
+        self._nerf_render_profile_combo.blockSignals(True)
+        self._nerf_opacity_slider.blockSignals(True)
+        self._nerf_auto_refresh_toggle.blockSignals(True)
+        index = self._nerf_render_profile_combo.findData(NERF_DEFAULT_RENDER_PROFILE)
+        if index >= 0:
+            self._nerf_render_profile_combo.setCurrentIndex(index)
+        self._nerf_opacity_slider.setValue(100)
+        self._nerf_auto_refresh_toggle.setChecked(True)
+        self._nerf_render_profile_combo.blockSignals(False)
+        self._nerf_opacity_slider.blockSignals(False)
+        self._nerf_auto_refresh_toggle.blockSignals(False)
+        self._nerf_display_settings = NerfDisplaySettings()
+        self._nerf_opacity_value.setText("100%")
+        if self._interactive_nerf_visible:
+            self._appearance_preview.set_image_opacity(100)
+            self._request_interactive_nerf_render(force=True)
+        self._refresh_nerf_display_summary()
+
+    def _refresh_nerf_display_summary(self) -> None:
+        if not hasattr(self, "_nerf_display_value"):
+            return
+        selected = self.selected_appearance_representation
+        if selected is None or selected.representation_kind != "nerf_scene":
+            self._nerf_display_value.setText("Interactive display unavailable")
+            return
+        self._nerf_display_value.setText(self._nerf_display_settings.status_text)
+        self._nerf_display_value.setToolTip(
+            "Presentation-only settings. They do not modify the persisted NeRF artifact or any scene authority."
+        )
+
     def _gaussian_settings_from_controls(self) -> GaussianDisplaySettings:
         density = int(self._gaussian_density_combo.currentData() or 100)
         return GaussianDisplaySettings(
@@ -3008,6 +3102,7 @@ class ReconstructionPage(QWidget):
         if self._interactive_nerf_visible or self._nerf_preview_visible:
             self._hide_nerf_visualization()
         try:
+            self._appearance_preview.set_image_opacity(100)
             self._appearance_preview.set_preview(
                 presentation.preview_path,
                 title="GAUSSIAN SPLATTING PREVIEW • APPEARANCE ONLY",
@@ -3222,6 +3317,16 @@ class ReconstructionPage(QWidget):
             self._nerf_interactive_button.setEnabled(False)
             self._nerf_show_button.setEnabled(False)
             self._nerf_hide_button.setEnabled(False)
+            for control in (
+                self._nerf_render_profile_combo,
+                self._nerf_opacity_slider,
+                self._nerf_auto_refresh_toggle,
+                self._nerf_refresh_view_button,
+                self._nerf_reset_display_button,
+            ):
+                control.setEnabled(False)
+            if hasattr(self, "_nerf_scene_layer_toggle"):
+                self._nerf_scene_layer_toggle.setEnabled(False)
             self._hide_nerf_visualization(refresh=False)
         else:
             self._nerf_provider_value.setText(presentation.provider_text)
@@ -3269,6 +3374,27 @@ class ReconstructionPage(QWidget):
             if not nerf_selected and (self._interactive_nerf_visible or self._nerf_preview_visible):
                 self._hide_nerf_visualization(refresh=False)
 
+        controls_enabled = bool(
+            interactive is not None
+            and interactive.ready
+            and nerf_selected
+            and self._persistent_scene is not None
+        )
+        for control in (
+            self._nerf_render_profile_combo,
+            self._nerf_opacity_slider,
+            self._nerf_auto_refresh_toggle,
+            self._nerf_reset_display_button,
+        ):
+            control.setEnabled(controls_enabled)
+        self._nerf_refresh_view_button.setEnabled(
+            bool(controls_enabled and self._interactive_nerf_visible and self._nerf_worker_client.is_ready)
+        )
+        if hasattr(self, "_nerf_scene_layer_toggle"):
+            self._nerf_scene_layer_toggle.setEnabled(controls_enabled)
+            self._set_nerf_scene_layer_checked(self.interactive_nerf_visible)
+        self._refresh_nerf_display_summary()
+
         if presentation != previous:
             self.nerf_visualization_changed.emit(presentation)
 
@@ -3294,6 +3420,8 @@ class ReconstructionPage(QWidget):
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
         try:
+            self._appearance_preview.set_image_opacity(100)
+            self._set_nerf_scene_layer_checked(False)
             self._appearance_preview.set_preview(
                 presentation.preview_path,
                 title="NERF PREVIEW • APPEARANCE ONLY",
@@ -3353,7 +3481,9 @@ class ReconstructionPage(QWidget):
         self._interactive_nerf_visible = True
         self._nerf_preview_visible = False
         self._appearance_fallback_reason = ""
+        self._appearance_preview.set_image_opacity(self._nerf_display_settings.opacity_percent)
         self._appearance_preview.set_mouse_passthrough(True)
+        self._set_nerf_scene_layer_checked(True)
         if presentation.preview_path:
             try:
                 self._appearance_preview.set_preview(
@@ -3384,6 +3514,7 @@ class ReconstructionPage(QWidget):
             )
         except (OSError, RuntimeError, ValueError) as exc:
             self._interactive_nerf_visible = False
+            self._set_nerf_scene_layer_checked(False)
             self._appearance_preview.hide()
             self._appearance_fallback_reason = "Interactive NeRF renderer could not start"
             self._nerf_state_value.setText(self._appearance_fallback_reason)
@@ -3394,13 +3525,14 @@ class ReconstructionPage(QWidget):
         self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
 
-    def _request_interactive_nerf_render(self) -> None:
+    def _request_interactive_nerf_render(self, *, force: bool = False) -> None:
         presentation = self._interactive_nerf_presentation
         if (
             not self._interactive_nerf_visible
             or presentation is None
             or not self._nerf_worker_client.is_ready
             or self._reconstruction_canvas.interaction_mode == "measure"
+            or (not force and not self._nerf_display_settings.auto_refresh)
         ):
             return
         try:
@@ -3410,6 +3542,8 @@ class ReconstructionPage(QWidget):
                 request_id=self._interactive_nerf_request_id,
                 scene_id=presentation.scene_id,
                 artifact_id=presentation.artifact_id,
+                width=self._nerf_display_settings.render_width,
+                height=self._nerf_display_settings.render_height,
                 **state,
             )
             self._nerf_worker_client.request_render(request.as_protocol_payload())
@@ -3428,7 +3562,7 @@ class ReconstructionPage(QWidget):
             self._on_interactive_nerf_worker_failed("Interactive NeRF worker violated appearance-only authority.")
             return
         self._nerf_state_value.setText("Interactive Nerfacto ready • requesting current view")
-        self._request_interactive_nerf_render()
+        self._request_interactive_nerf_render(force=True)
 
     def _on_interactive_nerf_frame_ready(self, payload: object) -> None:
         if not self._interactive_nerf_visible or self._interactive_nerf_presentation is None:
@@ -3453,6 +3587,7 @@ class ReconstructionPage(QWidget):
             return
         self._interactive_nerf_latest_frame_path = path
         self._interactive_nerf_last_render_ms = float(data.get("render_ms", 0.0) or 0.0)
+        self._appearance_preview.set_image_opacity(self._nerf_display_settings.opacity_percent)
         self._appearance_preview.set_mouse_passthrough(True)
         self._appearance_preview.set_footer(
             f"External Nerfacto render • {self._interactive_nerf_last_render_ms:.0f} ms observed • canonical geometry remains picking/measurement authority"
@@ -3494,6 +3629,7 @@ class ReconstructionPage(QWidget):
         if not self._interactive_nerf_visible and not self._nerf_worker_client.is_running:
             return
         self._interactive_nerf_visible = False
+        self._set_nerf_scene_layer_checked(False)
         self._appearance_preview.hide()
         self._appearance_preview.set_mouse_passthrough(False)
         if blocking:
@@ -3822,6 +3958,28 @@ class ReconstructionPage(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
         )
         layer_layout.addLayout(gaussian_layer_row)
+        nerf_layer_row = QHBoxLayout()
+        nerf_layer_row.setSpacing(8)
+        nerf_layer_label = QLabel("NeRF appearance")
+        nerf_layer_label.setObjectName("reconstructionRowLabel")
+        nerf_layer_label.setMinimumWidth(0)
+        nerf_layer_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        nerf_layer_label.setToolTip(
+            "Show or hide the persisted interactive NeRF appearance layer. Canonical geometry remains the only picking/measurement authority."
+        )
+        nerf_layer_row.addWidget(nerf_layer_label, 1)
+        self._nerf_scene_layer_toggle = ToggleSwitch(checked=False, width=32, height=18)
+        self._nerf_scene_layer_toggle.setObjectName("reconstructionNerfSceneLayerToggle")
+        self._nerf_scene_layer_toggle.setAccessibleName("NeRF appearance scene layer")
+        self._nerf_scene_layer_toggle.setToolTip(nerf_layer_label.toolTip())
+        self._nerf_scene_layer_toggle.setEnabled(False)
+        self._nerf_scene_layer_toggle.toggled.connect(self._on_nerf_scene_layer_toggled)
+        nerf_layer_row.addWidget(
+            self._nerf_scene_layer_toggle,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        layer_layout.addLayout(nerf_layer_row)
         self._add_scene_layer_toggle(
             layer_layout,
             "grid",
@@ -4561,9 +4719,97 @@ class ReconstructionPage(QWidget):
         self._add_status_row(nerf_layout, "Provider", self._nerf_provider_value)
         self._add_status_row(nerf_layout, "Scene", self._nerf_scene_value)
         self._add_status_row(nerf_layout, "Preview", self._nerf_preview_value)
+        self._nerf_display_value = self._settings_value("Interactive display not active")
         self._add_status_row(nerf_layout, "Scale", self._nerf_scale_value)
         self._add_status_row(nerf_layout, "State", self._nerf_state_value)
+        self._add_status_row(nerf_layout, "Display", self._nerf_display_value)
         self._add_status_row(nerf_layout, "Authority", self._nerf_authority_value)
+
+        nerf_controls_hint = QLabel(
+            "Interactive display only • detail, opacity and refresh policy never modify the persisted NeRF artifact."
+        )
+        nerf_controls_hint.setObjectName("reconstructionSettingsHint")
+        nerf_controls_hint.setWordWrap(True)
+        nerf_layout.addWidget(nerf_controls_hint)
+
+        nerf_profile_row = QHBoxLayout()
+        nerf_profile_row.setSpacing(8)
+        nerf_profile_label = QLabel("Render detail")
+        nerf_profile_label.setObjectName("reconstructionRowLabel")
+        nerf_profile_row.addWidget(nerf_profile_label)
+        self._nerf_render_profile_combo = QComboBox()
+        self._nerf_render_profile_combo.setObjectName("reconstructionNerfRenderProfileCombo")
+        for key, label, _width, _height in NERF_RENDER_PROFILES:
+            self._nerf_render_profile_combo.addItem(label, key)
+        self._nerf_render_profile_combo.setCurrentIndex(
+            max(0, self._nerf_render_profile_combo.findData(NERF_DEFAULT_RENDER_PROFILE))
+        )
+        self._nerf_render_profile_combo.setToolTip(
+            "Choose the next interactive render resolution only. Training/checkpoint quality is unchanged."
+        )
+        self._nerf_render_profile_combo.currentIndexChanged.connect(self._on_nerf_display_controls_changed)
+        nerf_profile_row.addWidget(self._nerf_render_profile_combo, 1)
+        nerf_layout.addLayout(nerf_profile_row)
+
+        nerf_opacity_row = QHBoxLayout()
+        nerf_opacity_row.setSpacing(8)
+        nerf_opacity_label = QLabel("Opacity")
+        nerf_opacity_label.setObjectName("reconstructionRowLabel")
+        nerf_opacity_row.addWidget(nerf_opacity_label)
+        self._nerf_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._nerf_opacity_slider.setObjectName("reconstructionNerfDisplaySlider")
+        self._nerf_opacity_slider.setRange(NERF_OPACITY_PERCENT_MIN, NERF_OPACITY_PERCENT_MAX)
+        self._nerf_opacity_slider.setValue(100)
+        self._nerf_opacity_slider.setToolTip(
+            "Blend the interactive NeRF image over the canonical viewport. This is presentation opacity only."
+        )
+        self._nerf_opacity_slider.valueChanged.connect(self._on_nerf_display_controls_changed)
+        nerf_opacity_row.addWidget(self._nerf_opacity_slider, 1)
+        self._nerf_opacity_value = QLabel("100%")
+        self._nerf_opacity_value.setObjectName("reconstructionSettingsValue")
+        self._nerf_opacity_value.setMinimumWidth(40)
+        self._nerf_opacity_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        nerf_opacity_row.addWidget(self._nerf_opacity_value)
+        nerf_layout.addLayout(nerf_opacity_row)
+
+        nerf_refresh_row = QHBoxLayout()
+        nerf_refresh_row.setSpacing(8)
+        nerf_refresh_label = QLabel("Auto refresh")
+        nerf_refresh_label.setObjectName("reconstructionRowLabel")
+        nerf_refresh_label.setToolTip(
+            "When enabled, request a new NeRF image after canonical navigation. Disable to render only on Refresh view."
+        )
+        nerf_refresh_row.addWidget(nerf_refresh_label, 1)
+        self._nerf_auto_refresh_toggle = ToggleSwitch(checked=True, width=32, height=18)
+        self._nerf_auto_refresh_toggle.setObjectName("reconstructionNerfAutoRefreshToggle")
+        self._nerf_auto_refresh_toggle.setAccessibleName("NeRF auto refresh")
+        self._nerf_auto_refresh_toggle.setToolTip(nerf_refresh_label.toolTip())
+        self._nerf_auto_refresh_toggle.toggled.connect(self._on_nerf_display_controls_changed)
+        nerf_refresh_row.addWidget(self._nerf_auto_refresh_toggle)
+        nerf_layout.addLayout(nerf_refresh_row)
+
+        nerf_display_actions = QHBoxLayout()
+        nerf_display_actions.setSpacing(6)
+        self._nerf_refresh_view_button = QPushButton("Refresh view")
+        self._nerf_refresh_view_button.setObjectName("reconstructionNerfPreviewAction")
+        self._nerf_refresh_view_button.setToolTip(
+            "Request one render for the current canonical camera using the selected display detail."
+        )
+        self._nerf_refresh_view_button.clicked.connect(
+            lambda _checked=False: self._request_interactive_nerf_render(force=True)
+        )
+        self._nerf_reset_display_button = QPushButton("Reset display")
+        self._nerf_reset_display_button.setObjectName("reconstructionNerfPreviewAction")
+        self._nerf_reset_display_button.setToolTip(
+            "Restore Detail 640×360, 100% opacity and automatic refresh. Persisted data is unchanged."
+        )
+        self._nerf_reset_display_button.clicked.connect(self._reset_nerf_display_controls)
+        for button in (self._nerf_refresh_view_button, self._nerf_reset_display_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            nerf_display_actions.addWidget(button)
+        nerf_layout.addLayout(nerf_display_actions)
+
         nerf_buttons = QHBoxLayout()
         nerf_buttons.setSpacing(6)
         self._nerf_interactive_button = QPushButton("Interactive")

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QResizeEvent
-from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QLabel, QVBoxLayout
 
 
 class ReconstructionAppearancePreview(QFrame):
@@ -21,6 +21,10 @@ class ReconstructionAppearancePreview(QFrame):
         self.setObjectName("reconstructionAppearancePreview")
         self._source = QPixmap()
         self._source_path = ""
+        self._image_opacity = 1.0
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -59,6 +63,19 @@ class ReconstructionAppearancePreview(QFrame):
         """Allow the canonical VisPy canvas to receive navigation/picking events."""
 
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, bool(enabled))
+
+    def set_image_opacity(self, percent: int) -> None:
+        """Set presentation-only image opacity without altering the source render."""
+
+        value = int(percent)
+        if not 0 <= value <= 100:
+            raise ValueError("Appearance preview opacity must be between 0 and 100 percent.")
+        self._image_opacity = value / 100.0
+        self._opacity_effect.setOpacity(self._image_opacity)
+
+    @property
+    def image_opacity_percent(self) -> int:
+        return int(round(self._image_opacity * 100.0))
 
     def set_preview(self, path: str | Path, *, title: str = "GAUSSIAN PREVIEW • APPEARANCE ONLY") -> None:
         source = Path(path).expanduser().resolve()

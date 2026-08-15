@@ -50,13 +50,16 @@ def test_f3_ui_has_one_nerf_visualization_group_with_explicit_preview_actions() 
     end = page.index('authority = self._settings_group("AUTHORITY & SAFETY")', start)
     group = page[start:end]
     # Phase 9.5E preserves the original static-preview capability while adding
-    # an explicit isolated interactive mode; this legacy contract must test the
-    # capability, not the obsolete literal button copy.
+    # an explicit isolated interactive mode. Phase 9.5F adds one presentation-only
+    # render-detail combo; this legacy contract must prohibit backend/provider
+    # selection rather than all combo boxes.
     assert 'QPushButton("Interactive")' in group
     assert 'QPushButton("Preview")' in group
     assert 'QPushButton("Hide")' in group
     assert "QFileDialog" not in group
-    assert "QComboBox(" not in group
+    assert 'setObjectName("reconstructionNerfRenderProfileCombo")' in group
+    assert "nerf_backend" not in group.lower()
+    assert "backend_selector" not in group.lower()
     assert '"Provider"' in group
     assert '"Scene"' in group
     assert '"Preview"' in group
