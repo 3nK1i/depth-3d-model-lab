@@ -289,6 +289,22 @@ from core.reconstruction.gaussian_backends import (
     write_gaussian_backend_qualification_json,
 )
 
+from core.reconstruction.gaussian_interactive_runtime import (
+    PHASE9_4A_GAUSSIAN_RUNTIME_SCHEMA_VERSION,
+    PHASE9_4A_GSPLAT_QUALIFIED_REVISION,
+    PHASE9_4A_HEAVY_GAUSSIAN_MODULES,
+    GaussianCheckoutEvidence,
+    GaussianInteractiveProcessPolicy,
+    GaussianInteractiveRuntimeReport,
+    GaussianInteractiveRuntimeSpec,
+    GaussianInteractiveRuntimeState,
+    assess_gaussian_interactive_runtime,
+    current_process_gaussian_heavy_modules,
+    default_phase9_gaussian_runtime_spec,
+    probe_gaussian_checkout,
+    probe_phase9_gaussian_interactive_runtime,
+)
+
 from core.reconstruction.gaussian_benchmarking import (
     GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
     GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION,
@@ -1022,6 +1038,19 @@ __all__ = [
     "sha256_file",
     "validate_nerf_artifact_files",
     "write_nerf_e4_json",
+    "PHASE9_4A_GAUSSIAN_RUNTIME_SCHEMA_VERSION",
+    "PHASE9_4A_GSPLAT_QUALIFIED_REVISION",
+    "PHASE9_4A_HEAVY_GAUSSIAN_MODULES",
+    "GaussianCheckoutEvidence",
+    "GaussianInteractiveProcessPolicy",
+    "GaussianInteractiveRuntimeReport",
+    "GaussianInteractiveRuntimeSpec",
+    "GaussianInteractiveRuntimeState",
+    "assess_gaussian_interactive_runtime",
+    "current_process_gaussian_heavy_modules",
+    "default_phase9_gaussian_runtime_spec",
+    "probe_gaussian_checkout",
+    "probe_phase9_gaussian_interactive_runtime",
     "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
     "GaussianBenchmarkBackendResult",
     "GaussianBenchmarkHardwareProfile",
