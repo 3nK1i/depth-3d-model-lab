@@ -543,6 +543,8 @@ class ReconstructionCanvas(QObject):
         self._interactive_gaussian_artifact_id = ""
         self._interactive_gaussian_display_count = 0
         self._interactive_gaussian_total_count = 0
+        self._interactive_gaussian_resource_generation = 1
+        self._interactive_gaussian_release_count = 0
         self._canonical_mesh_loaded = False
         self._canonical_mesh_scene_id = ""
         self._canonical_mesh_artifact_id = ""
@@ -1229,8 +1231,22 @@ class ReconstructionCanvas(QObject):
         self._canvas.update()
 
     def clear_interactive_gaussian_scene(self, *, update_canvas: bool = True) -> None:
-        self._interactive_gaussian_splats.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        # 9.4G treats Hide/Preview/scene-switch/shutdown as a real resource
+        # release boundary. Detaching and recreating the Markers visual drops its
+        # GL buffers instead of retaining an implementation-dependent capacity
+        # after a zero-length set_data() call. Ordinary density/size/opacity
+        # updates still reuse the same visual for responsiveness.
         self._interactive_gaussian_splats.visible = False
+        if self._interactive_gaussian_loaded:
+            self._interactive_gaussian_splats.parent = None
+            self._interactive_gaussian_splats = scene.visuals.Markers(parent=self._view.scene)
+            self._interactive_gaussian_splats.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+            self._interactive_gaussian_splats.visible = False
+            self._interactive_gaussian_resource_generation += 1
+            self._interactive_gaussian_release_count += 1
+        else:
+            self._interactive_gaussian_splats.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+            self._interactive_gaussian_splats.visible = False
         self._interactive_gaussian_loaded = False
         self._interactive_gaussian_scene_id = ""
         self._interactive_gaussian_artifact_id = ""
@@ -2641,6 +2657,14 @@ class ReconstructionCanvas(QObject):
     @property
     def interactive_gaussian_total_count(self) -> int:
         return int(self._interactive_gaussian_total_count)
+
+    @property
+    def interactive_gaussian_resource_generation(self) -> int:
+        return int(self._interactive_gaussian_resource_generation)
+
+    @property
+    def interactive_gaussian_release_count(self) -> int:
+        return int(self._interactive_gaussian_release_count)
 
     @property
     def canonical_mesh_visible(self) -> bool:

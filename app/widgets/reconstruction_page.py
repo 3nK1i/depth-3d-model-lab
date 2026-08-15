@@ -33,6 +33,9 @@ already-qualified canonical, camera, semantic and inspection viewer resources.
 Phase 9.4E adds backend-free interactive persisted Gaussian appearance, and
 Phase 9.4F adds presentation-only Gaussian density/size/opacity plus a scene-layer
 visibility control without changing canonical picking or any authority contract.
+Phase 9.4G adds adaptive display budgets, coalesced slider updates, explicit CPU
+staging/UI timing diagnostics, and deterministic release/reload of interactive
+Gaussian viewer resources without launching a Gaussian backend.
 """
 
 from __future__ import annotations
@@ -184,6 +187,11 @@ from app.reconstruction_gaussian_controls import (
     GaussianDisplayBuffers,
     GaussianDisplaySettings,
     apply_gaussian_display_settings,
+)
+from app.reconstruction_gaussian_resources import (
+    GaussianViewerRuntimeHealth,
+    build_gaussian_interactive_resource_policy,
+    build_gaussian_viewer_runtime_health,
 )
 from app.reconstruction_nerf_visualization import (
     NerfVisualizationPresentation,
@@ -368,6 +376,15 @@ class ReconstructionPage(QWidget):
         self._interactive_gaussian_visible = False
         self._gaussian_display_settings = GaussianDisplaySettings()
         self._gaussian_display_buffers: GaussianDisplayBuffers | None = None
+        self._gaussian_resource_policy = build_gaussian_interactive_resource_policy()
+        self._gaussian_runtime_health: GaussianViewerRuntimeHealth | None = None
+        self._gaussian_load_count = 0
+        self._gaussian_release_count = 0
+        self._last_gaussian_load_latency_ms = 0.0
+        self._last_gaussian_apply_latency_ms = 0.0
+        self._last_gaussian_total_count = 0
+        self._last_gaussian_source_display_count = 0
+        self._gaussian_display_update_pending = False
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
         self._representation_switch_target: RepresentationSwitchTarget | None = None
@@ -401,6 +418,10 @@ class ReconstructionPage(QWidget):
         self._visual_pose_timer.setSingleShot(True)
         self._visual_pose_timer.setInterval(33)
         self._visual_pose_timer.timeout.connect(self._flush_pending_visual_pose)
+        self._gaussian_display_update_timer = QTimer(self)
+        self._gaussian_display_update_timer.setSingleShot(True)
+        self._gaussian_display_update_timer.setInterval(16)
+        self._gaussian_display_update_timer.timeout.connect(self._flush_pending_gaussian_display_update)
         self._telemetry_timer = QTimer(self)
         self._telemetry_timer.setInterval(500)
         self._telemetry_timer.timeout.connect(self._refresh_runtime_telemetry)
@@ -2647,9 +2668,31 @@ class ReconstructionPage(QWidget):
         self._gaussian_size_value.setText(f"{settings.size_percent}%")
         self._gaussian_opacity_value.setText(f"{settings.opacity_percent}%")
         if self.interactive_gaussian_visible and self._interactive_gaussian_scene is not None:
-            self._apply_interactive_gaussian_display_settings()
+            # User slider drags can generate hundreds of valueChanged signals. 9.4G
+            # coalesces only active drags to a ~60 Hz presentation cadence; discrete
+            # combo/programmatic changes remain immediate for deterministic UX/tests.
+            slider_dragging = bool(
+                self._gaussian_size_slider.isSliderDown()
+                or self._gaussian_opacity_slider.isSliderDown()
+            )
+            if slider_dragging:
+                self._gaussian_display_update_pending = True
+                if not self._gaussian_display_update_timer.isActive():
+                    self._gaussian_display_update_timer.start()
+            else:
+                self._gaussian_display_update_pending = False
+                self._gaussian_display_update_timer.stop()
+                self._apply_interactive_gaussian_display_settings()
         else:
             self._refresh_gaussian_display_summary()
+            self._refresh_gaussian_runtime_health()
+
+    def _flush_pending_gaussian_display_update(self) -> None:
+        if not self._gaussian_display_update_pending:
+            return
+        self._gaussian_display_update_pending = False
+        if self.interactive_gaussian_visible and self._interactive_gaussian_scene is not None:
+            self._apply_interactive_gaussian_display_settings()
 
     def _reset_gaussian_display_controls(self) -> None:
         self._gaussian_density_combo.blockSignals(True)
@@ -2674,7 +2717,9 @@ class ReconstructionPage(QWidget):
         if scene is None:
             self._gaussian_display_buffers = None
             self._refresh_gaussian_display_summary()
+            self._refresh_gaussian_runtime_health()
             return
+        started_at = monotonic()
         buffers = apply_gaussian_display_settings(scene, self._gaussian_display_settings)
         self._reconstruction_canvas.set_interactive_gaussian_scene(
             buffers.positions_reconstruction,
@@ -2684,8 +2729,55 @@ class ReconstructionPage(QWidget):
             artifact_id=scene.artifact_id,
             total_count=scene.total_gaussian_count,
         )
+        self._last_gaussian_apply_latency_ms = max(0.0, (monotonic() - started_at) * 1000.0)
         self._gaussian_display_buffers = buffers
         self._refresh_gaussian_display_summary()
+        self._refresh_gaussian_runtime_health()
+
+    @property
+    def gaussian_runtime_health(self) -> GaussianViewerRuntimeHealth | None:
+        return self._gaussian_runtime_health
+
+    def _refresh_gaussian_runtime_health(self) -> None:
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        if canvas is None:
+            return
+        scene = self._interactive_gaussian_scene
+        persistent = self._persistent_scene
+        health = build_gaussian_viewer_runtime_health(
+            policy=self._gaussian_resource_policy,
+            scene=scene,
+            buffers=self._gaussian_display_buffers,
+            resident=bool(self.interactive_gaussian_visible and scene is not None),
+            had_release=bool(self._gaussian_release_count),
+            load_latency_ms=self._last_gaussian_load_latency_ms,
+            apply_latency_ms=self._last_gaussian_apply_latency_ms,
+            load_count=self._gaussian_load_count,
+            release_count=self._gaussian_release_count,
+            canvas_resource_generation=int(getattr(canvas, "interactive_gaussian_resource_generation", 0)),
+            canvas_release_count=int(getattr(canvas, "interactive_gaussian_release_count", 0)),
+            canonical_geometry_authoritative=bool(
+                getattr(persistent, "canonical_geometry_authoritative", False)
+            ) if persistent is not None else False,
+            last_total_gaussian_count=self._last_gaussian_total_count,
+            last_source_display_count=self._last_gaussian_source_display_count,
+        )
+        self._gaussian_runtime_health = health
+        if not hasattr(self, "_gaussian_resources_value"):
+            return
+        self._gaussian_resources_value.setText(health.resources_text)
+        self._gaussian_performance_value.setText(health.performance_text)
+        self._gaussian_lifecycle_value.setText(health.lifecycle_text)
+        self._gaussian_resources_value.setToolTip(
+            "9.4G reports CPU/display staging only. It does not infer OpenGL/CUDA VRAM allocation. "
+            + self._gaussian_resource_policy.budget_text
+        )
+        self._gaussian_performance_value.setToolTip(
+            "UI-side safe scene.pt load and VisPy display-apply time on this run only; not Gaussian training/render backend performance."
+        )
+        self._gaussian_lifecycle_value.setToolTip(
+            "Interactive Gaussian CPU arrays and VisPy marker buffers are released on Hide, Preview, scene switch/clear and shutdown; they reload on demand."
+        )
 
     def _refresh_gaussian_display_summary(self) -> None:
         if not hasattr(self, "_gaussian_display_value"):
@@ -2886,8 +2978,12 @@ class ReconstructionPage(QWidget):
         ):
             self._gaussian_state_value.setText("Interactive Gaussian viewer unavailable for current selection")
             return
+        load_started_at = monotonic()
         try:
-            interactive = load_interactive_gaussian_scene(self._persistent_scene)
+            interactive = load_interactive_gaussian_scene(
+                self._persistent_scene,
+                max_gaussians=self._gaussian_resource_policy.max_interactive_gaussians,
+            )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self._interactive_gaussian_scene = None
             self._interactive_gaussian_visible = False
@@ -2905,6 +3001,10 @@ class ReconstructionPage(QWidget):
             self._hide_nerf_preview()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
+        self._last_gaussian_load_latency_ms = max(0.0, (monotonic() - load_started_at) * 1000.0)
+        self._gaussian_load_count += 1
+        self._last_gaussian_total_count = int(interactive.total_gaussian_count)
+        self._last_gaussian_source_display_count = int(interactive.display_gaussian_count)
         self._interactive_gaussian_scene = interactive
         self._interactive_gaussian_visible = True
         self._apply_interactive_gaussian_display_settings()
@@ -2926,11 +3026,25 @@ class ReconstructionPage(QWidget):
     def _hide_interactive_gaussian(self) -> None:
         if not hasattr(self, "_reconstruction_canvas"):
             return
+        had_resident_resources = bool(
+            self._interactive_gaussian_scene is not None
+            or self._gaussian_display_buffers is not None
+            or self._reconstruction_canvas.interactive_gaussian_visible
+        )
+        self._gaussian_display_update_pending = False
+        if hasattr(self, "_gaussian_display_update_timer"):
+            self._gaussian_display_update_timer.stop()
         self._reconstruction_canvas.clear_interactive_gaussian_scene()
         self._interactive_gaussian_visible = False
+        # 9.4G intentionally drops both the source and derived NumPy staging
+        # arrays. Re-enabling the layer performs a fresh integrity-checked CPU load.
+        self._interactive_gaussian_scene = None
         self._gaussian_display_buffers = None
+        if had_resident_resources:
+            self._gaussian_release_count += 1
         self._set_gaussian_scene_layer_checked(False)
         self._refresh_gaussian_display_summary()
+        self._refresh_gaussian_runtime_health()
         selected = self.selected_appearance_representation
         presentation = self._gaussian_visualization_presentation
         if hasattr(self, "_gaussian_interactive_button"):
@@ -4024,6 +4138,9 @@ class ReconstructionPage(QWidget):
         self._gaussian_scale_value = self._settings_value("—")
         self._gaussian_state_value = self._settings_value("No persistent Gaussian representation")
         self._gaussian_display_value = self._settings_value("Interactive display not active")
+        self._gaussian_resources_value = self._settings_value("Unloaded • no Gaussian viewer buffers resident")
+        self._gaussian_performance_value = self._settings_value("No interactive Gaussian load measured")
+        self._gaussian_lifecycle_value = self._settings_value("Unloaded • no Gaussian viewer buffers resident")
         self._gaussian_authority_value = self._settings_value(
             "Appearance only • canonical geometry remains authoritative"
         )
@@ -4036,6 +4153,9 @@ class ReconstructionPage(QWidget):
         self._add_status_row(gaussian_layout, "Scale", self._gaussian_scale_value)
         self._add_status_row(gaussian_layout, "State", self._gaussian_state_value)
         self._add_status_row(gaussian_layout, "Display", self._gaussian_display_value)
+        self._add_status_row(gaussian_layout, "Resources", self._gaussian_resources_value)
+        self._add_status_row(gaussian_layout, "Performance", self._gaussian_performance_value)
+        self._add_status_row(gaussian_layout, "Lifecycle", self._gaussian_lifecycle_value)
         self._add_status_row(gaussian_layout, "Authority", self._gaussian_authority_value)
 
         gaussian_controls_hint = QLabel(
@@ -4141,6 +4261,7 @@ class ReconstructionPage(QWidget):
         gaussian_layout.addLayout(gaussian_buttons)
         layout.addWidget(self._gaussian_visualization_group)
         self._refresh_gaussian_visualization_controls()
+        self._refresh_gaussian_runtime_health()
 
         # F3 presents only an already-produced NeRF render from the persisted
         # appearance artifact. It does not parse checkpoints or launch a neural
@@ -6716,6 +6837,11 @@ class ReconstructionPage(QWidget):
             return
         self._viewport_shutdown = True
         self._visual_pose_timer.stop()
+        if hasattr(self, "_gaussian_display_update_timer"):
+            self._gaussian_display_update_timer.stop()
+        self._gaussian_display_update_pending = False
+        if self._interactive_gaussian_scene is not None or self._gaussian_display_buffers is not None:
+            self._hide_interactive_gaussian()
         self._pending_visual_pose = None
         self._pending_sparse_landmarks = None
         self._pending_keyframes = None
