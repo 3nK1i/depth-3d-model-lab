@@ -324,6 +324,16 @@ from core.reconstruction.gaussian_interactive_runtime import (
     probe_phase9_gaussian_interactive_runtime,
 )
 
+
+from core.reconstruction.nerf_input_bridge import (
+    PHASE9_5B_NERF_INPUT_BRIDGE_SCHEMA_VERSION,
+    NerfCanonicalInputBridgeResult,
+    NerfInputBridgeState,
+    NerfInputFrameEvidence,
+    materialize_nerf_input_from_canonical_scene,
+    materialize_nerf_input_from_da3_persistent_scene,
+)
+
 from core.reconstruction.gaussian_input_bridge import (
     PHASE9_4B_GAUSSIAN_INPUT_BRIDGE_SCHEMA_VERSION,
     GaussianCanonicalInputBridgeResult,
@@ -1115,6 +1125,12 @@ __all__ = [
     "default_phase9_gaussian_runtime_spec",
     "probe_gaussian_checkout",
     "probe_phase9_gaussian_interactive_runtime",
+    "PHASE9_5B_NERF_INPUT_BRIDGE_SCHEMA_VERSION",
+    "NerfCanonicalInputBridgeResult",
+    "NerfInputBridgeState",
+    "NerfInputFrameEvidence",
+    "materialize_nerf_input_from_canonical_scene",
+    "materialize_nerf_input_from_da3_persistent_scene",
     "PHASE9_4B_GAUSSIAN_INPUT_BRIDGE_SCHEMA_VERSION",
     "GaussianCanonicalInputBridgeResult",
     "GaussianInputBridgeState",
