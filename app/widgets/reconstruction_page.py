@@ -167,6 +167,10 @@ from app.reconstruction_gaussian_visualization import (
     build_gaussian_visualization_presentation,
     empty_gaussian_visualization_text,
 )
+from app.reconstruction_gaussian_interactive import (
+    InteractiveGaussianScene,
+    load_interactive_gaussian_scene,
+)
 from app.reconstruction_nerf_visualization import (
     NerfVisualizationPresentation,
     build_nerf_visualization_presentation,
@@ -346,6 +350,8 @@ class ReconstructionPage(QWidget):
         self._selected_appearance_artifact_id = ""
         self._gaussian_visualization_presentation: GaussianVisualizationPresentation | None = None
         self._gaussian_preview_visible = False
+        self._interactive_gaussian_scene: InteractiveGaussianScene | None = None
+        self._interactive_gaussian_visible = False
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
         self._representation_switch_target: RepresentationSwitchTarget | None = None
@@ -2348,6 +2354,10 @@ class ReconstructionPage(QWidget):
         # actual user-driven switch only from QComboBox.activated, so programmatic
         # scene refresh/selection restoration never launches a view implicitly.
         selected = self.selected_appearance_representation
+        if self._interactive_gaussian_visible and (
+            selected is None or selected.representation_kind != "gaussian_scene"
+        ):
+            self._hide_interactive_gaussian()
         if self._gaussian_preview_visible and (
             selected is None or selected.representation_kind != "gaussian_scene"
         ):
@@ -2451,7 +2461,7 @@ class ReconstructionPage(QWidget):
 
     @property
     def active_view_representation(self) -> str:
-        if self.gaussian_preview_visible:
+        if self.interactive_gaussian_visible or self.gaussian_preview_visible:
             return "gaussian_scene"
         if self.nerf_preview_visible:
             return "nerf_scene"
@@ -2470,8 +2480,12 @@ class ReconstructionPage(QWidget):
 
         active = self.active_view_representation
         if active == "gaussian_scene":
-            text = "Gaussian appearance • appearance only"
-            tooltip = "F4 is showing the already-qualified F2 Gaussian preview. Canonical geometry remains authoritative."
+            if self.interactive_gaussian_visible:
+                text = "Interactive Gaussian appearance • appearance only"
+                tooltip = "9.4E is showing persisted Gaussian appearance interactively; canonical geometry remains the picking/measurement authority."
+            else:
+                text = "Gaussian appearance • appearance only"
+                tooltip = "F4 is showing the already-qualified F2 Gaussian preview. Canonical geometry remains authoritative."
         elif active == "nerf_scene":
             text = "NeRF appearance • appearance only"
             tooltip = "F4 is showing the already-qualified F3 NeRF preview. Canonical geometry remains authoritative."
@@ -2576,6 +2590,8 @@ class ReconstructionPage(QWidget):
         self._refresh_representation_switching_controls()
 
     def _hide_active_appearance_preview(self) -> None:
+        if self._interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
         if self._nerf_preview_visible:
@@ -2588,6 +2604,13 @@ class ReconstructionPage(QWidget):
     @property
     def gaussian_preview_visible(self) -> bool:
         return bool(self._gaussian_preview_visible and not self._appearance_preview.isHidden())
+
+    @property
+    def interactive_gaussian_visible(self) -> bool:
+        return bool(
+            self._interactive_gaussian_visible
+            and getattr(self._reconstruction_canvas, "interactive_gaussian_visible", False)
+        )
 
     def _refresh_gaussian_visualization_controls(self) -> None:
         values = empty_gaussian_visualization_text()
@@ -2605,7 +2628,9 @@ class ReconstructionPage(QWidget):
             self._gaussian_state_value.setToolTip(str(exc))
             self._gaussian_authority_value.setText(values["authority"])
             self._gaussian_show_button.setEnabled(False)
+            self._gaussian_interactive_button.setEnabled(False)
             self._gaussian_hide_button.setEnabled(False)
+            self._hide_interactive_gaussian()
             self._hide_gaussian_preview()
             self._gaussian_visualization_presentation = None
             if previous is not None:
@@ -2625,7 +2650,9 @@ class ReconstructionPage(QWidget):
             self._gaussian_state_value.setText(values["state"])
             self._gaussian_authority_value.setText(values["authority"])
             self._gaussian_show_button.setEnabled(False)
+            self._gaussian_interactive_button.setEnabled(False)
             self._gaussian_hide_button.setEnabled(False)
+            self._hide_interactive_gaussian()
             self._hide_gaussian_preview()
         else:
             self._gaussian_provider_value.setText(presentation.provider_text)
@@ -2645,9 +2672,13 @@ class ReconstructionPage(QWidget):
             )
             self._gaussian_authority_value.setText(presentation.authority_text)
             self._gaussian_show_button.setEnabled(bool(presentation.ready and gaussian_selected))
-            self._gaussian_hide_button.setEnabled(self.gaussian_preview_visible)
-            if not gaussian_selected and self._gaussian_preview_visible:
-                self._hide_gaussian_preview()
+            self._gaussian_interactive_button.setEnabled(bool(gaussian_selected and self._persistent_scene is not None))
+            self._gaussian_hide_button.setEnabled(bool(self.gaussian_preview_visible or self.interactive_gaussian_visible))
+            if not gaussian_selected:
+                if self._interactive_gaussian_visible:
+                    self._hide_interactive_gaussian()
+                if self._gaussian_preview_visible:
+                    self._hide_gaussian_preview()
 
         if presentation != previous:
             self.gaussian_visualization_changed.emit(presentation)
@@ -2667,6 +2698,8 @@ class ReconstructionPage(QWidget):
             self._gaussian_state_value.setText(self._appearance_fallback_reason)
             self._refresh_appearance_resource_fallback_controls()
             return
+        if self._interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
         if self._nerf_preview_visible:
             self._hide_nerf_preview()
         try:
@@ -2697,6 +2730,88 @@ class ReconstructionPage(QWidget):
         self._gaussian_hide_button.setEnabled(True)
         self._refresh_representation_switching_controls()
 
+    def _show_interactive_gaussian(self) -> None:
+        selected = self.selected_appearance_representation
+        if (
+            self._persistent_scene is None
+            or selected is None
+            or selected.representation_kind != "gaussian_scene"
+        ):
+            self._gaussian_state_value.setText("Interactive Gaussian viewer unavailable for current selection")
+            return
+        try:
+            interactive = load_interactive_gaussian_scene(self._persistent_scene)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._interactive_gaussian_scene = None
+            self._interactive_gaussian_visible = False
+            self._gaussian_state_value.setText("Interactive Gaussian viewer unavailable")
+            self._gaussian_state_value.setToolTip(str(exc))
+            self._gaussian_interactive_button.setEnabled(False)
+            return
+        if selected.artifact_id != interactive.artifact_id:
+            self._gaussian_state_value.setText("Interactive Gaussian artifact does not match current selection")
+            return
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        self._reconstruction_canvas.set_interactive_gaussian_scene(
+            interactive.positions_reconstruction,
+            interactive.colors_rgba,
+            interactive.sizes_px,
+            scene_id=interactive.scene_id,
+            artifact_id=interactive.artifact_id,
+            total_count=interactive.total_gaussian_count,
+        )
+        self._interactive_gaussian_scene = interactive
+        self._interactive_gaussian_visible = True
+        self._appearance_preview.hide()
+        self._viewport_placeholder.setVisible(False)
+        self._viewport_state.setText("Interactive Gaussian appearance • canonical picking")
+        self._viewport_state.setToolTip(
+            "Persisted Gaussian means/colors/scales are displayed interactively without gsplat imports. "
+            "Canonical geometry remains the only picking and measurement authority."
+        )
+        self._gaussian_state_value.setText(interactive.state_text)
+        self._gaussian_state_value.setToolTip(interactive.authority_text)
+        self._gaussian_interactive_button.setEnabled(False)
+        self._gaussian_show_button.setEnabled(True)
+        self._gaussian_hide_button.setEnabled(True)
+        self._refresh_representation_switching_controls()
+
+    def _hide_interactive_gaussian(self) -> None:
+        if not hasattr(self, "_reconstruction_canvas"):
+            return
+        self._reconstruction_canvas.clear_interactive_gaussian_scene()
+        self._interactive_gaussian_visible = False
+        selected = self.selected_appearance_representation
+        presentation = self._gaussian_visualization_presentation
+        if hasattr(self, "_gaussian_interactive_button"):
+            self._gaussian_interactive_button.setEnabled(
+                bool(
+                    self._persistent_scene is not None
+                    and selected is not None
+                    and selected.representation_kind == "gaussian_scene"
+                )
+            )
+        if hasattr(self, "_gaussian_hide_button"):
+            self._gaussian_hide_button.setEnabled(self.gaussian_preview_visible)
+        if (
+            hasattr(self, "_gaussian_state_value")
+            and presentation is not None
+            and selected is not None
+            and selected.representation_kind == "gaussian_scene"
+        ):
+            self._gaussian_state_value.setText(presentation.state_text)
+        self._refresh_viewport_state()
+        self._refresh_representation_switching_controls()
+
+    def _hide_gaussian_visualization(self) -> None:
+        if self._interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+
     def _hide_gaussian_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
             return
@@ -2706,7 +2821,7 @@ class ReconstructionPage(QWidget):
             self._appearance_preview.hide()
         self._gaussian_preview_visible = False
         if hasattr(self, "_gaussian_hide_button"):
-            self._gaussian_hide_button.setEnabled(False)
+            self._gaussian_hide_button.setEnabled(self.interactive_gaussian_visible)
         if hasattr(self, "_gaussian_show_button"):
             self._gaussian_show_button.setEnabled(
                 bool(
@@ -3752,16 +3867,22 @@ class ReconstructionPage(QWidget):
         self._add_status_row(gaussian_layout, "Authority", self._gaussian_authority_value)
         gaussian_buttons = QHBoxLayout()
         gaussian_buttons.setSpacing(6)
-        self._gaussian_show_button = QPushButton("Show preview")
+        self._gaussian_interactive_button = QPushButton("Interactive")
+        self._gaussian_interactive_button.setObjectName("reconstructionGaussianPreviewAction")
+        self._gaussian_interactive_button.setToolTip(
+            "Explore the persisted Gaussian appearance interactively. No gsplat/Graphdeco runtime is imported; picking remains canonical."
+        )
+        self._gaussian_interactive_button.clicked.connect(self._show_interactive_gaussian)
+        self._gaussian_show_button = QPushButton("Preview")
         self._gaussian_show_button.setObjectName("reconstructionGaussianPreviewAction")
         self._gaussian_show_button.setToolTip(
-            "Show the existing backend-authored Gaussian preview image. No Gaussian runtime is launched."
+            "Show the existing static backend-authored Gaussian preview image. No Gaussian runtime is launched."
         )
         self._gaussian_show_button.clicked.connect(self._show_gaussian_preview)
         self._gaussian_hide_button = QPushButton("Hide")
         self._gaussian_hide_button.setObjectName("reconstructionGaussianPreviewAction")
-        self._gaussian_hide_button.clicked.connect(self._hide_gaussian_preview)
-        for button in (self._gaussian_show_button, self._gaussian_hide_button):
+        self._gaussian_hide_button.clicked.connect(self._hide_gaussian_visualization)
+        for button in (self._gaussian_interactive_button, self._gaussian_show_button, self._gaussian_hide_button):
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             gaussian_buttons.addWidget(button)
@@ -5851,6 +5972,9 @@ class ReconstructionPage(QWidget):
             self.set_error(f"Reconstruction viewport update rejected: {exc}")
 
     def _refresh_viewport_state(self) -> None:
+        if self.interactive_gaussian_visible:
+            self._viewport_state.setText("Interactive Gaussian appearance • canonical picking")
+            return
         if self.nerf_preview_visible:
             self._viewport_state.setText("NeRF preview • appearance only")
             return
@@ -6164,6 +6288,7 @@ class ReconstructionPage(QWidget):
             selected_object_id=selected_before,
         )
 
+        self._hide_interactive_gaussian()
         self._hide_gaussian_preview()
         self._hide_nerf_preview()
         self._appearance_fallback_reason = ""

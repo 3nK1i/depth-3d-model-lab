@@ -215,6 +215,11 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
             self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
+            self._interactive_gaussian_loaded = False
+            self._interactive_gaussian_positions = np.zeros((0, 3), dtype=np.float32)
+            self._interactive_gaussian_colors = np.zeros((0, 4), dtype=np.float32)
+            self._interactive_gaussian_sizes = np.zeros((0,), dtype=np.float32)
+            self._interactive_gaussian_total_count = 0
             self._canonical_camera_loaded = False
             self._canonical_camera_scene_id = ""
             self._canonical_camera_artifact_id = ""
@@ -499,6 +504,7 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
             self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
+            self.clear_interactive_gaussian_scene(update_canvas=False)
 
         def set_interactive_measurement_overlay(self, points_reconstruction, *, update_canvas: bool = True) -> None:
             points = np.asarray(points_reconstruction, dtype=np.float64)
@@ -508,6 +514,32 @@ def _install_fake_vispy_canvas() -> None:
 
         def clear_interactive_measurement_overlay(self, *, update_canvas: bool = True) -> None:
             self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
+
+        def set_interactive_gaussian_scene(
+            self, positions_reconstruction, colors_rgba, sizes_px, *, scene_id: str, artifact_id: str, total_count=None
+        ) -> None:
+            positions = np.asarray(positions_reconstruction, dtype=np.float32)
+            colors = np.asarray(colors_rgba, dtype=np.float32)
+            sizes = np.asarray(sizes_px, dtype=np.float32).reshape(-1)
+            if positions.ndim != 2 or positions.shape[1] != 3 or positions.shape[0] < 1:
+                raise ValueError("positions_reconstruction must be non-empty (N, 3).")
+            if colors.shape != (positions.shape[0], 4) or sizes.shape != (positions.shape[0],):
+                raise ValueError("Gaussian color/size buffers must match position count.")
+            self._interactive_gaussian_positions = positions.copy()
+            self._interactive_gaussian_colors = colors.copy()
+            self._interactive_gaussian_sizes = sizes.copy()
+            self._interactive_gaussian_total_count = max(
+                int(total_count) if total_count is not None else int(positions.shape[0]),
+                int(positions.shape[0]),
+            )
+            self._interactive_gaussian_loaded = True
+
+        def clear_interactive_gaussian_scene(self, *, update_canvas: bool = True) -> None:
+            self._interactive_gaussian_loaded = False
+            self._interactive_gaussian_positions = np.zeros((0, 3), dtype=np.float32)
+            self._interactive_gaussian_colors = np.zeros((0, 4), dtype=np.float32)
+            self._interactive_gaussian_sizes = np.zeros((0,), dtype=np.float32)
+            self._interactive_gaussian_total_count = 0
 
         def set_canonical_mesh_visible(self, visible: bool) -> None:
             self._canonical_mesh_layer_visible = bool(visible)
@@ -1122,6 +1154,18 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def canonical_mesh_loaded(self) -> bool:
             return bool(self._canonical_mesh_loaded)
+
+        @property
+        def interactive_gaussian_visible(self) -> bool:
+            return bool(self._interactive_gaussian_loaded)
+
+        @property
+        def interactive_gaussian_display_count(self) -> int:
+            return int(self._interactive_gaussian_positions.shape[0])
+
+        @property
+        def interactive_gaussian_total_count(self) -> int:
+            return int(self._interactive_gaussian_total_count)
 
         @property
         def canonical_mesh_visible(self) -> bool:

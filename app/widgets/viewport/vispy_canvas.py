@@ -532,6 +532,17 @@ class ReconstructionCanvas(QObject):
         # canonical authority remains with PersistentReconstructionScene.
         self._canonical_mesh = scene.visuals.Mesh(parent=self._view.scene, shading="smooth")
         self._canonical_mesh.visible = False
+        # Phase 9.4E renders persisted Gaussian appearance as bounded VisPy
+        # point splats. The visual is presentation-only; canonical mesh arrays
+        # remain loaded and authoritative for all picking/measurement.
+        self._interactive_gaussian_splats = scene.visuals.Markers(parent=self._view.scene)
+        self._interactive_gaussian_splats.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._interactive_gaussian_splats.visible = False
+        self._interactive_gaussian_loaded = False
+        self._interactive_gaussian_scene_id = ""
+        self._interactive_gaussian_artifact_id = ""
+        self._interactive_gaussian_display_count = 0
+        self._interactive_gaussian_total_count = 0
         self._canonical_mesh_loaded = False
         self._canonical_mesh_scene_id = ""
         self._canonical_mesh_artifact_id = ""
@@ -1173,6 +1184,61 @@ class ReconstructionCanvas(QObject):
         self._refresh_world_axis_scale()
         self._canvas.update()
 
+    def set_interactive_gaussian_scene(
+        self,
+        positions_reconstruction: np.ndarray,
+        colors_rgba: np.ndarray,
+        sizes_px: np.ndarray,
+        *,
+        scene_id: str,
+        artifact_id: str,
+        total_count: int | None = None,
+    ) -> None:
+        """Display persisted Gaussian appearance without granting geometry authority."""
+        from app.reconstruction_visualization import sparse_landmarks_to_viewer
+
+        positions = np.asarray(positions_reconstruction, dtype=np.float32)
+        colors = np.asarray(colors_rgba, dtype=np.float32)
+        sizes = np.asarray(sizes_px, dtype=np.float32).reshape(-1)
+        if positions.ndim != 2 or positions.shape[1] != 3 or positions.shape[0] < 1:
+            raise ValueError("positions_reconstruction must be non-empty (N, 3).")
+        if colors.shape != (positions.shape[0], 4) or sizes.shape != (positions.shape[0],):
+            raise ValueError("Gaussian color/size buffers must match position count.")
+        if not np.isfinite(positions).all() or not np.isfinite(colors).all() or not np.isfinite(sizes).all():
+            raise ValueError("Interactive Gaussian display buffers must be finite.")
+        scene_key = str(scene_id).strip()
+        artifact_key = str(artifact_id).strip()
+        if not scene_key or not artifact_key:
+            raise ValueError("Interactive Gaussian display requires scene/artifact identity.")
+        viewer = np.ascontiguousarray(sparse_landmarks_to_viewer(positions), dtype=np.float32)
+        self._interactive_gaussian_splats.set_data(
+            pos=viewer,
+            face_color=np.clip(colors, 0.0, 1.0),
+            size=np.clip(sizes, 1.0, 20.0),
+            edge_width=0.0,
+        )
+        self._interactive_gaussian_splats.visible = True
+        self._interactive_gaussian_loaded = True
+        self._interactive_gaussian_scene_id = scene_key
+        self._interactive_gaussian_artifact_id = artifact_key
+        self._interactive_gaussian_display_count = int(viewer.shape[0])
+        self._interactive_gaussian_total_count = max(
+            int(total_count) if total_count is not None else int(viewer.shape[0]),
+            int(viewer.shape[0]),
+        )
+        self._canvas.update()
+
+    def clear_interactive_gaussian_scene(self, *, update_canvas: bool = True) -> None:
+        self._interactive_gaussian_splats.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._interactive_gaussian_splats.visible = False
+        self._interactive_gaussian_loaded = False
+        self._interactive_gaussian_scene_id = ""
+        self._interactive_gaussian_artifact_id = ""
+        self._interactive_gaussian_display_count = 0
+        self._interactive_gaussian_total_count = 0
+        if update_canvas:
+            self._canvas.update()
+
     def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
         # Semantic surface overlays are valid only while this exact canonical
         # mesh remains loaded. Clear them first so direct canvas lifecycle calls
@@ -1204,6 +1270,7 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_vertices_viewer = np.zeros((0, 3), dtype=np.float32)
         self._canonical_mesh_faces = np.zeros((0, 3), dtype=np.uint32)
         self.clear_interactive_measurement_overlay(update_canvas=False)
+        self.clear_interactive_gaussian_scene(update_canvas=False)
         self._refresh_world_axis_scale()
         if update_canvas:
             self._canvas.update()
@@ -2562,6 +2629,18 @@ class ReconstructionCanvas(QObject):
     @property
     def canonical_mesh_loaded(self) -> bool:
         return bool(self._canonical_mesh_loaded)
+
+    @property
+    def interactive_gaussian_visible(self) -> bool:
+        return bool(self._interactive_gaussian_loaded and self._interactive_gaussian_splats.visible)
+
+    @property
+    def interactive_gaussian_display_count(self) -> int:
+        return int(self._interactive_gaussian_display_count)
+
+    @property
+    def interactive_gaussian_total_count(self) -> int:
+        return int(self._interactive_gaussian_total_count)
 
     @property
     def canonical_mesh_visible(self) -> bool:
