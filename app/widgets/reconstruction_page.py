@@ -177,6 +177,10 @@ from app.reconstruction_appearance_presentation import (
     build_reconstruction_appearance_presentation,
     empty_appearance_representation_text,
 )
+from app.reconstruction_digital_twin_workspace import (
+    DigitalTwinWorkspacePresentation,
+    build_digital_twin_workspace_presentation,
+)
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -316,6 +320,7 @@ class ReconstructionPage(QWidget):
     nerf_visualization_changed = pyqtSignal(object)
     representation_switching_changed = pyqtSignal(object)
     appearance_resource_fallback_changed = pyqtSignal(object)
+    digital_twin_workspace_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -435,6 +440,7 @@ class ReconstructionPage(QWidget):
         self._representation_switch_target: RepresentationSwitchTarget | None = None
         self._appearance_resource_fallback_presentation: AppearanceResourceFallbackPresentation | None = None
         self._appearance_fallback_reason = ""
+        self._digital_twin_workspace_presentation: DigitalTwinWorkspacePresentation | None = None
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
@@ -2084,6 +2090,62 @@ class ReconstructionPage(QWidget):
             self.reconstruction_reference_comparison_changed.emit(presentation)
 
     @property
+    def digital_twin_workspace_presentation(self) -> DigitalTwinWorkspacePresentation | None:
+        return self._digital_twin_workspace_presentation
+
+    def _refresh_digital_twin_workspace_presentation(self) -> None:
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        try:
+            presentation = build_digital_twin_workspace_presentation(
+                self._canonical_scene_presentation,
+                canonical_surface_loaded=bool(canvas and canvas.canonical_mesh_loaded),
+                semantic_context_available=bool(
+                    (canvas and canvas.semantic_objects_available)
+                    or self._canonical_semantic_presentation is not None
+                    or self._offline_semantics is not None
+                ),
+                appearance_presentation=self._appearance_presentation,
+                active_view_representation=self.active_view_representation,
+                gaussian_runtime_active=self.interactive_gaussian_visible,
+                nerf_runtime_active=self.interactive_nerf_visible,
+            )
+        except (TypeError, ValueError) as exc:
+            previous = self._digital_twin_workspace_presentation
+            self._digital_twin_workspace_presentation = None
+            if hasattr(self, "_digital_twin_workspace_value"):
+                self._digital_twin_workspace_value.setText("Digital Twin composition unavailable")
+                self._digital_twin_workspace_value.setToolTip(str(exc))
+                self._digital_twin_active_view_value.setText("Canonical geometry")
+                self._digital_twin_composition_value.setText("Composition rejected")
+                self._digital_twin_scale_value.setText("Not qualified")
+                self._digital_twin_authority_value.setText("Canonical authority preserved outside summary")
+                self._digital_twin_resource_value.setText("Neural appearance not promoted")
+                self._digital_twin_safety_value.setText(
+                    "Fail closed • QC/reference separate • metrology not certified"
+                )
+            if previous is not None:
+                self.digital_twin_workspace_changed.emit(None)
+            return
+
+        changed = presentation != self._digital_twin_workspace_presentation
+        self._digital_twin_workspace_presentation = presentation
+        if hasattr(self, "_digital_twin_workspace_value"):
+            self._digital_twin_workspace_value.setText(presentation.workspace_text)
+            self._digital_twin_workspace_value.setToolTip(presentation.scene_id)
+            self._digital_twin_active_view_value.setText(presentation.active_view_text)
+            self._digital_twin_composition_value.setText(presentation.composition_text)
+            self._digital_twin_scale_value.setText(presentation.scale_text)
+            self._digital_twin_scale_value.setToolTip(
+                "Scale wording is inherited from the existing canonical-scene authority presentation; "
+                "camera calibration alone does not establish metric scale."
+            )
+            self._digital_twin_authority_value.setText(presentation.authority_text)
+            self._digital_twin_resource_value.setText(presentation.resource_text)
+            self._digital_twin_safety_value.setText(presentation.safety_text)
+        if changed:
+            self.digital_twin_workspace_changed.emit(presentation)
+
+    @property
     def canonical_scene_presentation(self) -> CanonicalScenePresentation | None:
         return self._canonical_scene_presentation
 
@@ -2114,6 +2176,7 @@ class ReconstructionPage(QWidget):
                 self._viewport_safety.setText("VIEWER Z-UP • ARBITRARY GAUGE")
                 self._viewport_safety.setToolTip(str(exc))
             self._refresh_reconstruction_interactive_measurement_availability()
+            self._refresh_digital_twin_workspace_presentation()
             self.canonical_scene_presentation_changed.emit(None)
             return
 
@@ -2154,6 +2217,7 @@ class ReconstructionPage(QWidget):
                 "the scene-bound Phase 9.1H metric qualification assessment; metrology is not certified."
             )
         self._refresh_reconstruction_interactive_measurement_availability()
+        self._refresh_digital_twin_workspace_presentation()
         if changed:
             self.canonical_scene_presentation_changed.emit(presentation)
 
@@ -2525,6 +2589,7 @@ class ReconstructionPage(QWidget):
             self._appearance_state_value.setText("Appearance metadata unavailable")
             self._appearance_state_value.setToolTip(str(exc))
             self._appearance_authority_value.setText(values["authority"])
+            self._refresh_digital_twin_workspace_presentation()
             self.appearance_representation_changed.emit(None)
             return
 
@@ -2554,6 +2619,7 @@ class ReconstructionPage(QWidget):
                 self._appearance_representation_combo.addItem("No neural appearance artifacts", "")
         self._appearance_representation_combo.blockSignals(False)
         self._refresh_appearance_representation_values()
+        self._refresh_digital_twin_workspace_presentation()
         self.appearance_representation_changed.emit(self.selected_appearance_representation)
 
     def _refresh_appearance_representation_values(self) -> None:
@@ -2642,6 +2708,7 @@ class ReconstructionPage(QWidget):
         if target != previous:
             self.representation_switching_changed.emit(target)
         self._refresh_appearance_resource_fallback_controls()
+        self._refresh_digital_twin_workspace_presentation()
 
     @property
     def appearance_resource_fallback_presentation(self) -> AppearanceResourceFallbackPresentation | None:
@@ -3956,6 +4023,39 @@ class ReconstructionPage(QWidget):
         recovery_actions.addStretch(1)
         session_layout.addLayout(recovery_actions)
         layout.addWidget(session)
+
+        # Phase 9.6A adds one compact composition/authority summary over the
+        # existing qualified Reconstruction presentation paths. It does not
+        # replace, duplicate, or hide the detailed canonical/semantic/measurement/
+        # QC/Gaussian/NeRF controls below; later 9.6E owns any UX consolidation.
+        self._digital_twin_workspace_group = self._settings_group("DIGITAL TWIN WORKSPACE")
+        workspace_layout = self._digital_twin_workspace_group.content_layout
+        self._digital_twin_workspace_value = self._settings_value("No persistent Digital Twin scene")
+        self._digital_twin_active_view_value = self._settings_value("Canonical geometry")
+        self._digital_twin_composition_value = self._settings_value("Waiting for persistent scene")
+        self._digital_twin_scale_value = self._settings_value("—")
+        self._digital_twin_authority_value = self._settings_value("No canonical scene authority")
+        self._digital_twin_resource_value = self._settings_value("No neural appearance resource required")
+        self._digital_twin_safety_value = self._settings_value(
+            "Appearance only overlays • QC/reference separate • metrology not certified"
+        )
+        self._add_status_row(workspace_layout, "Workspace", self._digital_twin_workspace_value)
+        self._add_status_row(workspace_layout, "Active view", self._digital_twin_active_view_value)
+        self._add_status_row(workspace_layout, "Composition", self._digital_twin_composition_value)
+        self._add_status_row(workspace_layout, "Scale", self._digital_twin_scale_value)
+        self._add_status_row(workspace_layout, "Authority", self._digital_twin_authority_value)
+        self._add_status_row(workspace_layout, "Resources", self._digital_twin_resource_value)
+        self._add_status_row(workspace_layout, "Safety", self._digital_twin_safety_value)
+        self._digital_twin_authority_value.setToolTip(
+            "Canonical geometry remains the only spatial, picking and measurement authority. "
+            "Semantics are context only; Gaussian/NeRF are appearance only; QC/reference stays separate."
+        )
+        self._digital_twin_safety_value.setToolTip(
+            "Phase 9.6A composes existing authority state only. It cannot create metric scale, "
+            "promote appearance, infer QC decisions, or certify metrology."
+        )
+        layout.addWidget(self._digital_twin_workspace_group)
+        self._refresh_digital_twin_workspace_presentation()
 
         # Phase 9.3A composes the existing persistent canonical-geometry contract
         # and Phase 9.1H authority sidecar into one passive scene summary.  It
@@ -5390,6 +5490,7 @@ class ReconstructionPage(QWidget):
             toggle = self._scene_layer_toggles.get(key)
             if toggle is not None:
                 toggle.setEnabled(True)
+        self._refresh_digital_twin_workspace_presentation()
 
     @property
     def scene_runtime_health(self) -> ReconstructionSceneRuntimeHealth | None:
