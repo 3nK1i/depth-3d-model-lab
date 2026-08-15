@@ -65,6 +65,7 @@ from app.dialogs.camera_calibration_dialog import (
     default_camera_calibration_profile_root,
 )
 from app.offline_reconstruction_controller import OfflineReconstructionRunState
+from app.da3_canonical_integration_controller import DA3CanonicalRunState
 from app.offline_reconstruction_visualization import (
     OfflineSparseVisualization,
     load_offline_sparse_visualization,
@@ -265,6 +266,7 @@ class ReconstructionPage(QWidget):
         self._source_buttons: dict[ReconstructionWorkflow, QPushButton] = {}
         self._live_state = LiveCaptureRuntimeState.IDLE
         self._offline_state = OfflineReconstructionRunState.IDLE
+        self._da3_canonical_state = DA3CanonicalRunState.IDLE
         self._live_camera: ReconstructionCamera | None = None
         self._live_calibration_path: Path | None = None
         self._live_camera_mode: str | None = None
@@ -472,11 +474,13 @@ class ReconstructionPage(QWidget):
 
         self._live_value = self._status_value()
         self._offline_value = self._status_value()
+        self._da3_runtime_value = self._status_value()
         self._scene_value = self._status_value()
         self._stage_value = self._status_value()
         self._elapsed_value = self._value_label("—")
         self._add_status_row(layout, "Live SLAM", self._live_value)
         self._add_status_row(layout, "Offline", self._offline_value)
+        self._add_status_row(layout, "DA3", self._da3_runtime_value)
         self._add_status_row(layout, "Scene", self._scene_value)
         self._add_status_row(layout, "Stage", self._stage_value)
 
@@ -2949,16 +2953,16 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._scene_layers_group)
         self._refresh_scene_layer_controls()
 
-        # Phase 9.3G exposes the already-established dense/surface/depth provider
-        # provenance as a professional read-only inspector. Selecting an entry
-        # changes only which provider details are shown; it never replans the
-        # pipeline, probes an isolated runtime, or launches a backend. DA3 remains
-        # a supporting external provider until the separate 9.3H integration step.
+        # Phase 9.3G established the read-only provider inspector. Phase 9.3H
+        # adds an explicit source-driven DA3 integration action while preserving
+        # the same authority boundary: provider selection remains inspection-only,
+        # DA3 executes in its isolated runtime, and only the downstream canonical
+        # dense/surface providers receive canonical geometry authority.
         self._advanced_reconstruction_group = self._settings_group("ADVANCED RECONSTRUCTION")
         self._advanced_reconstruction_group.set_expanded(False)
         advanced_layout = self._advanced_reconstruction_group.content_layout
         provider_hint = QLabel(
-            "Provider inspection only • no backend launch. DA3 remains isolated and its canonical integration is Phase 9.3H."
+            "Provider selection is inspection-only. Integrate DA3 explicitly from the selected image/video source; calibration is optional and no metric scale is invented."
         )
         provider_hint.setObjectName("reconstructionSettingsHint")
         provider_hint.setWordWrap(True)
@@ -2992,9 +2996,25 @@ class ReconstructionPage(QWidget):
         self._dense_execution_value = self._settings_value("—")
         self._dense_scene_use_value = self._settings_value("—")
         self._dense_scale_value = self._settings_value("—")
-        self._dense_integration_value = self._settings_value("DA3 integration available in Phase 9.3H")
+        self._dense_integration_value = self._settings_value("DA3 integration available • explicit source-driven action")
         self._dense_state_value = self._settings_value("Waiting for persistent reconstruction scene")
         self._dense_authority_value = self._settings_value("No provider authority presented")
+        self._da3_job_value = self._settings_value("Idle • select Image sequence or Recorded video")
+        da3_action_row = QHBoxLayout()
+        da3_action_row.setSpacing(6)
+        self._da3_integrate_button = QPushButton("Integrate DA3")
+        self._da3_integrate_button.setObjectName("reconstructionDa3IntegrateButton")
+        self._da3_integrate_button.setToolTip(
+            "Run the qualified isolated DA3 runtime, then canonicalize its relative pose/depth evidence. Calibration is not required; metric scale is never invented."
+        )
+        self._da3_integrate_button.clicked.connect(self._on_da3_integrate_clicked)
+        self._da3_cancel_button = QPushButton("Cancel")
+        self._da3_cancel_button.setObjectName("reconstructionDa3CancelButton")
+        self._da3_cancel_button.clicked.connect(self._on_da3_cancel_clicked)
+        da3_action_row.addWidget(self._da3_integrate_button, 1)
+        da3_action_row.addWidget(self._da3_cancel_button, 0)
+        advanced_layout.addLayout(da3_action_row)
+        self._add_status_row(advanced_layout, "DA3 job", self._da3_job_value)
         self._add_status_row(advanced_layout, "Pipeline", self._dense_pipeline_value)
         self._add_status_row(advanced_layout, "Role", self._dense_role_value)
         self._add_status_row(advanced_layout, "Execution", self._dense_execution_value)
@@ -3004,10 +3024,11 @@ class ReconstructionPage(QWidget):
         self._add_status_row(advanced_layout, "State", self._dense_state_value)
         self._add_status_row(advanced_layout, "Authority", self._dense_authority_value)
         self._dense_authority_value.setToolTip(
-            "9.3G is presentation-only. Dense/surface canonical authority and supporting depth-provider authority come from the persistent scene; visibility or provider inspection never changes them."
+            "Dense/surface canonical authority and supporting depth-provider authority come from the persistent scene. Provider inspection and DA3 controls never promote scale, measurement, or QC authority."
         )
         layout.addWidget(self._advanced_reconstruction_group)
         self._refresh_dense_provider_controls()
+        self._refresh_da3_canonical_controls()
 
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
         inspection_layout = self._offline_inspection_group.content_layout
@@ -3581,7 +3602,7 @@ class ReconstructionPage(QWidget):
             self._dense_execution_value.setText("—")
             self._dense_scene_use_value.setText("—")
             self._dense_scale_value.setText("—")
-            self._dense_integration_value.setText("DA3 integration remains deferred to Phase 9.3H")
+            self._dense_integration_value.setText("DA3 integration unavailable until provider evidence is valid")
             self._dense_state_value.setText("Provider evidence unavailable")
             self._dense_state_value.setToolTip(str(exc))
             self._dense_authority_value.setText("No authority promoted")
@@ -3645,9 +3666,207 @@ class ReconstructionPage(QWidget):
             f"Provider ID: {entry.provider_id}\n"
             f"Scene bound: {entry.scene_bound}\n"
             f"External: {entry.external}\n"
-            "9.3G selection is inspection-only and never launches a provider."
+            "Provider selection is inspection-only. Only the explicit 9.3H Integrate DA3 action can launch the isolated DA3 workflow."
         )
         self._dense_authority_value.setText(entry.authority_text)
+
+    def _refresh_da3_canonical_controls(self) -> None:
+        if not hasattr(self, "_da3_integrate_button"):
+            return
+        controller = self._controller
+        active = self._da3_canonical_state in {
+            DA3CanonicalRunState.STARTING,
+            DA3CanonicalRunState.RUNNING,
+            DA3CanonicalRunState.CANCELLING,
+        }
+        if controller is None:
+            self._da3_integrate_button.setEnabled(False)
+            self._da3_cancel_button.setEnabled(False)
+            self._da3_job_value.setText("Controller unavailable")
+            return
+        selection = controller.source_selection
+        source_ready = bool(
+            selection.ready
+            and selection.path is not None
+            and selection.workflow in {
+                ReconstructionWorkflow.IMAGE_SEQUENCE,
+                ReconstructionWorkflow.RECORDED_VIDEO,
+            }
+        )
+        can_start = bool(
+            not controller.is_shutdown
+            and source_ready
+            and not controller.is_active
+            and not active
+        )
+        self._da3_integrate_button.setEnabled(can_start)
+        self._da3_cancel_button.setEnabled(
+            not controller.is_shutdown
+            and self._da3_canonical_state in {
+                DA3CanonicalRunState.STARTING,
+                DA3CanonicalRunState.RUNNING,
+            }
+        )
+        if self._da3_canonical_state is DA3CanonicalRunState.IDLE:
+            self._da3_job_value.setText(
+                "Ready • isolated runtime • calibration optional"
+                if source_ready
+                else "Idle • select Image sequence or Recorded video"
+            )
+        elif self._da3_canonical_state is DA3CanonicalRunState.STARTING:
+            self._da3_job_value.setText("Starting isolated DA3 integration…")
+        elif self._da3_canonical_state is DA3CanonicalRunState.RUNNING:
+            self._da3_job_value.setText("Running • external DA3 + canonicalization")
+        elif self._da3_canonical_state is DA3CanonicalRunState.CANCELLING:
+            self._da3_job_value.setText("Cancelling DA3 integration…")
+        elif self._da3_canonical_state is DA3CanonicalRunState.COMPLETED:
+            self._da3_job_value.setText("Completed • persistent canonical scene loaded")
+        elif self._da3_canonical_state is DA3CanonicalRunState.CANCELLED:
+            self._da3_job_value.setText("Cancelled • previous scene preserved")
+        else:
+            self._da3_job_value.setText("Failed • previous scene preserved")
+
+    def _on_da3_integrate_clicked(self) -> None:
+        if self._controller is None:
+            return
+        try:
+            self._controller.start_selected_da3_canonical()
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        self._refresh_da3_canonical_controls()
+        self._refresh_runtime_controls()
+
+    def _on_da3_cancel_clicked(self) -> None:
+        if self._controller is None:
+            return
+        try:
+            self._controller.cancel_da3_canonical()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        self._refresh_da3_canonical_controls()
+
+    def set_da3_canonical_state(self, state: DA3CanonicalRunState) -> None:
+        if not isinstance(state, DA3CanonicalRunState):
+            raise TypeError("state must be DA3CanonicalRunState.")
+        self._da3_canonical_state = state
+        self._da3_runtime_value.setText(self._humanize(state))
+        self._da3_runtime_value.setProperty("statusKind", self._state_kind(state.value))
+        self._refresh_style(self._da3_runtime_value)
+        if state in {
+            DA3CanonicalRunState.STARTING,
+            DA3CanonicalRunState.RUNNING,
+            DA3CanonicalRunState.CANCELLING,
+        }:
+            self._begin_runtime_clock("da3")
+        elif state in {
+            DA3CanonicalRunState.COMPLETED,
+            DA3CanonicalRunState.FAILED,
+            DA3CanonicalRunState.CANCELLED,
+        }:
+            self._freeze_runtime_clock()
+        presentations = {
+            DA3CanonicalRunState.STARTING: ReconstructionStatusPresentation(
+                "Preparing DA3 integration",
+                "Starting the isolated DA3 → canonical integration worker.",
+                "running",
+                indeterminate=True,
+            ),
+            DA3CanonicalRunState.RUNNING: ReconstructionStatusPresentation(
+                "DA3 canonical integration",
+                "The isolated DA3 workflow is active; metric scale remains unqualified unless separately proven.",
+                "running",
+                indeterminate=True,
+            ),
+            DA3CanonicalRunState.CANCELLING: ReconstructionStatusPresentation(
+                "Cancelling DA3 integration",
+                "Stopping the depth-side worker and its isolated DA3 process group.",
+                "warning",
+                indeterminate=True,
+            ),
+            DA3CanonicalRunState.COMPLETED: ReconstructionStatusPresentation(
+                "DA3 canonical scene ready",
+                "Persistent canonical geometry was materialized from DA3 supporting evidence without metric promotion.",
+                "ready",
+                progress_fraction=1.0,
+            ),
+            DA3CanonicalRunState.CANCELLED: ReconstructionStatusPresentation(
+                "DA3 integration cancelled",
+                "The DA3 integration was cancelled; the previous persistent scene remains available.",
+                "warning",
+            ),
+            DA3CanonicalRunState.FAILED: ReconstructionStatusPresentation(
+                "DA3 integration failed",
+                self._last_runtime_error or "DA3 canonical integration ended with an error; the previous scene remains available.",
+                "error",
+            ),
+        }
+        presentation = presentations.get(state)
+        if presentation is not None:
+            self._apply_runtime_presentation(presentation)
+        self._refresh_da3_canonical_controls()
+        self._refresh_runtime_controls()
+
+    def set_da3_canonical_event(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        event = str(payload.get("event", "")).strip()
+        labels = {
+            "probing_da3": "Qualifying isolated DA3 runtime…",
+            "da3_qualified": "Qualified runtime • preparing source frames",
+            "da3_inference_started": "DA3 inference running in eia-da3…",
+            "da3_inference_completed": "DA3 evidence ready • canonicalizing…",
+            "canonicalizing": "Building canonical dense/surface geometry…",
+            "completed": "Completed • persistent canonical scene loaded",
+            "failed": "Failed • previous scene preserved",
+        }
+        presentations = {
+            "probing_da3": ReconstructionStatusPresentation(
+                "Qualifying DA3 runtime",
+                "Read-only qualification of the isolated eia-da3 runtime and compatibility lock.",
+                "running",
+                indeterminate=True,
+            ),
+            "da3_qualified": ReconstructionStatusPresentation(
+                "Preparing DA3 evidence",
+                "The isolated DA3 runtime is qualified; preparing a bounded source-frame burst.",
+                "running",
+                indeterminate=True,
+            ),
+            "da3_inference_started": ReconstructionStatusPresentation(
+                "DA3 inference",
+                "Relative depth and camera-pose evidence are being produced in the isolated eia-da3 environment.",
+                "running",
+                indeterminate=True,
+            ),
+            "da3_inference_completed": ReconstructionStatusPresentation(
+                "DA3 evidence ready",
+                "DA3 supporting evidence is complete; canonical dense/surface geometry is next.",
+                "running",
+                indeterminate=True,
+            ),
+            "canonicalizing": ReconstructionStatusPresentation(
+                "Canonicalizing DA3 evidence",
+                "Building canonical dense/surface geometry while preserving arbitrary scale and provenance.",
+                "running",
+                indeterminate=True,
+            ),
+        }
+        if event in labels and hasattr(self, "_da3_job_value"):
+            self._da3_job_value.setText(labels[event])
+        presentation = presentations.get(event)
+        if presentation is not None:
+            self._apply_runtime_presentation(presentation)
+
+    def _on_da3_canonical_result_ready(self, payload: object, _output_dir: str) -> None:
+        if isinstance(payload, dict) and bool(payload.get("pass", False)):
+            self._selected_dense_provider_id = "depth-anything-3-external"
+            self._refresh_dense_provider_controls()
+        self._refresh_da3_canonical_controls()
+
+    def _on_da3_canonical_run_finished(self, _payload: object) -> None:
+        self._refresh_da3_canonical_controls()
+        self._refresh_runtime_controls()
 
     @staticmethod
     def _card(title_text: str) -> QFrame:
@@ -3810,6 +4029,10 @@ class ReconstructionPage(QWidget):
         controller.offline_event_received.connect(self.set_offline_event)
         controller.offline_result_ready.connect(self._on_offline_result_ready)
         controller.offline_run_finished.connect(self._on_offline_run_finished)
+        controller.da3_canonical_state_changed.connect(self.set_da3_canonical_state)
+        controller.da3_canonical_event_received.connect(self.set_da3_canonical_event)
+        controller.da3_canonical_result_ready.connect(self._on_da3_canonical_result_ready)
+        controller.da3_canonical_run_finished.connect(self._on_da3_canonical_run_finished)
         controller.source_selection_changed.connect(self.set_source_selection)
         controller.scene_availability_changed.connect(self.set_scene_availability)
         controller.persistent_scene_changed.connect(self.set_persistent_scene)
@@ -3824,6 +4047,7 @@ class ReconstructionPage(QWidget):
         self.set_session_model(controller.session_model)
         self.set_live_state(controller.live_state)
         self.set_offline_state(controller.offline_state)
+        self.set_da3_canonical_state(controller.da3_canonical_state)
         self.set_source_selection(controller.source_selection)
         self.set_scene_availability(controller.scene_availability)
         self._refresh_source_controls()
@@ -4472,6 +4696,7 @@ class ReconstructionPage(QWidget):
                         "warning",
                     )
                 )
+        self._refresh_da3_canonical_controls()
         self._refresh_runtime_controls()
 
     def _select_live_source(self) -> None:
@@ -5408,6 +5633,7 @@ class ReconstructionPage(QWidget):
         self._refresh_scene_interaction_controls()
         self._refresh_checkpoint_resume_controls()
         self._refresh_failure_recovery_controls()
+        self._refresh_da3_canonical_controls()
 
     def _clear_warning_if_possible(self) -> None:
         if self._controller is None or self._controller.is_shutdown:

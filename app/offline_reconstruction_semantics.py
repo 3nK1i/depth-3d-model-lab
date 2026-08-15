@@ -191,6 +191,8 @@ class OfflineSemanticPresentation:
             )
         if self.total_object_count:
             return f"{self.total_object_count} semantic objects • detailed snapshot unavailable"
+        if self.unavailable_reason:
+            return "Semantic context unavailable for this scene"
         return "Semantic stage present • detailed snapshot unavailable"
 
     @property
@@ -284,6 +286,20 @@ def semantic_presentation_from_persistent_scene(
         return None
     artifact_dict = semantic_artifact.as_dict() if callable(getattr(semantic_artifact, "as_dict", None)) else {}
     snapshot = artifact_dict.get("payload_snapshot", {}) if isinstance(artifact_dict, Mapping) else {}
+    if isinstance(snapshot, Mapping) and bool(snapshot.get("available", True)) is False:
+        reason = str(snapshot.get("unavailable_reason", "Semantic context is unavailable for this scene.")).strip()
+        return OfflineSemanticPresentation(
+            session_id=session_id,
+            source="persistent_scene.semantic_geometry",
+            metric_geometry_status=str(snapshot.get("metric_geometry_status", "unknown")).strip().lower() or "unknown",
+            total_object_count=0,
+            objects=(),
+            observations_total=0,
+            observations_accepted=0,
+            detailed_snapshot=False,
+            unavailable_reason=reason,
+            certified_metrology=False,
+        )
     if isinstance(snapshot, Mapping) and snapshot and snapshot.get("objects") is not None:
         presentation = semantic_presentation_from_payload(
             snapshot,

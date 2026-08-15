@@ -1,11 +1,9 @@
 """Read-only dense reconstruction provider presentation for Phase 9.3G.
 
-9.3G exposes provider identity, scene binding, execution mode and authority in
-Reconstruction without starting a backend or changing pipeline planning.  The
-existing persistent scene remains the source of provider/artifact provenance.
-Depth Anything 3 is listed only as a known isolated supporting provider
-contract when it is not already present in scene provenance; its actual
-DA3->canonical integration remains Phase 9.3H.
+9.3G/9.3H expose provider identity, scene binding, execution mode and authority in
+Reconstruction. The existing persistent scene remains the source of provider/artifact
+provenance. Phase 9.3H may bind isolated DA3 pose/depth supporting evidence into a
+new canonical dense/surface scene; DA3 itself never gains canonical or metric authority.
 """
 
 from __future__ import annotations
@@ -125,7 +123,7 @@ def build_dense_provider_presentation(
             scene_id="",
             pipeline_text="No persistent reconstruction scene",
             scale_text="—",
-            integration_text="DA3 integration available in Phase 9.3H",
+            integration_text="Phase 9.3H DA3 canonical integration requires an image/video source",
             authority_text="No provider authority presented",
             entries=(),
             canonical_geometry_authoritative=False,
@@ -162,18 +160,31 @@ def build_dense_provider_presentation(
         if artifact.provider_id in seen:
             continue
         execution, external = _execution_text(scene, artifact.provider_id)
+        is_da3 = artifact.provider_id == DA3_PROVIDER_ID
         entries.append(
             DenseProviderEntry(
                 provider_id=artifact.provider_id,
-                label=_LABEL_BY_STAGE[stage],
-                role_text=_ROLE_BY_STAGE[stage],
+                label=("Depth Anything 3" if is_da3 else _LABEL_BY_STAGE[stage]),
+                role_text=(
+                    "Supporting relative depth / pose evidence"
+                    if is_da3
+                    else _ROLE_BY_STAGE[stage]
+                ),
                 execution_text=execution,
                 scene_use_text="Bound to current persistent scene",
-                authority_text=_authority_text(artifact.authority),
+                authority_text=(
+                    "Supporting geometry only • never creates metric scale"
+                    if is_da3
+                    else _authority_text(artifact.authority)
+                ),
                 state_text=(
-                    "Persisted canonical provider evidence"
-                    if artifact.authority is ReconstructionArtifactAuthority.CANONICAL_GEOMETRY
-                    else "Persisted supporting evidence"
+                    "Persisted DA3 supporting evidence • canonicalized by separate dense/surface providers"
+                    if is_da3
+                    else (
+                        "Persisted canonical provider evidence"
+                        if artifact.authority is ReconstructionArtifactAuthority.CANONICAL_GEOMETRY
+                        else "Persisted supporting evidence"
+                    )
                 ),
                 scene_bound=True,
                 external=external,
@@ -191,16 +202,16 @@ def build_dense_provider_presentation(
                 execution_text="External process • isolated runtime",
                 scene_use_text="Not used by current persistent scene",
                 authority_text="Supporting geometry only • never creates metric scale",
-                state_text="Known provider contract • runtime not probed • canonical integration deferred to 9.3H",
+                state_text="Known isolated provider • runtime not probed • explicit 9.3H integration available when a supported source is selected",
                 scene_bound=False,
                 external=True,
             )
         )
 
     integration_text = (
-        "DA3 supporting evidence is bound • canonical activation remains evidence-driven"
+        "DA3 support bound → canonical-dense-fusion → quality-aware-surface-mesh"
         if da3_bound
-        else "DA3 → canonical integration deferred to Phase 9.3H"
+        else "DA3 integration available • explicit source-driven action • no metric promotion"
     )
     return DenseProviderPresentation(
         available=True,

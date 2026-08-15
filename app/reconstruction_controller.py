@@ -27,6 +27,15 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from app.application_controller import ApplicationController
 from app.live_slam_controller import LiveSlamCaptureController, LiveStellaLaunchSettings
+from app.da3_canonical_integration_controller import (
+    DA3_CANONICAL_WORKER,
+    DA3CanonicalIntegrationConfiguration,
+    DA3CanonicalIntegrationController,
+    DA3CanonicalRunState,
+    DA3CanonicalSourceKind,
+    default_da3_python_path,
+    default_da3_repository_path,
+)
 from app.offline_reconstruction_controller import (
     OFFLINE_RECONSTRUCTION_WORKER,
     OfflineReconstructionConfiguration,
@@ -206,6 +215,11 @@ class ReconstructionController(QObject):
     offline_log_received = pyqtSignal(str)
     offline_result_ready = pyqtSignal(object, str)
     offline_run_finished = pyqtSignal(object)
+    da3_canonical_state_changed = pyqtSignal(object)
+    da3_canonical_event_received = pyqtSignal(object)
+    da3_canonical_log_received = pyqtSignal(str)
+    da3_canonical_result_ready = pyqtSignal(object, str)
+    da3_canonical_run_finished = pyqtSignal(object)
     scene_availability_changed = pyqtSignal(object)
     persistent_scene_changed = pyqtSignal(object, str)
     persistent_authority_changed = pyqtSignal(object, str)
@@ -223,6 +237,7 @@ class ReconstructionController(QObject):
         parent: QObject | None = None,
         *,
         offline_worker_script: Path = OFFLINE_RECONSTRUCTION_WORKER,
+        da3_canonical_worker_script: Path = DA3_CANONICAL_WORKER,
     ) -> None:
         super().__init__(parent)
         if not isinstance(application_controller, ApplicationController):
@@ -279,6 +294,16 @@ class ReconstructionController(QObject):
         self._offline_controller.run_finished.connect(self.offline_run_finished.emit)
         self._offline_controller.error_occurred.connect(self.error_occurred.emit)
 
+        self._da3_canonical_controller = DA3CanonicalIntegrationController(
+            self, worker_script=da3_canonical_worker_script
+        )
+        self._da3_canonical_controller.state_changed.connect(self.da3_canonical_state_changed.emit)
+        self._da3_canonical_controller.event_received.connect(self.da3_canonical_event_received.emit)
+        self._da3_canonical_controller.log_received.connect(self.da3_canonical_log_received.emit)
+        self._da3_canonical_controller.result_ready.connect(self._on_da3_canonical_result_ready)
+        self._da3_canonical_controller.run_finished.connect(self.da3_canonical_run_finished.emit)
+        self._da3_canonical_controller.error_occurred.connect(self.error_occurred.emit)
+
         # G1 exposes one computed, application-level session model without taking
         # ownership from the existing live/offline/session/persistence contracts.
         for signal in (
@@ -302,6 +327,14 @@ class ReconstructionController(QObject):
     @property
     def offline_controller(self) -> OfflineReconstructionController:
         return self._offline_controller
+
+    @property
+    def da3_canonical_controller(self) -> DA3CanonicalIntegrationController:
+        return self._da3_canonical_controller
+
+    @property
+    def da3_canonical_state(self) -> DA3CanonicalRunState:
+        return self._da3_canonical_controller.state
 
     @property
     def live_state(self) -> LiveCaptureRuntimeState:
@@ -395,7 +428,11 @@ class ReconstructionController(QObject):
 
     @property
     def is_active(self) -> bool:
-        return self._live_slam_controller.is_active or self._offline_controller.is_active
+        return (
+            self._live_slam_controller.is_active
+            or self._offline_controller.is_active
+            or self._da3_canonical_controller.is_active
+        )
 
     @property
     def is_shutdown(self) -> bool:
@@ -764,6 +801,81 @@ class ReconstructionController(QObject):
         )
         return self.start_offline(configuration, session_id=sid)
 
+    def start_selected_da3_canonical(
+        self,
+        *,
+        da3_python: str | Path | None = None,
+        da3_repository: str | Path | None = None,
+        output_root: str | Path | None = None,
+        process_res: int = 392,
+        pixel_stride: int = 4,
+        max_frames: int = 3,
+        session_id: str | None = None,
+    ) -> str:
+        """Run isolated DA3 and canonicalize its supporting geometry for the selected source.
+
+        Calibration is optional. Without separate qualification the resulting
+        canonical scene remains arbitrary-scale and never certified metrology.
+        """
+
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot start DA3 integration."
+            )
+        if self._live_slam_controller.is_active or self._offline_controller.is_active:
+            raise ReconstructionValidationError(
+                "Stop/cancel the active reconstruction workflow before starting DA3 integration."
+            )
+        if self._da3_canonical_controller.is_active:
+            raise ReconstructionValidationError("A DA3 canonical integration job is already active.")
+        selection = self._source_selection
+        if selection.workflow not in {
+            ReconstructionWorkflow.IMAGE_SEQUENCE,
+            ReconstructionWorkflow.RECORDED_VIDEO,
+        }:
+            raise ReconstructionValidationError(
+                "Select Image sequence or Recorded video before integrating DA3 geometry."
+            )
+        if not selection.ready or selection.path is None:
+            raise ReconstructionValidationError(
+                selection.detail or "The selected DA3 source is not ready."
+            )
+        self._run_start_guard(self._offline_start_guard, operation="DA3 canonical integration")
+        sid = session_id or new_reconstruction_session_id()
+        root = (
+            Path(output_root).expanduser().resolve()
+            if output_root is not None
+            else default_reconstruction_output_root()
+        )
+        configuration = DA3CanonicalIntegrationConfiguration(
+            source_kind=(
+                DA3CanonicalSourceKind.IMAGE_DIRECTORY
+                if selection.workflow is ReconstructionWorkflow.IMAGE_SEQUENCE
+                else DA3CanonicalSourceKind.RECORDED_VIDEO
+            ),
+            source_path=selection.path,
+            output_dir=root / f"da3-canonical-{sid}",
+            da3_python=(
+                Path(da3_python).expanduser().resolve()
+                if da3_python is not None
+                else default_da3_python_path()
+            ),
+            da3_repository=(
+                Path(da3_repository).expanduser().resolve()
+                if da3_repository is not None
+                else default_da3_repository_path()
+            ),
+            process_res=process_res,
+            pixel_stride=pixel_stride,
+            max_frames=max_frames,
+        )
+        return self._da3_canonical_controller.start(configuration, session_id=sid)
+
+    def cancel_da3_canonical(self) -> bool:
+        if self._shutdown_started:
+            return False
+        return self._da3_canonical_controller.cancel()
+
     def start_live(
         self,
         *,
@@ -780,6 +892,10 @@ class ReconstructionController(QObject):
         if self._offline_controller.is_active:
             raise ReconstructionValidationError(
                 "Offline reconstruction is active or finalizing; wait for it before starting live reconstruction."
+            )
+        if self._da3_canonical_controller.is_active:
+            raise ReconstructionValidationError(
+                "DA3 canonical integration is active; cancel it before starting live reconstruction."
             )
         self._run_start_guard(self._live_start_guard, operation="live reconstruction")
         if not isinstance(camera_intrinsics_policy, CameraIntrinsicsPolicy):
@@ -834,6 +950,10 @@ class ReconstructionController(QObject):
         if self._live_slam_controller.is_active:
             raise ReconstructionValidationError(
                 "Live reconstruction is active; stop it before starting offline reconstruction."
+            )
+        if self._da3_canonical_controller.is_active:
+            raise ReconstructionValidationError(
+                "DA3 canonical integration is active; cancel it before starting offline reconstruction."
             )
         self._run_start_guard(self._offline_start_guard, operation="offline reconstruction")
         sid = self._offline_controller.start(configuration, session_id=session_id)
@@ -1126,6 +1246,16 @@ class ReconstructionController(QObject):
                 f"Cannot {operation} while a reconstruction session is active."
             )
 
+    def _on_da3_canonical_result_ready(self, payload: object, output_dir: str) -> None:
+        if isinstance(payload, dict):
+            try:
+                self._persistence_controller.accept_offline_result(payload, output_dir)
+            except (OSError, TypeError, ValueError, ReconstructionValidationError) as exc:
+                self.error_occurred.emit(
+                    f"DA3 canonical persistence bridge rejected result: {exc}"
+                )
+        self.da3_canonical_result_ready.emit(payload, output_dir)
+
     def _on_offline_result_ready(self, payload: object, output_dir: str) -> None:
         if isinstance(payload, dict):
             try:
@@ -1138,6 +1268,7 @@ class ReconstructionController(QObject):
         if self._shutdown_started:
             return
         self._shutdown_started = True
+        self._da3_canonical_controller.shutdown()
         self._offline_controller.shutdown()
         self._live_slam_controller.shutdown()
         self._persistence_controller.shutdown()

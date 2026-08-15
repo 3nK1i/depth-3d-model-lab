@@ -174,6 +174,12 @@ class MainWindow(QMainWindow):
         self._reconstruction_controller.offline_run_finished.connect(
             self._on_reconstruction_activity_changed
         )
+        self._reconstruction_controller.da3_canonical_state_changed.connect(
+            self._on_reconstruction_activity_changed
+        )
+        self._reconstruction_controller.da3_canonical_run_finished.connect(
+            self._on_reconstruction_activity_changed
+        )
         self._inspection_frame: np.ndarray | None = None
         self._reviewed_semantic_selection: ReviewedSemanticSelection | None = None
         self._reviewed_semantic_image_bgr: np.ndarray | None = None

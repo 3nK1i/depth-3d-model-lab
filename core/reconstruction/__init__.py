@@ -426,6 +426,11 @@ from core.reconstruction.da3_provider import (
     read_da3_input_manifest,
     write_da3_input_manifest,
 )
+from core.reconstruction.da3_canonical_scene import (
+    DA3CanonicalSceneIntegrationResult,
+    PHASE9_3H_RECONSTRUCTION_FRAME_ID,
+    integrate_da3_result_to_canonical_scene,
+)
 
 from core.reconstruction.cache import (
     BoundedFrameCache,
@@ -951,6 +956,9 @@ __all__ = [
     "da3_provider_descriptor",
     "read_da3_input_manifest",
     "write_da3_input_manifest",
+    "DA3CanonicalSceneIntegrationResult",
+    "PHASE9_3H_RECONSTRUCTION_FRAME_ID",
+    "integrate_da3_result_to_canonical_scene",
     "NERF_POSE_CONVENTION",
     "NERF_SCHEMA_VERSION",
     "NERFSTUDIO_DOCUMENTED_MEMORY_MIB",
