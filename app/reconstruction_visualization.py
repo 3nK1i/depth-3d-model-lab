@@ -43,6 +43,16 @@ def reconstruction_points_to_viewer(points: np.ndarray) -> np.ndarray:
     return value @ _RECONSTRUCTION_TO_VIEWER.T
 
 
+def viewer_point_to_reconstruction(point: np.ndarray) -> np.ndarray:
+    """Return one Z-up viewer point in the canonical reconstruction frame."""
+
+    value = np.asarray(point, dtype=np.float64)
+    if value.shape != (3,) or not np.isfinite(value).all():
+        raise ValueError("point must be a finite 3-vector.")
+    # The presentation transform is orthonormal, so its inverse is its transpose.
+    return _RECONSTRUCTION_TO_VIEWER.T @ value
+
+
 def camera_position_in_viewer(T_reconstruction_from_camera: np.ndarray) -> np.ndarray:
     """Return the camera centre in viewer coordinates without changing pose authority."""
 

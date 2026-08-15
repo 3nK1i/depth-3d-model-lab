@@ -34,6 +34,8 @@ class InspectionImageCanvas(QWidget):
 
     object_clicked = pyqtSignal(str)
     mask_edited = pyqtSignal(str)
+    measurement_point_clicked = pyqtSignal(int, int)
+    measurement_cancel_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,6 +59,11 @@ class InspectionImageCanvas(QWidget):
         self._painting = False
         self._image_rect = QRectF()
         self._hover_image_point: tuple[int, int] | None = None
+        self._measurement_mode = False
+        self._measurement_points: tuple[tuple[int, int], ...] = ()
+        self._measurement_primary_text = ""
+        self._measurement_secondary_text = ""
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def clear(self) -> None:
@@ -66,6 +73,7 @@ class InspectionImageCanvas(QWidget):
         self._arrays = {}
         self._selected_id = ""
         self._editable_mask = None
+        self.clear_measurement_overlay()
         self.update()
 
     def set_bundle(
@@ -149,6 +157,45 @@ class InspectionImageCanvas(QWidget):
         if not enabled and self._edit_mode is not MaskEditMode.SELECT:
             self.set_edit_mode(MaskEditMode.SELECT)
 
+    def set_measurement_mode(self, enabled: bool) -> None:
+        self._measurement_mode = bool(enabled)
+        if self._measurement_mode:
+            self._painting = False
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+        else:
+            self.setCursor(
+                Qt.CursorShape.CrossCursor
+                if self._edit_mode in {MaskEditMode.INCLUDE, MaskEditMode.EXCLUDE}
+                else Qt.CursorShape.ArrowCursor
+            )
+        self.update()
+
+    @property
+    def measurement_mode(self) -> bool:
+        return self._measurement_mode
+
+    def set_measurement_overlay(
+        self,
+        points_xy: Sequence[tuple[int, int]],
+        *,
+        primary_text: str = "",
+        secondary_text: str = "",
+    ) -> None:
+        values = tuple((int(x), int(y)) for x, y in points_xy)
+        if len(values) > 2:
+            raise ValueError("Interactive distance overlay supports at most two points.")
+        self._measurement_points = values
+        self._measurement_primary_text = str(primary_text).strip()
+        self._measurement_secondary_text = str(secondary_text).strip()
+        self.update()
+
+    def clear_measurement_overlay(self) -> None:
+        self._measurement_points = ()
+        self._measurement_primary_text = ""
+        self._measurement_secondary_text = ""
+        self.update()
+
     def paintEvent(self, _event) -> None:  # noqa: N802
         painter = QPainter(self)
         if not painter.isActive():
@@ -174,6 +221,7 @@ class InspectionImageCanvas(QWidget):
                 self._paint_labels(painter, target)
             self._paint_selection(painter, target)
             self._paint_brush(painter, target)
+            self._paint_measurement(painter, target)
         finally:
             # A paint-event exception must never leave Qt's backing-store
             # painter active. This also prevents warning cascades on shutdown.
@@ -294,11 +342,49 @@ class InspectionImageCanvas(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(center, radius, radius)
 
+    def _paint_measurement(self, painter: QPainter, target: QRectF) -> None:
+        if not self._measurement_points or self._rgb is None:
+            return
+        mapped = [self._map_point(x, y, target) for x, y in self._measurement_points]
+        accent = QColor("#3ac6d8")
+        line_pen = QPen(accent, 2.2)
+        line_pen.setCosmetic(True)
+        painter.setPen(line_pen)
+        painter.setBrush(QColor(9, 11, 14, 230))
+        if len(mapped) == 2:
+            painter.drawLine(mapped[0], mapped[1])
+        for index, point in enumerate(mapped):
+            painter.setBrush(accent)
+            painter.drawEllipse(point, 5.0, 5.0)
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(QPointF(point.x() + 8.0, point.y() - 8.0), "A" if index == 0 else "B")
+            painter.setPen(line_pen)
+        if len(mapped) == 2 and self._measurement_primary_text:
+            midpoint = QPointF((mapped[0].x() + mapped[1].x()) * 0.5, (mapped[0].y() + mapped[1].y()) * 0.5)
+            label = self._measurement_primary_text
+            metrics = painter.fontMetrics()
+            width = metrics.horizontalAdvance(label) + 18
+            height = metrics.height() + 10
+            rect = QRectF(midpoint.x() - width * 0.5, midpoint.y() - height - 8.0, width, height)
+            painter.setPen(QPen(QColor("#3a4650"), 1.0))
+            painter.setBrush(QColor(9, 11, 14, 232))
+            painter.drawRoundedRect(rect, 5.0, 5.0)
+            painter.setPen(QColor("#f3f5f7"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() != Qt.MouseButton.LeftButton or self._rgb is None:
+        if self._rgb is None:
+            return
+        if self._measurement_mode and event.button() == Qt.MouseButton.RightButton:
+            self.measurement_cancel_requested.emit()
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         point = self._widget_to_image(event.position())
         if point is None:
+            return
+        if self._measurement_mode:
+            self.measurement_point_clicked.emit(int(point[0]), int(point[1]))
             return
         if self._editing_enabled and self._edit_mode in {MaskEditMode.INCLUDE, MaskEditMode.EXCLUDE} and self._editable_mask is not None:
             self._painting = True
@@ -319,6 +405,13 @@ class InspectionImageCanvas(QWidget):
         if event.button() == Qt.MouseButton.LeftButton and self._painting:
             self._painting = False
             self.mask_edited.emit(self._selected_id)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self._measurement_mode and event.key() == Qt.Key.Key_Escape:
+            self.measurement_cancel_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def leaveEvent(self, _event) -> None:  # noqa: N802
         self._hover_image_point = None

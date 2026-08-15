@@ -38,6 +38,7 @@ from app.measurement_canonical_registration_presentation import (
 )
 from app.widgets.inspection_3d_canvas import Inspection3DCanvas
 from app.widgets.inspection_canvas import InspectionImageCanvas
+from app.widgets.icon_button import IconButton
 from core.inspection import (
     InspectionBoxMethod,
     InspectionBundleSummary,
@@ -46,6 +47,11 @@ from core.inspection import (
     MaskEditMode,
 )
 from core.measurement.contracts import ReliabilityLevel
+from core.measurement.interactive_distance import (
+    InteractiveDistanceEstimate,
+    estimate_depth_pixel_distance,
+    format_interactive_distance,
+)
 from core.reconstruction.calibration_profile import CameraCalibrationProfile
 from core.perception.metadata import PerceptionTask
 from core.perception.registry import PERCEPTION_MODEL_REGISTRY
@@ -82,8 +88,11 @@ class InspectionPage(QWidget):
         self._reviewed_semantics: ReviewedSemanticSelection | None = None
         self._reviewed_semantic_source_label = ""
         self._canonical_registration_presentation: MeasurementCanonicalRegistrationPresentation | None = None
+        self._interactive_measure_pixels: list[tuple[int, int]] = []
+        self._interactive_distance_estimate: InteractiveDistanceEstimate | None = None
         self._build_ui()
         self._populate_perception_models()
+        self._refresh_interactive_measurement_availability()
         self.set_controller_state(InspectionControllerState.IDLE)
 
     def _build_ui(self) -> None:
@@ -209,12 +218,149 @@ class InspectionPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(10, 9, 10, 10)
         layout.setSpacing(7)
-        layout.addLayout(self._panel_header("ALIGNED RGB & MASK INSPECTION", "Click an object to select it. Include/exclude brush edits are non-destructive until recompute."))
+
+        header = QHBoxLayout()
+        title = QLabel("ALIGNED RGB & MASK INSPECTION")
+        title.setObjectName("inspectionPanelTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self._interactive_measure_button = IconButton(
+            "ruler",
+            size=29,
+            icon_size=16,
+            tooltip="Measure distance — click Point A, then Point B",
+            checkable=True,
+        )
+        self._interactive_measure_button.toggled.connect(self._toggle_interactive_measurement)
+        header.addWidget(self._interactive_measure_button)
+        layout.addLayout(header)
+
+        description = QLabel(
+            "Click an object to select it. Include/exclude brush edits are non-destructive until recompute."
+        )
+        description.setObjectName("inspectionMuted")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self._interactive_measure_bar = QFrame()
+        self._interactive_measure_bar.setObjectName("inspectionInteractiveMeasureBar")
+        measure_layout = QVBoxLayout(self._interactive_measure_bar)
+        measure_layout.setContentsMargins(9, 6, 9, 6)
+        measure_layout.setSpacing(1)
+        self._interactive_measure_primary = QLabel("Click Point A")
+        self._interactive_measure_primary.setObjectName("inspectionInteractiveMeasurePrimary")
+        self._interactive_measure_secondary = QLabel(
+            "Two clicks on valid depth • result is an estimate with ± uncertainty"
+        )
+        self._interactive_measure_secondary.setObjectName("inspectionInteractiveMeasureSecondary")
+        measure_layout.addWidget(self._interactive_measure_primary)
+        measure_layout.addWidget(self._interactive_measure_secondary)
+        self._interactive_measure_bar.hide()
+        layout.addWidget(self._interactive_measure_bar)
+
         self._image_canvas = InspectionImageCanvas()
         self._image_canvas.object_clicked.connect(self.select_object)
         self._image_canvas.mask_edited.connect(self._on_mask_edited)
+        self._image_canvas.measurement_point_clicked.connect(self._on_interactive_measurement_point)
+        self._image_canvas.measurement_cancel_requested.connect(self._cancel_interactive_measurement)
         layout.addWidget(self._image_canvas, stretch=1)
         return panel
+
+    def _interactive_measurement_available(self) -> bool:
+        required = {
+            "aligned_depth",
+            "aligned_depth_valid_mask",
+            "aligned_intrinsics_matrix",
+        }
+        return self._summary is not None and required.issubset(self._arrays)
+
+    def _refresh_interactive_measurement_availability(self) -> None:
+        if not hasattr(self, "_interactive_measure_button"):
+            return
+        available = self._interactive_measurement_available()
+        self._interactive_measure_button.setEnabled(available)
+        self._interactive_measure_button.setToolTip(
+            "Measure distance — click Point A, then Point B"
+            if available
+            else "Analyze a frame first to create aligned depth and intrinsics for measurement"
+        )
+        if not available and self._interactive_measure_button.isChecked():
+            self._interactive_measure_button.setChecked(False)
+
+    def _toggle_interactive_measurement(self, enabled: bool) -> None:
+        requested = bool(enabled)
+        available = self._interactive_measurement_available()
+        if requested and not available:
+            # Keep button state truthful if an old bundle or newly captured frame
+            # has no numeric depth evidence yet.
+            self._interactive_measure_button.setChecked(False)
+            return
+        enabled = requested and available
+        self._image_canvas.set_measurement_mode(enabled)
+        if enabled:
+            # Ruler interaction is exclusive with mask brushing. Keep the
+            # operator in the neutral Select state while two-point picking is active.
+            if hasattr(self, "_select_tool"):
+                self._select_tool.setChecked(True)
+            self._image_canvas.set_edit_mode(MaskEditMode.SELECT)
+            self._interactive_measure_pixels = []
+            self._interactive_distance_estimate = None
+            self._image_canvas.clear_measurement_overlay()
+            self._interactive_measure_primary.setText("Click Point A")
+            self._interactive_measure_secondary.setText(
+                "Two clicks on valid depth • result is an estimate with ± uncertainty"
+            )
+            self._interactive_measure_bar.show()
+        else:
+            self._interactive_measure_bar.hide()
+            self._interactive_measure_pixels = []
+            self._interactive_distance_estimate = None
+            self._image_canvas.clear_measurement_overlay()
+
+    def _cancel_interactive_measurement(self) -> None:
+        if hasattr(self, "_interactive_measure_button"):
+            self._interactive_measure_button.setChecked(False)
+
+    def _on_interactive_measurement_point(self, x: int, y: int) -> None:
+        if not self._interactive_measure_button.isChecked() or not self._interactive_measurement_available():
+            return
+        point = (int(x), int(y))
+        if len(self._interactive_measure_pixels) >= 2:
+            self._interactive_measure_pixels = []
+            self._interactive_distance_estimate = None
+        self._interactive_measure_pixels.append(point)
+        if len(self._interactive_measure_pixels) == 1:
+            self._image_canvas.set_measurement_overlay(self._interactive_measure_pixels)
+            self._interactive_measure_primary.setText("Point A set • click Point B")
+            self._interactive_measure_secondary.setText(
+                "Esc or right-click cancels • next click completes the distance"
+            )
+            return
+
+        assert self._summary is not None
+        estimate = estimate_depth_pixel_distance(
+            depth=self._arrays["aligned_depth"],
+            depth_valid_mask=self._arrays["aligned_depth_valid_mask"],
+            intrinsics_matrix=self._arrays["aligned_intrinsics_matrix"],
+            pixel_a_xy=self._interactive_measure_pixels[0],
+            pixel_b_xy=self._interactive_measure_pixels[1],
+            depth_scale=self._summary.depth_scale,
+            intrinsics_source=self._summary.intrinsics_source,
+            calibration_status=self._summary.calibration_status,
+        )
+        self._interactive_distance_estimate = estimate
+        primary, secondary = format_interactive_distance(estimate)
+        self._interactive_measure_primary.setText(primary)
+        self._interactive_measure_secondary.setText(secondary)
+        self._image_canvas.set_measurement_overlay(
+            self._interactive_measure_pixels,
+            primary_text=primary,
+            secondary_text=secondary,
+        )
+
+    @property
+    def interactive_distance_estimate(self) -> InteractiveDistanceEstimate | None:
+        return self._interactive_distance_estimate
 
     def _build_3d_panel(self) -> QFrame:
         panel = QFrame()
@@ -628,6 +774,8 @@ class InspectionPage(QWidget):
         rgb = image[..., ::-1]
         self._summary = None
         self._arrays = {}
+        self._cancel_interactive_measurement()
+        self._refresh_interactive_measurement_availability()
         self.set_canonical_registration_presentation(None)
         self._object_list.clear()
         self._image_canvas.set_bundle(rgb, (), {})
@@ -640,6 +788,8 @@ class InspectionPage(QWidget):
         previous = self._selected_id
         self._summary = summary
         self._arrays = {name: np.array(value, copy=True) for name, value in arrays.items()}
+        self._cancel_interactive_measurement()
+        self._refresh_interactive_measurement_availability()
         if summary.calibration_status == "calibrated":
             self._uncertainty_notice.setText(
                 "Estimated Uncertainty — Calibrated camera geometry; depth/scale uncertainty still applies"
@@ -831,6 +981,8 @@ class InspectionPage(QWidget):
         self._apply_state()
 
     def _set_edit_mode(self, mode: MaskEditMode) -> None:
+        if hasattr(self, "_interactive_measure_button") and self._interactive_measure_button.isChecked():
+            self._interactive_measure_button.setChecked(False)
         self._image_canvas.set_edit_mode(mode)
 
     def _on_mask_edited(self, observation_id: str) -> None:

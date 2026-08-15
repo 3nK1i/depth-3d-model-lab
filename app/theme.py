@@ -1164,6 +1164,21 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.warning}; background-color: {p.footer_status_amber_bg}; border: 1px solid {p.footer_status_amber_border};
         border-radius: 5px; padding: 6px 8px; font-size: 10px; font-weight: 700;
     }}
+    QFrame#inspectionInteractiveMeasureBar {{
+        background-color: rgba(18, 34, 39, 220);
+        border: 1px solid #245662;
+        border-radius: 6px;
+    }}
+    QLabel#inspectionInteractiveMeasurePrimary {{
+        color: #e8fbff;
+        font-size: 11px;
+        font-weight: 800;
+    }}
+    QLabel#inspectionInteractiveMeasureSecondary {{
+        color: #8fb8c1;
+        font-size: 9px;
+        font-weight: 650;
+    }}
 
 
 
@@ -1443,6 +1458,23 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     QFrame#reconstructionViewportTools QPushButton#iconButton:checked {{
         background-color: #2a1417;
         border-color: {p.accent};
+    }}
+
+    QFrame#reconstructionInteractiveMeasureHud {{
+        background-color: rgba(14, 31, 36, 224);
+        border: 1px solid #245662;
+        border-radius: 7px;
+        margin: 12px;
+    }}
+    QLabel#reconstructionInteractiveMeasurePrimary {{
+        color: #e8fbff;
+        font-size: 11px;
+        font-weight: 800;
+    }}
+    QLabel#reconstructionInteractiveMeasureSecondary {{
+        color: #8fb8c1;
+        font-size: 9px;
+        font-weight: 650;
     }}
 
     QLabel#reconstructionViewportSafety {{

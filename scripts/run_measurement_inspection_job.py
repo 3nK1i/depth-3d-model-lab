@@ -489,7 +489,18 @@ def _write_bundle(output: Path, aligned, extraction, fitting, measurements, obse
     arrays: dict[str, np.ndarray] = {
         "aligned_rgb": np.asarray(aligned.aligned_rgb, dtype=np.uint8),
         "depth_preview": np.asarray(depth_preview, dtype=np.uint8),
+        # Interactive measurement reuses the exact aligned depth/intrinsics
+        # evidence already produced by the inspection pipeline.  These arrays
+        # are additive and optional for older saved bundles.
+        "aligned_depth": np.asarray(aligned.depth, dtype=np.float32),
+        "aligned_depth_valid_mask": np.asarray(aligned.depth_valid_mask, dtype=bool),
+        "aligned_intrinsics_matrix": np.asarray(aligned.intrinsics.matrix, dtype=np.float64),
     }
+    if aligned.confidence is not None:
+        arrays["aligned_confidence"] = np.asarray(aligned.confidence, dtype=np.float32)
+        arrays["aligned_confidence_valid_mask"] = np.asarray(
+            aligned.confidence_valid_mask, dtype=bool
+        )
     extraction_by_id = {value.observation_id: value for value in extraction.object_results}
     fitting_by_id = {value.observation_id: value for value in fitting.object_results}
     measurement_by_id = {value.observation_id: value for value in measurements.object_results}

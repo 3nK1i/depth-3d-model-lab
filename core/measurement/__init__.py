@@ -34,7 +34,21 @@ from core.measurement.export_schema import (
 from core.measurement.validation import available_measurements, validate_measurement_estimate
 from core.tracking.contracts import TrackingState
 
+
+from core.measurement.interactive_distance import (
+    InteractiveDistanceEstimate,
+    InteractiveDistanceState,
+    estimate_depth_pixel_distance,
+    estimate_reconstruction_distance,
+    format_interactive_distance,
+)
+
 __all__ = [
+    "format_interactive_distance",
+    "estimate_reconstruction_distance",
+    "estimate_depth_pixel_distance",
+    "InteractiveDistanceState",
+    "InteractiveDistanceEstimate",
     "ArtifactReference",
     "ArtifactRole",
     "BoundingBox3D",

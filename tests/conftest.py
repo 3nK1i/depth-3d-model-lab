@@ -41,7 +41,7 @@ def _install_fake_vispy_canvas() -> None:
         # Pure unit tests may run in a minimal environment without Qt.
         return
 
-    valid_modes = {"select", "orbit", "pan", "zoom"}
+    valid_modes = {"select", "orbit", "pan", "zoom", "measure"}
     valid_backgrounds = {"dark", "black", "white", "transparent"}
 
     class _NativeWidget(QWidget):
@@ -158,6 +158,8 @@ def _install_fake_vispy_canvas() -> None:
         interaction_started = pyqtSignal()
         interaction_ended = pyqtSignal()
         escape_pressed = pyqtSignal()
+        measurement_point_picked = pyqtSignal(object)
+        measurement_cancel_requested = pyqtSignal()
 
         MAX_SPARSE_LANDMARK_DISPLAY_POINTS = 8_192
         MAX_KEYFRAME_DISPLAY_FRUSTUMS = 96
@@ -212,6 +214,7 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
+            self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
             self._canonical_camera_loaded = False
             self._canonical_camera_scene_id = ""
             self._canonical_camera_artifact_id = ""
@@ -495,6 +498,16 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
+            self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
+
+        def set_interactive_measurement_overlay(self, points_reconstruction, *, update_canvas: bool = True) -> None:
+            points = np.asarray(points_reconstruction, dtype=np.float64)
+            if points.ndim != 2 or points.shape[1:] != (3,) or points.shape[0] not in {1, 2}:
+                raise ValueError("Interactive measurement overlay requires one or two 3D points.")
+            self._interactive_measurement_points = points.copy()
+
+        def clear_interactive_measurement_overlay(self, *, update_canvas: bool = True) -> None:
+            self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
 
         def set_canonical_mesh_visible(self, visible: bool) -> None:
             self._canonical_mesh_layer_visible = bool(visible)

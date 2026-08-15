@@ -18,7 +18,7 @@ DEFAULT_POINT_SIZE = 4.0
 DEFAULT_CAMERA_DISTANCE = 5.0
 DEFAULT_FOV = 45.0
 DEFAULT_INTERACTION_MODE = "orbit"
-_VALID_INTERACTION_MODES = {"select", "orbit", "pan", "zoom"}
+_VALID_INTERACTION_MODES = {"select", "orbit", "pan", "zoom", "measure"}
 
 _BACKGROUND_COLORS: dict[str, str | tuple[float, float, float, float]] = {
     "dark": "#090b0e",
@@ -52,7 +52,7 @@ class _ModeTurntableCamera(scene.cameras.TurntableCamera):
         if event.handled or not self.interactive:
             return
 
-        if self._interaction_mode == "select":
+        if self._interaction_mode in {"select", "measure"}:
             if event.type == "mouse_release":
                 self._event_value = None
             elif event.type in {"mouse_press", "mouse_move", "mouse_wheel", "gesture_zoom"}:
@@ -280,6 +280,7 @@ class PointCloudCanvas(QObject):
             "orbit": Qt.CursorShape.OpenHandCursor,
             "pan": Qt.CursorShape.SizeAllCursor,
             "zoom": Qt.CursorShape.SizeVerCursor,
+            "measure": Qt.CursorShape.CrossCursor,
         }
         self.native.setCursor(cursors[mode])
 
@@ -387,6 +388,8 @@ class ReconstructionCanvas(QObject):
     interaction_started = pyqtSignal()
     interaction_ended = pyqtSignal()
     escape_pressed = pyqtSignal()
+    measurement_point_picked = pyqtSignal(object)
+    measurement_cancel_requested = pyqtSignal()
 
     MAX_TRAJECTORY_POSES = 20_000
     MAX_TRAJECTORY_DISPLAY_POINTS = 4_096
@@ -537,6 +540,27 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = 0
         self._canonical_mesh_bounds_min = None
         self._canonical_mesh_bounds_max = None
+        self._canonical_mesh_vertices_viewer = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_mesh_faces = np.zeros((0, 3), dtype=np.uint32)
+        # Interactive ruler overlay is presentation-only and always resolves
+        # points against the canonical mesh, never against Gaussian/NeRF data.
+        self._interactive_measure_line = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="strip",
+            color=(0.23, 0.78, 0.85, 0.98),
+            width=2.4,
+            parent=self._view.scene,
+        )
+        self._interactive_measure_markers = scene.visuals.Markers(parent=self._view.scene)
+        self._interactive_measure_markers.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(0.23, 0.78, 0.85, 1.0),
+            edge_color=(0.92, 0.99, 1.0, 1.0),
+            size=9.0,
+            edge_width=1.2,
+        )
+        self._interactive_measure_line.visible = False
+        self._interactive_measure_markers.visible = False
         # Phase 9.3C keeps persistent canonical-scene cameras separate from
         # live/offline sparse-SfM visuals.  They share the same reconstruction
         # coordinate transform but never inherit canonical geometry authority.
@@ -1143,6 +1167,9 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = int(triangles.shape[0])
         self._canonical_mesh_bounds_min = vertices.min(axis=0).astype(np.float32)
         self._canonical_mesh_bounds_max = vertices.max(axis=0).astype(np.float32)
+        self._canonical_mesh_vertices_viewer = np.array(vertices, copy=True)
+        self._canonical_mesh_faces = np.array(triangles, copy=True)
+        self.clear_interactive_measurement_overlay(update_canvas=False)
         self._refresh_world_axis_scale()
         self._canvas.update()
 
@@ -1174,6 +1201,9 @@ class ReconstructionCanvas(QObject):
         self._canonical_mesh_face_count = 0
         self._canonical_mesh_bounds_min = None
         self._canonical_mesh_bounds_max = None
+        self._canonical_mesh_vertices_viewer = np.zeros((0, 3), dtype=np.float32)
+        self._canonical_mesh_faces = np.zeros((0, 3), dtype=np.uint32)
+        self.clear_interactive_measurement_overlay(update_canvas=False)
         self._refresh_world_axis_scale()
         if update_canvas:
             self._canvas.update()
@@ -2260,8 +2290,75 @@ class ReconstructionCanvas(QObject):
             "orbit": Qt.CursorShape.OpenHandCursor,
             "pan": Qt.CursorShape.SizeAllCursor,
             "zoom": Qt.CursorShape.SizeVerCursor,
+            "measure": Qt.CursorShape.CrossCursor,
         }
         self.native.setCursor(cursors[mode])
+
+    def _pick_canonical_surface_point(self, click_xy) -> np.ndarray | None:
+        if not self._canonical_mesh_loaded or self._canonical_mesh_vertices_viewer.size == 0:
+            return None
+        click = np.asarray(click_xy, dtype=np.float64)
+        if click.shape != (2,) or not np.isfinite(click).all():
+            return None
+        try:
+            transform = self._canonical_mesh.transforms.get_transform("visual", "canvas")
+            mapped = np.asarray(transform.map(self._canonical_mesh_vertices_viewer), dtype=np.float64)
+            from app.reconstruction_interactive_measurement import pick_projected_surface_point
+            from app.reconstruction_visualization import viewer_point_to_reconstruction
+
+            picked = pick_projected_surface_point(
+                vertices_viewer=self._canonical_mesh_vertices_viewer,
+                faces=self._canonical_mesh_faces,
+                mapped_homogeneous=mapped,
+                click_xy=click,
+            )
+            if picked is None:
+                return None
+            return viewer_point_to_reconstruction(np.asarray(picked.point_viewer, dtype=np.float64))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            # Picking is a convenience interaction. A transform/presentation
+            # failure must fail closed rather than invent a surface point.
+            return None
+
+    def set_interactive_measurement_overlay(
+        self,
+        points_reconstruction,
+        *,
+        update_canvas: bool = True,
+    ) -> None:
+        from app.reconstruction_visualization import reconstruction_points_to_viewer
+
+        points = np.asarray(points_reconstruction, dtype=np.float64)
+        if points.size == 0:
+            self.clear_interactive_measurement_overlay(update_canvas=update_canvas)
+            return
+        if points.ndim != 2 or points.shape[1:] != (3,) or points.shape[0] not in {1, 2}:
+            raise ValueError("Interactive measurement overlay requires one or two 3D points.")
+        if not np.isfinite(points).all():
+            raise ValueError("Interactive measurement overlay points must be finite.")
+        viewer = reconstruction_points_to_viewer(points).astype(np.float32)
+        self._interactive_measure_markers.set_data(
+            pos=viewer,
+            face_color=(0.23, 0.78, 0.85, 1.0),
+            edge_color=(0.92, 0.99, 1.0, 1.0),
+            size=9.0,
+            edge_width=1.2,
+        )
+        self._interactive_measure_markers.visible = True
+        if viewer.shape[0] == 2:
+            self._interactive_measure_line.set_data(pos=viewer, connect="strip")
+            self._interactive_measure_line.visible = True
+        else:
+            self._interactive_measure_line.visible = False
+        if update_canvas:
+            self._canvas.update()
+
+    def clear_interactive_measurement_overlay(self, *, update_canvas: bool = True) -> None:
+        if hasattr(self, "_interactive_measure_line"):
+            self._interactive_measure_line.visible = False
+            self._interactive_measure_markers.visible = False
+        if update_canvas:
+            self._canvas.update()
 
     def set_grid_visible(self, visible: bool) -> None:
         self._grid_visible = bool(visible)
@@ -2288,7 +2385,18 @@ class ReconstructionCanvas(QObject):
         grid.visible = self._grid_visible
         return grid
 
-    def _on_mouse_press(self, _event) -> None:
+    def _on_mouse_press(self, event) -> None:
+        if self.interaction_mode == "measure":
+            button = getattr(event, "button", None)
+            if button == 2:
+                self.measurement_cancel_requested.emit()
+                return
+            if button not in {None, 1}:
+                return
+            point = self._pick_canonical_surface_point(getattr(event, "pos", ()))
+            if point is not None:
+                self.measurement_point_picked.emit(point)
+            return
         if self.interaction_mode == "select":
             return
         self._is_interacting = True

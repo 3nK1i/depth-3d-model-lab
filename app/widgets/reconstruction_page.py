@@ -39,6 +39,12 @@ from time import monotonic
 
 import numpy as np
 
+from core.measurement.interactive_distance import (
+    InteractiveDistanceEstimate,
+    estimate_reconstruction_distance,
+    format_interactive_distance,
+)
+
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
@@ -298,6 +304,8 @@ class ReconstructionPage(QWidget):
         self._persistent_authority_snapshot: PersistentSceneAuthoritySnapshot | None = None
         self._persisted_metric_assessment = None
         self._canonical_scene_presentation: CanonicalScenePresentation | None = None
+        self._interactive_measure_points_reconstruction: list[np.ndarray] = []
+        self._interactive_distance_estimate: InteractiveDistanceEstimate | None = None
         self._canonical_viewer_mesh: CanonicalViewerMesh | None = None
         self._canonical_viewer_error = ""
         self._canonical_camera_presentation: CanonicalCameraTrajectoryPresentation | None = None
@@ -366,6 +374,7 @@ class ReconstructionPage(QWidget):
         self._viewport_focus_mode = False
         self._saved_body_splitter_sizes: list[int] | None = None
         self._build_ui()
+        self._refresh_reconstruction_interactive_measurement_availability()
         self._visual_pose_timer = QTimer(self)
         self._visual_pose_timer.setSingleShot(True)
         self._visual_pose_timer.setInterval(33)
@@ -572,8 +581,12 @@ class ReconstructionPage(QWidget):
         grid.setSpacing(0)
 
         self._reconstruction_canvas = ReconstructionCanvas(self)
-        self._reconstruction_canvas.escape_pressed.connect(
-            self.viewport_escape_requested.emit
+        self._reconstruction_canvas.escape_pressed.connect(self._on_viewport_escape)
+        self._reconstruction_canvas.measurement_cancel_requested.connect(
+            self._cancel_reconstruction_interactive_measurement
+        )
+        self._reconstruction_canvas.measurement_point_picked.connect(
+            self._on_reconstruction_interactive_measurement_point
         )
         grid.addWidget(self._reconstruction_canvas.native, 0, 0)
 
@@ -620,6 +633,7 @@ class ReconstructionPage(QWidget):
             ("orbit", "orbit", "Orbit reconstruction view"),
             ("pan", "pan", "Pan reconstruction view"),
             ("zoom", "zoom", "Zoom reconstruction view"),
+            ("ruler", "measure", "Measure distance — click Point A, then Point B"),
         ):
             button = IconButton(icon, size=28, icon_size=15, tooltip=tip, checkable=True)
             button.clicked.connect(lambda _checked, value=mode: self._set_viewport_tool(value))
@@ -728,6 +742,30 @@ class ReconstructionPage(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
         )
 
+        self._interactive_measure_hud = QFrame(host)
+        self._interactive_measure_hud.setObjectName("reconstructionInteractiveMeasureHud")
+        self._interactive_measure_hud.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        measure_hud_layout = QVBoxLayout(self._interactive_measure_hud)
+        measure_hud_layout.setContentsMargins(11, 7, 11, 7)
+        measure_hud_layout.setSpacing(1)
+        self._interactive_measure_primary = QLabel("Click Point A")
+        self._interactive_measure_primary.setObjectName("reconstructionInteractiveMeasurePrimary")
+        self._interactive_measure_primary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._interactive_measure_secondary = QLabel(
+            "Canonical surface ruler • estimated metric value shown only when scale evidence exists"
+        )
+        self._interactive_measure_secondary.setObjectName("reconstructionInteractiveMeasureSecondary")
+        self._interactive_measure_secondary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        measure_hud_layout.addWidget(self._interactive_measure_primary)
+        measure_hud_layout.addWidget(self._interactive_measure_secondary)
+        self._interactive_measure_hud.hide()
+        grid.addWidget(
+            self._interactive_measure_hud,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+        )
+
         self._diagnostics_hud = ReconstructionDiagnosticsHud(host)
         diagnostics_button.toggled.connect(self._sync_diagnostics_visibility)
         self._sync_diagnostics_visibility()
@@ -764,7 +802,98 @@ class ReconstructionPage(QWidget):
         return card
 
     def _set_viewport_tool(self, mode: str) -> None:
+        if mode == "measure":
+            self._begin_reconstruction_interactive_measurement()
+            return
         self._reconstruction_canvas.set_interaction_mode(mode)
+
+    def _reconstruction_interactive_measurement_available(self) -> bool:
+        return bool(self._reconstruction_canvas.canonical_mesh_loaded)
+
+    def _refresh_reconstruction_interactive_measurement_availability(self) -> None:
+        button = self._viewport_tool_buttons.get("measure")
+        if button is None:
+            return
+        available = self._reconstruction_interactive_measurement_available()
+        button.setEnabled(available)
+        button.setToolTip(
+            "Measure distance — click Point A, then Point B"
+            if available
+            else "Load an integrity-verified canonical surface to measure distance"
+        )
+        if not available and self._reconstruction_canvas.interaction_mode == "measure":
+            self._cancel_reconstruction_interactive_measurement(switch_to_orbit=True)
+
+    def _begin_reconstruction_interactive_measurement(self) -> None:
+        if not self._reconstruction_interactive_measurement_available():
+            self._refresh_reconstruction_interactive_measurement_availability()
+            return
+        self._interactive_measure_points_reconstruction = []
+        self._interactive_distance_estimate = None
+        self._reconstruction_canvas.clear_interactive_measurement_overlay()
+        self._reconstruction_canvas.set_interaction_mode("measure")
+        self._interactive_measure_primary.setText("Click Point A")
+        self._interactive_measure_secondary.setText(
+            "Click two canonical surface points • estimated distance includes ± uncertainty"
+        )
+        self._interactive_measure_hud.show()
+
+    def _on_reconstruction_interactive_measurement_point(self, point) -> None:
+        if self._reconstruction_canvas.interaction_mode != "measure":
+            return
+        value = np.asarray(point, dtype=np.float64)
+        if value.shape != (3,) or not np.isfinite(value).all():
+            return
+        if len(self._interactive_measure_points_reconstruction) >= 2:
+            self._interactive_measure_points_reconstruction = []
+            self._interactive_distance_estimate = None
+        self._interactive_measure_points_reconstruction.append(np.array(value, copy=True))
+        self._reconstruction_canvas.set_interactive_measurement_overlay(
+            np.asarray(self._interactive_measure_points_reconstruction, dtype=np.float64)
+        )
+        if len(self._interactive_measure_points_reconstruction) == 1:
+            self._interactive_measure_primary.setText("Point A set • click Point B")
+            self._interactive_measure_secondary.setText(
+                "Surface point locked to canonical geometry • Esc or right-click cancels"
+            )
+            return
+
+        presentation = self._canonical_scene_presentation
+        estimate = estimate_reconstruction_distance(
+            point_a_reconstruction=self._interactive_measure_points_reconstruction[0],
+            point_b_reconstruction=self._interactive_measure_points_reconstruction[1],
+            unit_to_metre=(presentation.scale_unit_to_metre if presentation is not None else None),
+            relative_scale_uncertainty=(
+                presentation.scale_relative_uncertainty if presentation is not None else None
+            ),
+            scale_state=(presentation.scale_state.value if presentation is not None else "not_qualified"),
+            calibration_available=bool(presentation is not None and presentation.calibration_available),
+        )
+        self._interactive_distance_estimate = estimate
+        primary, secondary = format_interactive_distance(estimate)
+        self._interactive_measure_primary.setText(primary)
+        self._interactive_measure_secondary.setText(secondary)
+
+    def _cancel_reconstruction_interactive_measurement(self, *, switch_to_orbit: bool = True) -> None:
+        self._interactive_measure_points_reconstruction = []
+        self._interactive_distance_estimate = None
+        self._reconstruction_canvas.clear_interactive_measurement_overlay()
+        self._interactive_measure_hud.hide()
+        if switch_to_orbit and self._reconstruction_canvas.interaction_mode == "measure":
+            orbit = self._viewport_tool_buttons.get("orbit")
+            if orbit is not None:
+                orbit.setChecked(True)
+            self._reconstruction_canvas.set_interaction_mode("orbit")
+
+    def _on_viewport_escape(self) -> None:
+        if self._reconstruction_canvas.interaction_mode == "measure":
+            self._cancel_reconstruction_interactive_measurement(switch_to_orbit=True)
+            return
+        self.viewport_escape_requested.emit()
+
+    @property
+    def interactive_distance_estimate(self) -> InteractiveDistanceEstimate | None:
+        return self._interactive_distance_estimate
 
     def set_viewport_focus_mode(self, enabled: bool) -> None:
         """Expand only the Reconstruction viewport without recreating its GL surface."""
@@ -1846,6 +1975,7 @@ class ReconstructionPage(QWidget):
             if hasattr(self, "_viewport_safety"):
                 self._viewport_safety.setText("VIEWER Z-UP • ARBITRARY GAUGE")
                 self._viewport_safety.setToolTip(str(exc))
+            self._refresh_reconstruction_interactive_measurement_availability()
             self.canonical_scene_presentation_changed.emit(None)
             return
 
@@ -1885,6 +2015,7 @@ class ReconstructionPage(QWidget):
                 "Viewport axis conversion is presentation-only. Metric wording is shown only from "
                 "the scene-bound Phase 9.1H metric qualification assessment; metrology is not certified."
             )
+        self._refresh_reconstruction_interactive_measurement_availability()
         if changed:
             self.canonical_scene_presentation_changed.emit(presentation)
 
@@ -1932,17 +2063,21 @@ class ReconstructionPage(QWidget):
         """
 
         was_loaded = self._reconstruction_canvas.canonical_mesh_loaded
+        if self._reconstruction_canvas.interaction_mode == "measure":
+            self._cancel_reconstruction_interactive_measurement(switch_to_orbit=True)
         self._canonical_viewer_mesh = None
         self._canonical_viewer_error = ""
         scene = self._persistent_scene
         if scene is None:
             self._reconstruction_canvas.clear_canonical_mesh()
+            self._refresh_reconstruction_interactive_measurement_availability()
             self._refresh_viewport_state()
             return False
 
         presentation = self._canonical_scene_presentation
         if presentation is None or not presentation.viewer_resource_ready:
             self._reconstruction_canvas.clear_canonical_mesh()
+            self._refresh_reconstruction_interactive_measurement_availability()
             self._apply_canonical_viewer_status()
             self._refresh_viewport_state()
             return False
@@ -1951,6 +2086,7 @@ class ReconstructionPage(QWidget):
             mesh = load_canonical_viewer_mesh(scene)
             if mesh is None:
                 self._reconstruction_canvas.clear_canonical_mesh()
+                self._refresh_reconstruction_interactive_measurement_availability()
                 self._apply_canonical_viewer_status()
                 self._refresh_viewport_state()
                 return False
@@ -1966,6 +2102,7 @@ class ReconstructionPage(QWidget):
             # A viewer-resource failure cannot revoke already-established canonical
             # authority, but stale geometry must never remain on screen.
             self._reconstruction_canvas.clear_canonical_mesh()
+            self._refresh_reconstruction_interactive_measurement_availability()
             self._canonical_viewer_error = str(exc)
             self._viewport_state.setText("Canonical surface unavailable")
             self._viewport_state.setToolTip(str(exc))
@@ -1983,6 +2120,7 @@ class ReconstructionPage(QWidget):
             self._reconstruction_canvas.fit_scene()
             self._visualizer_fitted_once = True
         self._apply_canonical_viewer_status()
+        self._refresh_reconstruction_interactive_measurement_availability()
         return bool(was_loaded and self._reconstruction_canvas.canonical_mesh_loaded)
 
     @property
