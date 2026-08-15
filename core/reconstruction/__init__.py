@@ -325,6 +325,15 @@ from core.reconstruction.gaussian_optimization_execution import (
     run_supervised_phase9_gaussian_optimization,
 )
 
+from core.reconstruction.gaussian_persistence import (
+    PHASE9_4D_GAUSSIAN_PERSISTENCE_PHASE,
+    PHASE9_4D_GAUSSIAN_PERSISTENCE_SCHEMA_VERSION,
+    GaussianPersistenceState,
+    GaussianPersistentRepresentationResult,
+    persist_gaussian_representation,
+    reload_persistent_gaussian_representation,
+)
+
 from core.reconstruction.gaussian_benchmarking import (
     GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
     GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION,
@@ -1085,6 +1094,12 @@ __all__ = [
     "GaussianOptimizationExecutionReport",
     "build_gaussian_seed_from_canonical_arrays",
     "run_supervised_phase9_gaussian_optimization",
+    "PHASE9_4D_GAUSSIAN_PERSISTENCE_PHASE",
+    "PHASE9_4D_GAUSSIAN_PERSISTENCE_SCHEMA_VERSION",
+    "GaussianPersistenceState",
+    "GaussianPersistentRepresentationResult",
+    "persist_gaussian_representation",
+    "reload_persistent_gaussian_representation",
     "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
     "GaussianBenchmarkBackendResult",
     "GaussianBenchmarkHardwareProfile",
