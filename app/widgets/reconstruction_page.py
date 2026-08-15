@@ -39,6 +39,9 @@ Gaussian viewer resources without launching a Gaussian backend.
 Phase 9.5E adds isolated interactive persisted Nerfacto viewing. Phase 9.5F adds
 presentation-only NeRF render-detail/opacity/refresh controls plus a NeRF appearance
 scene-layer toggle while canonical geometry remains the only picking/measurement authority.
+Phase 9.5G bounds interactive render requests to one in-flight plus one latest-view
+pending request, surfaces isolated-worker CUDA/render diagnostics, retains at most two
+render frames, and releases the external worker on hide/switch/clear/shutdown.
 """
 
 from __future__ import annotations
@@ -215,6 +218,11 @@ from app.reconstruction_nerf_controls import (
     NERF_OPACITY_PERCENT_MIN,
     NERF_RENDER_PROFILES,
     NerfDisplaySettings,
+)
+from app.reconstruction_nerf_resources import (
+    NerfViewerRuntimeHealth,
+    build_nerf_interactive_resource_policy,
+    build_nerf_viewer_runtime_health,
 )
 from app.reconstruction_representation_switching import (
     RepresentationSwitchTarget,
@@ -413,6 +421,12 @@ class ReconstructionPage(QWidget):
         self._interactive_nerf_latest_frame_path = ""
         self._interactive_nerf_last_render_ms = 0.0
         self._interactive_nerf_session_dir: Path | None = None
+        self._nerf_resource_policy = build_nerf_interactive_resource_policy()
+        self._nerf_runtime_health: NerfViewerRuntimeHealth | None = None
+        self._nerf_worker_start_count = 0
+        self._nerf_worker_release_count = 0
+        self._nerf_release_pending = False
+        self._nerf_worker_telemetry: dict[str, object] = {}
         self._nerf_worker_client = ReconstructionNerfWorkerClient(self)
         self._nerf_worker_client.ready.connect(self._on_interactive_nerf_worker_ready)
         self._nerf_worker_client.frame_ready.connect(self._on_interactive_nerf_frame_ready)
@@ -2794,6 +2808,47 @@ class ReconstructionPage(QWidget):
             "Presentation-only settings. They do not modify the persisted NeRF artifact or any scene authority."
         )
 
+    @property
+    def nerf_runtime_health(self) -> NerfViewerRuntimeHealth | None:
+        return self._nerf_runtime_health
+
+    def _refresh_nerf_runtime_health(self) -> None:
+        persistent = self._persistent_scene
+        if persistent is None or not bool(getattr(persistent, "canonical_geometry_authoritative", False)):
+            self._nerf_runtime_health = None
+            if hasattr(self, "_nerf_resources_value"):
+                self._nerf_resources_value.setText("External renderer unloaded")
+                self._nerf_performance_value.setText("No interactive render measured")
+                self._nerf_lifecycle_value.setText("Unloaded • no NeRF worker resident")
+            return
+        health = build_nerf_viewer_runtime_health(
+            policy=self._nerf_resource_policy,
+            worker_state=self._nerf_worker_client.state,
+            worker_pid=self._nerf_worker_client.worker_pid,
+            telemetry=self._nerf_worker_telemetry or self._nerf_worker_client.last_telemetry,
+            last_render_ms=self._interactive_nerf_last_render_ms,
+            worker_start_count=self._nerf_worker_start_count,
+            worker_release_count=self._nerf_worker_release_count,
+            queue=self._nerf_worker_client.queue_snapshot,
+            canonical_geometry_authoritative=True,
+        )
+        self._nerf_runtime_health = health
+        if not hasattr(self, "_nerf_resources_value"):
+            return
+        self._nerf_resources_value.setText(health.resources_text)
+        self._nerf_performance_value.setText(health.performance_text)
+        self._nerf_lifecycle_value.setText(health.lifecycle_text)
+        self._nerf_resources_value.setToolTip(
+            "CUDA allocation/reservation values come from torch inside the isolated Nerfstudio worker. "
+            "They describe that external process only, not total application VRAM usage."
+        )
+        self._nerf_performance_value.setToolTip(
+            "Observed full-image render latency only. Phase 9.5G bounds the request queue; it does not certify NeRF visual quality."
+        )
+        self._nerf_lifecycle_value.setToolTip(
+            "At most one render executes and one latest view waits. Hide, Preview, scene switch/clear and shutdown stop the isolated worker; the real 9.5G target check verifies the worker PID leaves nvidia-smi."
+        )
+
     def _gaussian_settings_from_controls(self) -> GaussianDisplaySettings:
         density = int(self._gaussian_density_combo.currentData() or 100)
         return GaussianDisplaySettings(
@@ -3546,18 +3601,26 @@ class ReconstructionPage(QWidget):
                 height=self._nerf_display_settings.render_height,
                 **state,
             )
-            self._nerf_worker_client.request_render(request.as_protocol_payload())
+            queue_result = self._nerf_worker_client.request_render(request.as_protocol_payload())
         except (RuntimeError, TypeError, ValueError) as exc:
             self._on_interactive_nerf_worker_failed(str(exc))
             return
-        self._nerf_state_value.setText("Interactive Nerfacto • rendering current canonical view")
-        self._viewport_state.setText("Interactive Nerfacto • rendering…")
+        if queue_result == "coalesced":
+            self._nerf_state_value.setText("Interactive Nerfacto • latest view queued (older request coalesced)")
+            self._viewport_state.setText("Interactive Nerfacto • rendering latest bounded view…")
+        else:
+            self._nerf_state_value.setText("Interactive Nerfacto • rendering current canonical view")
+            self._viewport_state.setText("Interactive Nerfacto • rendering…")
+        self._refresh_nerf_runtime_health()
 
     def _on_interactive_nerf_worker_ready(self, payload: object) -> None:
         if not self._interactive_nerf_visible or self._interactive_nerf_presentation is None:
             self._nerf_worker_client.stop()
             return
         data = payload if isinstance(payload, dict) else {}
+        self._nerf_worker_telemetry = dict(data)
+        self._nerf_worker_start_count += 1
+        self._refresh_nerf_runtime_health()
         if str(data.get("scene_role", "appearance_only")) != "appearance_only":
             self._on_interactive_nerf_worker_failed("Interactive NeRF worker violated appearance-only authority.")
             return
@@ -3587,6 +3650,7 @@ class ReconstructionPage(QWidget):
             return
         self._interactive_nerf_latest_frame_path = path
         self._interactive_nerf_last_render_ms = float(data.get("render_ms", 0.0) or 0.0)
+        self._nerf_worker_telemetry = dict(data)
         self._appearance_preview.set_image_opacity(self._nerf_display_settings.opacity_percent)
         self._appearance_preview.set_mouse_passthrough(True)
         self._appearance_preview.set_footer(
@@ -3601,6 +3665,7 @@ class ReconstructionPage(QWidget):
         self._nerf_state_value.setText(
             f"Interactive Nerfacto ready • last render {self._interactive_nerf_last_render_ms:.0f} ms"
         )
+        self._refresh_nerf_runtime_health()
         self._refresh_representation_switching_controls()
 
     def _on_interactive_nerf_worker_failed(self, message: str) -> None:
@@ -3610,11 +3675,18 @@ class ReconstructionPage(QWidget):
         self._nerf_state_value.setText("Interactive NeRF unavailable • canonical view retained")
         self._nerf_state_value.setToolTip(text)
         self._viewport_state.setText("Canonical scene • interactive NeRF unavailable")
+        self._refresh_nerf_runtime_health()
         self._refresh_representation_switching_controls()
 
-    def _on_interactive_nerf_worker_state_changed(self, _state: str) -> None:
+    def _on_interactive_nerf_worker_state_changed(self, state: str) -> None:
+        normalized = str(state).strip().lower()
+        if normalized == "stopped" and self._nerf_release_pending:
+            self._nerf_worker_release_count += 1
+            self._nerf_release_pending = False
+            self._nerf_worker_telemetry = {}
         if self._interactive_nerf_visible and hasattr(self, "_nerf_state_value"):
             self._refresh_nerf_visualization_controls()
+        self._refresh_nerf_runtime_health()
 
     def _hide_nerf_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
@@ -3632,6 +3704,8 @@ class ReconstructionPage(QWidget):
         self._set_nerf_scene_layer_checked(False)
         self._appearance_preview.hide()
         self._appearance_preview.set_mouse_passthrough(False)
+        if self._nerf_worker_client.is_running:
+            self._nerf_release_pending = True
         if blocking:
             self._nerf_worker_client.stop_blocking()
         else:
@@ -3644,6 +3718,7 @@ class ReconstructionPage(QWidget):
             else:
                 self._schedule_interactive_nerf_session_cleanup(session)
         self._refresh_viewport_state()
+        self._refresh_nerf_runtime_health()
 
     def _hide_nerf_visualization(self, *, refresh: bool = True) -> None:
         if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
@@ -4720,9 +4795,15 @@ class ReconstructionPage(QWidget):
         self._add_status_row(nerf_layout, "Scene", self._nerf_scene_value)
         self._add_status_row(nerf_layout, "Preview", self._nerf_preview_value)
         self._nerf_display_value = self._settings_value("Interactive display not active")
+        self._nerf_resources_value = self._settings_value("External renderer unloaded")
+        self._nerf_performance_value = self._settings_value("No interactive render measured")
+        self._nerf_lifecycle_value = self._settings_value("Unloaded • no NeRF worker resident")
         self._add_status_row(nerf_layout, "Scale", self._nerf_scale_value)
         self._add_status_row(nerf_layout, "State", self._nerf_state_value)
         self._add_status_row(nerf_layout, "Display", self._nerf_display_value)
+        self._add_status_row(nerf_layout, "Resources", self._nerf_resources_value)
+        self._add_status_row(nerf_layout, "Performance", self._nerf_performance_value)
+        self._add_status_row(nerf_layout, "Lifecycle", self._nerf_lifecycle_value)
         self._add_status_row(nerf_layout, "Authority", self._nerf_authority_value)
 
         nerf_controls_hint = QLabel(
@@ -4834,6 +4915,7 @@ class ReconstructionPage(QWidget):
         nerf_layout.addLayout(nerf_buttons)
         layout.addWidget(self._nerf_visualization_group)
         self._refresh_nerf_visualization_controls()
+        self._refresh_nerf_runtime_health()
 
         # F5 consumes the application's existing startup hardware snapshot plus
         # persisted appearance/fallback evidence. Existing static previews remain

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 9.5E persistent isolated Nerfstudio/Nerfacto interactive renderer.
+"""Phase 9.5G-hardened isolated Nerfstudio/Nerfacto interactive renderer.
 
 The worker is intentionally line-protocol driven and owns every Nerfstudio,
 tiny-cuda-nn and torch import.  The production ``depth`` interpreter sends only
@@ -25,7 +25,41 @@ EXPECTED_NERFSTUDIO_REVISION = "6b60855003011b2ca23c2fe3f8e2ca6314c69924"
 EXPECTED_TCNN_REVISION = "b3473c81396fe927293bdfd5a6be32df8769927c"
 MAX_RENDER_DIMENSION = 1280
 MIN_RENDER_DIMENSION = 160
+MAX_RETAINED_FRAMES = 2
 
+
+
+
+def _cuda_telemetry(torch) -> dict[str, float]:
+    if not torch.cuda.is_available():
+        return {
+            "total_vram_mib": 0.0,
+            "cuda_allocated_mib": 0.0,
+            "cuda_reserved_mib": 0.0,
+            "cuda_peak_allocated_mib": 0.0,
+            "cuda_peak_reserved_mib": 0.0,
+        }
+    device = torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(device)
+    mib = 1024.0 * 1024.0
+    return {
+        "total_vram_mib": float(props.total_memory) / mib,
+        "cuda_allocated_mib": float(torch.cuda.memory_allocated(device)) / mib,
+        "cuda_reserved_mib": float(torch.cuda.memory_reserved(device)) / mib,
+        "cuda_peak_allocated_mib": float(torch.cuda.max_memory_allocated(device)) / mib,
+        "cuda_peak_reserved_mib": float(torch.cuda.max_memory_reserved(device)) / mib,
+    }
+
+
+def _prune_frames(frames_dir: Path, *, keep: int = MAX_RETAINED_FRAMES) -> int:
+    frames = sorted(frames_dir.glob("frame-*.png"), key=lambda item: item.stat().st_mtime_ns)
+    while len(frames) > max(1, int(keep)):
+        victim = frames.pop(0)
+        try:
+            victim.unlink()
+        except FileNotFoundError:
+            pass
+    return sum(1 for _ in frames_dir.glob("frame-*.png"))
 
 def _emit(payload: dict[str, Any]) -> None:
     sys.stdout.write(PROTOCOL_PREFIX + json.dumps(payload, sort_keys=True) + "\n")
@@ -227,9 +261,11 @@ def _render_request(torch, pipeline, request: dict[str, Any], frames_dir: Path) 
         camera_type=CameraType.PERSPECTIVE,
     ).to(pipeline.device)
 
-    started = time.monotonic()
     with redirect_stdout(sys.stderr):
         torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+    started = time.monotonic()
+    with redirect_stdout(sys.stderr):
         outputs = pipeline.model.get_outputs_for_camera(camera)
         torch.cuda.synchronize()
     elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -244,6 +280,8 @@ def _render_request(torch, pipeline, request: dict[str, Any], frames_dir: Path) 
     image = image[..., :3]
     frame_path = (frames_dir / f"frame-{request_id:06d}.png").resolve()
     Image.fromarray(image, mode="RGB").save(frame_path)
+    telemetry = _cuda_telemetry(torch)
+    retained = _prune_frames(frames_dir)
     return {
         "type": "frame",
         "status": "PASS",
@@ -254,6 +292,10 @@ def _render_request(torch, pipeline, request: dict[str, Any], frames_dir: Path) 
         "render_ms": float(elapsed_ms),
         "scene_id": str(request.get("scene_id", "")),
         "artifact_id": str(request.get("artifact_id", "")),
+        "retained_frame_count": int(retained),
+        "max_retained_frames": MAX_RETAINED_FRAMES,
+        "resource_hardening_phase": "9.5G",
+        **telemetry,
         "scene_role": "appearance_only",
         "canonical_geometry_authoritative": False,
         "metric_scale_authoritative": False,
@@ -306,11 +348,15 @@ def main() -> int:
         if not torch.cuda.is_available():
             raise RuntimeError("interactive Nerfacto requires CUDA on the qualified target GPU")
         gpu_name = torch.cuda.get_device_name(0)
+        with redirect_stdout(sys.stderr):
+            torch.cuda.reset_peak_memory_stats()
+        ready_telemetry = _cuda_telemetry(torch)
         _emit(
             {
                 "type": "ready",
                 "status": "PASS",
                 "phase": "9.5E",
+                "resource_hardening_phase": "9.5G",
                 "checkpoint_path": str(checkpoint),
                 "checkpoint_sha256": _sha256(checkpoint),
                 "staged_checkpoint_path": str(loaded_checkpoint),
@@ -320,6 +366,10 @@ def main() -> int:
                 "dataset_root": str(dataset_root),
                 "dataset_fingerprint_sha256": str(spec.get("dataset_fingerprint_sha256", "")),
                 "gpu_name": gpu_name,
+                "worker_pid": int(os.getpid()),
+                "retained_frame_count": int(_prune_frames(frames_dir)),
+                "max_retained_frames": MAX_RETAINED_FRAMES,
+                **ready_telemetry,
                 "nerfstudio_revision": ns_revision,
                 "tiny_cuda_nn_revision": tcnn_revision,
                 "scene_role": "appearance_only",
@@ -341,7 +391,15 @@ def main() -> int:
                     raise RuntimeError("protocol request must be a JSON object")
                 request_type = str(request.get("type", ""))
                 if request_type == "shutdown":
-                    _emit({"type": "stopped", "status": "PASS", "phase": "9.5E"})
+                    _emit({
+                        "type": "stopped",
+                        "status": "PASS",
+                        "phase": "9.5E",
+                        "resource_hardening_phase": "9.5G",
+                        "worker_pid": int(os.getpid()),
+                        "retained_frame_count": int(_prune_frames(frames_dir)),
+                        **_cuda_telemetry(torch),
+                    })
                     return 0
                 if request_type != "render":
                     raise RuntimeError(f"unsupported interactive NeRF request type: {request_type}")

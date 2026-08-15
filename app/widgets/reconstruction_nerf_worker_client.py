@@ -1,4 +1,4 @@
-"""Qt-side Phase 9.5E client for the isolated interactive Nerfacto renderer.
+"""Qt-side Phase 9.5G-hardened client for the isolated interactive Nerfacto renderer.
 
 Only lightweight protocol/process supervision lives here.  Nerfstudio, torch and
 tiny-cuda-nn remain entirely inside the external worker interpreter.
@@ -16,6 +16,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSignal
 
 from core.reconstruction.nerf_interactive_runtime import default_phase9_nerf_runtime_spec
+from app.reconstruction_nerf_resources import LatestRenderRequestQueue
 
 PROTOCOL_PREFIX = "EIA_NERF_JSON "
 
@@ -42,6 +43,9 @@ class ReconstructionNerfWorkerClient(QObject):
         self._intentional_stop = False
         self._ready = False
         self._last_request_id = -1
+        self._render_queue = LatestRenderRequestQueue()
+        self._worker_pid = 0
+        self._last_telemetry: dict[str, Any] = {}
         self._kill_timer = QTimer(self)
         self._kill_timer.setSingleShot(True)
         self._kill_timer.timeout.connect(self._force_kill_process_group)
@@ -70,6 +74,18 @@ class ReconstructionNerfWorkerClient(QObject):
     def stderr_tail(self) -> tuple[str, ...]:
         return tuple(self._stderr_tail[-12:])
 
+    @property
+    def queue_snapshot(self):
+        return self._render_queue.snapshot
+
+    @property
+    def worker_pid(self) -> int:
+        return int(self._worker_pid)
+
+    @property
+    def last_telemetry(self) -> dict[str, Any]:
+        return dict(self._last_telemetry)
+
     def start(self, *, load_spec_path: str | Path, session_dir: str | Path, worker_script: str | Path) -> None:
         load_spec = Path(load_spec_path).expanduser().resolve()
         session = Path(session_dir).expanduser().resolve()
@@ -90,7 +106,7 @@ class ReconstructionNerfWorkerClient(QObject):
             raise ValueError(f"Qualified isolated NeRF interpreter is unavailable: {python}")
         setsid = shutil.which("setsid")
         if not setsid:
-            raise RuntimeError("Phase 9.5E requires the POSIX setsid launcher for isolated process-group cleanup.")
+            raise RuntimeError("Phase 9.5G requires the POSIX setsid launcher for isolated process-group cleanup.")
         session.mkdir(parents=True, exist_ok=True)
         self._load_spec_path = str(load_spec)
         self._session_dir = str(session)
@@ -99,6 +115,9 @@ class ReconstructionNerfWorkerClient(QObject):
         self._ready = False
         self._intentional_stop = False
         self._last_request_id = -1
+        self._render_queue.reset()
+        self._worker_pid = 0
+        self._last_telemetry = {}
 
         env = dict(os.environ)
         prefix = python.parent.parent
@@ -143,18 +162,33 @@ class ReconstructionNerfWorkerClient(QObject):
         self._set_state("starting")
         self._process.start()
 
-    def request_render(self, payload: dict[str, Any]) -> None:
+    def _dispatch_render(self, payload: dict[str, Any]) -> None:
+        encoded = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+        written = self._process.write(encoded)
+        if written < 0:
+            raise RuntimeError("Interactive NeRF render request could not be queued.")
+        self._set_state("rendering")
+
+    def request_render(self, payload: dict[str, Any]) -> str:
+        """Submit a render using bounded latest-view coalescing.
+
+        At most one request is executing in the external renderer and at most one
+        newest request is retained. Intermediate viewpoints are dropped rather than
+        building an unbounded stdin/render backlog.
+        """
+
         if not self.is_ready:
             raise RuntimeError("Interactive NeRF renderer is not ready.")
         if str(payload.get("type", "")) != "render":
             raise ValueError("Interactive NeRF client accepts render payloads only.")
         request_id = int(payload.get("request_id", -1))
         self._last_request_id = max(self._last_request_id, request_id)
-        encoded = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
-        written = self._process.write(encoded)
-        if written < 0:
-            raise RuntimeError("Interactive NeRF render request could not be queued.")
-        self._set_state("rendering")
+        dispatch, item = self._render_queue.submit(payload)
+        if not dispatch:
+            return "coalesced"
+        assert item is not None
+        self._dispatch_render(item)
+        return "dispatched"
 
     def stop(self) -> None:
         if not self.is_running:
@@ -163,6 +197,7 @@ class ReconstructionNerfWorkerClient(QObject):
             return
         self._intentional_stop = True
         self._ready = False
+        self._render_queue.cancel_pending()
         try:
             self._process.write(b'{"type":"shutdown"}\n')
         except RuntimeError:
@@ -179,6 +214,7 @@ class ReconstructionNerfWorkerClient(QObject):
             return
         self._intentional_stop = True
         self._ready = False
+        self._render_queue.cancel_pending()
         self._kill_timer.stop()
         try:
             self._process.write(b'{"type":"shutdown"}\n')
@@ -219,19 +255,32 @@ class ReconstructionNerfWorkerClient(QObject):
             kind = str(payload.get("type", ""))
             if kind == "ready" and payload.get("status") == "PASS":
                 self._ready = True
+                self._worker_pid = max(0, int(payload.get("worker_pid", 0) or 0))
+                self._last_telemetry = dict(payload)
                 self._set_state("ready")
                 self.ready.emit(payload)
             elif kind == "frame" and payload.get("status") == "PASS":
-                if int(payload.get("request_id", -1)) >= self._last_request_id:
-                    self._set_state("ready")
+                self._last_telemetry = dict(payload)
+                request_id = int(payload.get("request_id", -1))
+                pending = self._render_queue.complete(request_id)
+                if request_id >= self._last_request_id:
                     self.frame_ready.emit(payload)
+                if pending is not None and self._ready:
+                    self._dispatch_render(pending)
+                else:
+                    self._set_state("ready")
             elif kind in {"error", "fatal"}:
                 message = str(payload.get("error", "Interactive NeRF renderer failed")).strip()
                 if kind == "fatal":
                     self._ready = False
+                    self._render_queue.cancel_pending()
                     self._set_state("failed")
                 else:
-                    self._set_state("ready" if self._ready else "failed")
+                    pending = self._render_queue.complete(int(payload.get("request_id", -1)))
+                    if pending is not None and self._ready:
+                        self._dispatch_render(pending)
+                    else:
+                        self._set_state("ready" if self._ready else "failed")
                 self.failed.emit(message)
             elif kind == "stopped":
                 self._ready = False
@@ -261,6 +310,9 @@ class ReconstructionNerfWorkerClient(QObject):
         was_intentional = self._intentional_stop
         self._ready = False
         self._intentional_stop = False
+        self._render_queue.cancel_pending()
+        self._worker_pid = 0
+        self._last_telemetry = {}
         self._set_state("stopped")
         if not was_intentional and int(exit_code) != 0:
             tail = "\n".join(self.stderr_tail)
