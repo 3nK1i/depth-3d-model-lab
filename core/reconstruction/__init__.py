@@ -314,6 +314,17 @@ from core.reconstruction.gaussian_input_bridge import (
     materialize_gaussian_input_from_da3_persistent_scene,
 )
 
+from core.reconstruction.gaussian_optimization_execution import (
+    PHASE9_4C_DEFAULT_MAX_INPUT_FRAMES,
+    PHASE9_4C_DEFAULT_MAX_SEED_GAUSSIANS,
+    PHASE9_4C_GAUSSIAN_OPTIMIZATION_SCHEMA_VERSION,
+    GaussianCanonicalSeedEvidence,
+    GaussianOptimizationExecutionReport,
+    GaussianOptimizationExecutionState,
+    build_gaussian_seed_from_canonical_arrays,
+    run_supervised_phase9_gaussian_optimization,
+)
+
 from core.reconstruction.gaussian_benchmarking import (
     GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
     GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION,
@@ -1066,6 +1077,14 @@ __all__ = [
     "GaussianInputFrameEvidence",
     "materialize_gaussian_input_from_canonical_scene",
     "materialize_gaussian_input_from_da3_persistent_scene",
+    "PHASE9_4C_GAUSSIAN_OPTIMIZATION_SCHEMA_VERSION",
+    "PHASE9_4C_DEFAULT_MAX_SEED_GAUSSIANS",
+    "PHASE9_4C_DEFAULT_MAX_INPUT_FRAMES",
+    "GaussianOptimizationExecutionState",
+    "GaussianCanonicalSeedEvidence",
+    "GaussianOptimizationExecutionReport",
+    "build_gaussian_seed_from_canonical_arrays",
+    "run_supervised_phase9_gaussian_optimization",
     "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
     "GaussianBenchmarkBackendResult",
     "GaussianBenchmarkHardwareProfile",
