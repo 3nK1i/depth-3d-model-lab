@@ -53,10 +53,16 @@ def test_f2_ui_has_one_gaussian_visualization_group_with_explicit_preview_action
     )
     end = page.index('self._nerf_visualization_group = self._settings_group("NERF VISUALIZATION")', start)
     group = page[start:end]
-    assert 'QPushButton("Show preview")' in group
+    # Phase 9.4E retained the backend-authored static preview action while
+    # polishing its visible label from "Show preview" to the compact "Preview".
+    assert 'QPushButton("Preview")' in group
     assert 'QPushButton("Hide")' in group
     assert "QFileDialog" not in group
-    assert "QComboBox(" not in group
+    # Phase 9.4F adds one presentation-only density combo inside this group.
+    # It must not become a Gaussian backend/runtime selector.
+    assert 'self._gaussian_density_combo = QComboBox()' in group
+    assert "gaussian_backend_combo" not in group
+    assert "reconstructionGaussianBackend" not in group
     assert '"Provider"' in group
     assert '"Scene"' in group
     assert '"Preview"' in group

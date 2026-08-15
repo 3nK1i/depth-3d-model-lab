@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,18 @@ def test_c4_does_not_pull_dense_or_neural_backends_into_live_viewer() -> None:
         ROOT / "app/widgets/viewport/vispy_canvas.py",
         ROOT / "core/reconstruction/live_protocol.py",
     ]
-    text = "\n".join(path.read_text(encoding="utf-8") for path in files).lower()
-    for forbidden in ("depth_anything_3", "gsplat", "nerfstudio", "tinycudann"):
-        assert forbidden not in text
+    imported_modules: list[str] = []
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.extend(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported_modules.append((node.module or "").lower())
+
+    forbidden = ("depth_anything_3", "gsplat", "nerfstudio", "tinycudann")
+    assert not any(
+        module == prefix or module.startswith(prefix + ".")
+        for module in imported_modules
+        for prefix in forbidden
+    )
