@@ -325,6 +325,16 @@ from core.reconstruction.gaussian_interactive_runtime import (
 )
 
 
+from core.reconstruction.nerf_optimization_execution import (
+    PHASE9_5C_DEFAULT_MAX_INPUT_FRAMES,
+    PHASE9_5C_DEFAULT_TRAINING_STEPS,
+    PHASE9_5C_MAX_TRAINING_STEPS,
+    PHASE9_5C_NERF_OPTIMIZATION_SCHEMA_VERSION,
+    NerfOptimizationExecutionReport,
+    NerfOptimizationExecutionState,
+    run_supervised_phase9_nerf_optimization,
+)
+
 from core.reconstruction.nerf_input_bridge import (
     PHASE9_5B_NERF_INPUT_BRIDGE_SCHEMA_VERSION,
     NerfCanonicalInputBridgeResult,
@@ -1125,6 +1135,13 @@ __all__ = [
     "default_phase9_gaussian_runtime_spec",
     "probe_gaussian_checkout",
     "probe_phase9_gaussian_interactive_runtime",
+    "PHASE9_5C_NERF_OPTIMIZATION_SCHEMA_VERSION",
+    "PHASE9_5C_DEFAULT_TRAINING_STEPS",
+    "PHASE9_5C_MAX_TRAINING_STEPS",
+    "PHASE9_5C_DEFAULT_MAX_INPUT_FRAMES",
+    "NerfOptimizationExecutionState",
+    "NerfOptimizationExecutionReport",
+    "run_supervised_phase9_nerf_optimization",
     "PHASE9_5B_NERF_INPUT_BRIDGE_SCHEMA_VERSION",
     "NerfCanonicalInputBridgeResult",
     "NerfInputBridgeState",
