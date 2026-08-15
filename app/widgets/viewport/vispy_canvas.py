@@ -426,6 +426,15 @@ class ReconstructionCanvas(QObject):
 
         self._grid_visible = True
         self._axes_visible = True
+        # Phase 9.3F layer switches are presentation-only session preferences.
+        # They never unload evidence or change reconstruction/measurement authority.
+        self._canonical_mesh_layer_visible = True
+        self._canonical_camera_frustums_layer_visible = True
+        self._canonical_camera_trajectory_layer_visible = True
+        self._semantic_support_layer_visible = True
+        self._canonical_semantic_labels_layer_visible = True
+        self._canonical_semantic_selection_layer_visible = True
+        self._canonical_inspection_overlay_layer_visible = True
         self._grid = self._create_grid_visual()
         self._world_axis_length = 0.28
         self._axis_x, self._axis_y, self._axis_z, self._axis_origin = self._create_world_axes_visuals()
@@ -846,14 +855,7 @@ class ReconstructionCanvas(QObject):
         self._trajectory_visible = bool(visible)
         self._trajectory_line.visible = self._trajectory_visible
         self._trajectory_start.visible = self._trajectory_visible
-        self._canonical_camera_trajectory.visible = bool(
-            self._trajectory_visible
-            and self._canonical_camera_loaded
-            and self._canonical_camera_trajectory_display_count >= 2
-        )
-        self._canonical_camera_start.visible = bool(
-            self._trajectory_visible and self._canonical_camera_loaded
-        )
+        self._refresh_canonical_camera_layer_visibility()
         if self._trajectory_visible:
             self._refresh_trajectory_visual()
         self._canvas.update()
@@ -1097,8 +1099,8 @@ class ReconstructionCanvas(QObject):
             faces=triangles,
             vertex_colors=colors,
         )
-        self._canonical_mesh.visible = True
         self._canonical_mesh_loaded = True
+        self._canonical_mesh.visible = bool(self._canonical_mesh_layer_visible)
         self._canonical_mesh_scene_id = scene_id
         self._canonical_mesh_artifact_id = artifact_id
         self._canonical_mesh_source_path = source_path
@@ -1140,6 +1142,43 @@ class ReconstructionCanvas(QObject):
         self._refresh_world_axis_scale()
         if update_canvas:
             self._canvas.update()
+
+    def set_canonical_mesh_visible(self, visible: bool) -> None:
+        """Toggle only the materialized canonical surface presentation layer."""
+
+        self._canonical_mesh_layer_visible = bool(visible)
+        self._canonical_mesh.visible = bool(
+            self._canonical_mesh_loaded and self._canonical_mesh_layer_visible
+        )
+        self._canvas.update()
+
+    def set_canonical_camera_frustums_visible(self, visible: bool) -> None:
+        self._canonical_camera_frustums_layer_visible = bool(visible)
+        self._refresh_canonical_camera_layer_visibility()
+        self._canvas.update()
+
+    def set_canonical_camera_trajectory_visible(self, visible: bool) -> None:
+        self._canonical_camera_trajectory_layer_visible = bool(visible)
+        self._refresh_canonical_camera_layer_visibility()
+        self._canvas.update()
+
+    def _refresh_canonical_camera_layer_visibility(self) -> None:
+        frustums = bool(
+            self._canonical_camera_loaded
+            and self._keyframes_visible
+            and self._canonical_camera_frustums_layer_visible
+        )
+        trajectory = bool(
+            self._canonical_camera_loaded
+            and self._trajectory_visible
+            and self._canonical_camera_trajectory_layer_visible
+        )
+        self._canonical_camera_frustums.visible = frustums
+        self._canonical_camera_centers.visible = frustums
+        self._canonical_camera_trajectory.visible = bool(
+            trajectory and self._canonical_camera_trajectory_display_count >= 2
+        )
+        self._canonical_camera_start.visible = trajectory
 
     def set_canonical_camera_trajectory(
         self,
@@ -1221,12 +1260,7 @@ class ReconstructionCanvas(QObject):
         self._canonical_camera_total_count = total
         self._canonical_camera_frustum_display_count = int(frustum_matrices.shape[0])
         self._canonical_camera_trajectory_display_count = int(trajectory_positions.shape[0])
-        self._canonical_camera_frustums.visible = bool(self._keyframes_visible)
-        self._canonical_camera_centers.visible = bool(self._keyframes_visible)
-        self._canonical_camera_trajectory.visible = bool(
-            self._trajectory_visible and trajectory_positions.shape[0] >= 2
-        )
-        self._canonical_camera_start.visible = bool(self._trajectory_visible)
+        self._refresh_canonical_camera_layer_visibility()
         self._refresh_world_axis_scale()
         # Frustum depth depends on the refreshed scene scale. Rebuild once if
         # the axis scale changed materially after camera positions were added.
@@ -1346,9 +1380,7 @@ class ReconstructionCanvas(QObject):
             self._canonical_semantic_labels.pos = self._canonical_semantic_label_positions[:label_count]
         else:
             self._canonical_semantic_labels.text = ""
-        self._canonical_semantic_labels.visible = bool(
-            self._semantic_objects_visible and self._canonical_semantic_loaded and label_count
-        )
+        self._refresh_semantic_layer_visibility()
         if self._selected_semantic_object_index is not None:
             self._refresh_selected_canonical_semantic_object()
         self._canvas.update()
@@ -1428,7 +1460,8 @@ class ReconstructionCanvas(QObject):
     def _refresh_canonical_inspection_overlay_visibility(self) -> None:
         selected = self.selected_semantic_object_id
         self._canonical_inspection_overlay.visible = bool(
-            self._semantic_objects_visible
+            self._canonical_inspection_overlay_layer_visible
+            and self._semantic_objects_visible
             and self._semantic_objects_available
             and self._canonical_semantic_loaded
             and self._canonical_inspection_overlay_text
@@ -1482,15 +1515,19 @@ class ReconstructionCanvas(QObject):
 
         self._selected_canonical_semantic_label.text = self._canonical_semantic_labels_text[index]
         self._selected_canonical_semantic_label.pos = self._canonical_semantic_label_positions[index : index + 1]
-        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
-        self._selected_canonical_semantic_label.visible = visible
+        master = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        self._selected_canonical_semantic_label.visible = bool(
+            master and self._canonical_semantic_labels_layer_visible
+        )
 
         vertices = self._canonical_semantic_surface_vertices[index]
         faces = self._canonical_semantic_surface_faces[index]
         if vertices.shape[0] and faces.shape[0]:
             self._selected_canonical_semantic_mesh.set_data(vertices=vertices, faces=faces)
             self._selected_canonical_semantic_surface_loaded = True
-            self._selected_canonical_semantic_mesh.visible = visible
+            self._selected_canonical_semantic_mesh.visible = bool(
+                master and self._canonical_semantic_selection_layer_visible
+            )
 
     def set_semantic_objects(
         self,
@@ -1567,9 +1604,7 @@ class ReconstructionCanvas(QObject):
         )
         self._semantic_objects_available = bool(lower.shape[0])
         self._selected_semantic_object_index = None
-        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
-        self._semantic_object_boxes.visible = visible
-        self._semantic_object_centers.visible = visible
+        self._refresh_semantic_layer_visibility()
         self._selected_semantic_object_box.visible = False
         self._selected_semantic_object_center.visible = False
         self._refresh_world_axis_scale()
@@ -1600,26 +1635,65 @@ class ReconstructionCanvas(QObject):
             self._canvas.update()
 
     def set_semantic_objects_visible(self, visible: bool) -> None:
+        """Master semantic-context visibility used by the legacy quick toolbar.
+
+        Phase 9.3F keeps this as a compatibility master gate and adds finer
+        presentation-only child layers for support, labels, selection and
+        inspection evidence.
+        """
+
         self._semantic_objects_visible = bool(visible)
-        show = bool(self._semantic_objects_visible and self._semantic_objects_available)
-        self._semantic_object_boxes.visible = show
-        self._semantic_object_centers.visible = show
-        selected = bool(show and self._selected_semantic_object_index is not None)
-        self._selected_semantic_object_box.visible = selected
-        self._selected_semantic_object_center.visible = selected
+        self._refresh_semantic_layer_visibility()
+        self._canvas.update()
+
+    def set_semantic_support_visible(self, visible: bool) -> None:
+        self._semantic_support_layer_visible = bool(visible)
+        self._refresh_semantic_layer_visibility()
+        self._canvas.update()
+
+    def set_canonical_semantic_labels_visible(self, visible: bool) -> None:
+        self._canonical_semantic_labels_layer_visible = bool(visible)
+        self._refresh_semantic_layer_visibility()
+        self._canvas.update()
+
+    def set_canonical_semantic_selection_visible(self, visible: bool) -> None:
+        self._canonical_semantic_selection_layer_visible = bool(visible)
+        self._refresh_semantic_layer_visibility()
+        self._canvas.update()
+
+    def set_canonical_inspection_overlay_visible(self, visible: bool) -> None:
+        self._canonical_inspection_overlay_layer_visible = bool(visible)
+        self._refresh_canonical_inspection_overlay_visibility()
+        self._canvas.update()
+
+    def _refresh_semantic_layer_visibility(self) -> None:
+        master = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        support = bool(master and self._semantic_support_layer_visible)
+        selected = self._selected_semantic_object_index is not None
+        self._semantic_object_boxes.visible = support
+        self._semantic_object_centers.visible = support
+        self._selected_semantic_object_box.visible = bool(support and selected)
+        self._selected_semantic_object_center.visible = bool(support and selected)
         self._canonical_semantic_labels.visible = bool(
-            show and self._canonical_semantic_loaded and self._canonical_semantic_label_display_count
+            master
+            and self._canonical_semantic_labels_layer_visible
+            and self._canonical_semantic_loaded
+            and self._canonical_semantic_label_display_count
         )
         self._selected_canonical_semantic_label.visible = bool(
-            selected and self._canonical_semantic_loaded
+            master
+            and selected
+            and self._canonical_semantic_labels_layer_visible
+            and self._canonical_semantic_loaded
         )
         self._selected_canonical_semantic_mesh.visible = bool(
-            selected
+            master
+            and selected
+            and self._canonical_semantic_selection_layer_visible
             and self._canonical_semantic_loaded
             and self._selected_canonical_semantic_surface_loaded
         )
         self._refresh_canonical_inspection_overlay_visibility()
-        self._canvas.update()
 
     def select_semantic_object(self, object_index: int) -> None:
         index = int(object_index)
@@ -1666,7 +1740,11 @@ class ReconstructionCanvas(QObject):
             size=7.0,
             edge_width=0,
         )
-        visible = bool(self._semantic_objects_visible and self._semantic_objects_available)
+        visible = bool(
+            self._semantic_objects_visible
+            and self._semantic_objects_available
+            and self._semantic_support_layer_visible
+        )
         self._selected_semantic_object_box.visible = visible
         self._selected_semantic_object_center.visible = visible
         self._refresh_selected_canonical_semantic_object()
@@ -1807,12 +1885,7 @@ class ReconstructionCanvas(QObject):
         )
         self._selected_offline_camera_frustum.visible = selected_visible
         self._selected_offline_camera_center.visible = selected_visible
-        self._canonical_camera_frustums.visible = bool(
-            self._keyframes_visible and self._canonical_camera_loaded
-        )
-        self._canonical_camera_centers.visible = bool(
-            self._keyframes_visible and self._canonical_camera_loaded
-        )
+        self._refresh_canonical_camera_layer_visibility()
         if self._keyframes_visible:
             self._refresh_keyframe_visual()
             if self._selected_offline_camera_index is not None:
@@ -2206,6 +2279,34 @@ class ReconstructionCanvas(QObject):
     @property
     def offline_scale_status(self) -> str | None:
         return self._offline_scale_status
+
+    @property
+    def canonical_mesh_layer_visible(self) -> bool:
+        return bool(self._canonical_mesh_layer_visible)
+
+    @property
+    def canonical_camera_frustums_layer_visible(self) -> bool:
+        return bool(self._canonical_camera_frustums_layer_visible)
+
+    @property
+    def canonical_camera_trajectory_layer_visible(self) -> bool:
+        return bool(self._canonical_camera_trajectory_layer_visible)
+
+    @property
+    def semantic_support_layer_visible(self) -> bool:
+        return bool(self._semantic_support_layer_visible)
+
+    @property
+    def canonical_semantic_labels_layer_visible(self) -> bool:
+        return bool(self._canonical_semantic_labels_layer_visible)
+
+    @property
+    def canonical_semantic_selection_layer_visible(self) -> bool:
+        return bool(self._canonical_semantic_selection_layer_visible)
+
+    @property
+    def canonical_inspection_overlay_layer_visible(self) -> bool:
+        return bool(self._canonical_inspection_overlay_layer_visible)
 
     @property
     def canonical_mesh_loaded(self) -> bool:

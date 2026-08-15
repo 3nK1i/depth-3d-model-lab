@@ -28,6 +28,8 @@ Phase 9.3A adds a passive canonical-scene presentation summary over the existing
 scene and Phase 9.1H authority sidecar. Phase 9.3B renders the integrity-bound persistent
 canonical surface. Phase 9.3C adds the canonical reconstruction world frame plus explicitly
 persisted camera frustums and trajectory without inventing missing poses or scale.
+Phase 9.3F adds professional presentation-only scene-layer controls over the
+already-qualified canonical, camera, semantic and inspection viewer resources.
 """
 
 from __future__ import annotations
@@ -106,6 +108,7 @@ from app.reconstruction_canonical_inspection_overlays import (
     CanonicalObjectInspectionOverlayPresentation,
     build_canonical_object_inspection_overlay,
 )
+from app.reconstruction_scene_layers import build_reconstruction_scene_layer_availability
 from app.reconstruction_inspection_selection import (
     ReconstructionInspectionSelection,
     build_reconstruction_inspection_selection,
@@ -198,6 +201,7 @@ from app.theme import (
     SPLITTER_HANDLE,
 )
 from app.widgets.icon_button import IconButton
+from app.widgets.toggle_switch import ToggleSwitch
 from app.widgets.reconstruction_diagnostics_hud import ReconstructionDiagnosticsHud
 from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientationGizmo
 from app.widgets.reconstruction_appearance_preview import ReconstructionAppearancePreview
@@ -330,6 +334,7 @@ class ReconstructionPage(QWidget):
         self._semantic_object_selection_index: int | None = None
         self._visualizer_fitted_once = False
         self._viewport_tool_buttons: dict[str, IconButton] = {}
+        self._scene_layer_toggles: dict[str, ToggleSwitch] = {}
         self._live_diagnostics = LiveTrackingDiagnosticsAccumulator()
         self._viewport_focus_mode = False
         self._saved_body_splitter_sizes: list[int] | None = None
@@ -1072,6 +1077,7 @@ class ReconstructionPage(QWidget):
             semantic_button.setEnabled(bool(presentation.objects))
             self._reconstruction_canvas.set_semantic_objects_visible(semantic_button.isChecked())
         self._semantic_objects_group.setVisible(True)
+        self._refresh_scene_layer_controls()
         self._refresh_semantic_navigation()
         self._refresh_inspection_selection()
         self._refresh_viewport_state()
@@ -1106,6 +1112,7 @@ class ReconstructionPage(QWidget):
         button = getattr(self, "_viewport_tool_buttons", {}).get("semantic_objects")
         if button is not None:
             button.setEnabled(False)
+        self._refresh_scene_layer_controls()
         self._refresh_inspection_selection()
 
     def _on_semantic_object_selected(self, combo_index: int) -> None:
@@ -1567,6 +1574,7 @@ class ReconstructionPage(QWidget):
         self._canonical_inspection_overlay_presentation = presentation
         if previous != presentation:
             self.canonical_inspection_overlay_changed.emit(presentation)
+        self._refresh_scene_layer_controls()
 
     @property
     def reconstruction_reference_comparison_presentation(self) -> ReconstructionReferenceComparisonPresentation | None:
@@ -2839,6 +2847,100 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._canonical_scene_group)
         self._refresh_canonical_scene_presentation()
 
+        # Phase 9.3F keeps the dense quick toolbar intact for backward
+        # compatibility while exposing the same scene resources as a readable,
+        # progressively-disclosed layer stack. Existing toolbar gates are
+        # mirrored; newer canonical sublayers remain independent presentation
+        # preferences. None of these switches changes evidence or authority.
+        self._scene_layers_group = self._settings_group("SCENE LAYERS")
+        layer_layout = self._scene_layers_group.content_layout
+        layer_hint = QLabel(
+            "Visibility only • geometry, scale, measurement and QC authority stay unchanged."
+        )
+        layer_hint.setObjectName("reconstructionSettingsHint")
+        layer_hint.setWordWrap(True)
+        layer_layout.addWidget(layer_hint)
+
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "canonical_surface",
+            "Canonical surface",
+            "Show or hide the already-materialized authoritative canonical surface. Hiding it never unloads or demotes the canonical artifact.",
+            callback=self._reconstruction_canvas.set_canonical_mesh_visible,
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "grid",
+            "World grid",
+            "Mirror the viewport world-grid quick toggle.",
+            toolbar_key="grid",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "axes",
+            "World axes",
+            "Show or hide the viewer Z-up world-origin axes. This does not establish scale or georeferencing.",
+            callback=self._reconstruction_canvas.set_axes_visible,
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "camera_frustums",
+            "Camera frustums",
+            "Mirror the existing camera/keyframe frustum quick toggle, including persisted canonical camera context.",
+            toolbar_key="keyframes",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "camera_trajectory",
+            "Camera trajectory",
+            "Mirror the existing camera-trajectory quick toggle, including persisted canonical trajectory context.",
+            toolbar_key="trajectory",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "sparse_landmarks",
+            "Sparse landmarks",
+            "Mirror the existing live/offline sparse landmark quick toggle.",
+            toolbar_key="landmarks",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "sparse_envelope",
+            "Sparse envelope",
+            "Mirror the existing offline sparse presentation-envelope quick toggle.",
+            toolbar_key="offline_envelope",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "semantic_objects",
+            "Semantic support",
+            "Master semantic-context visibility. Support boxes/centroids remain non-measurement presentation geometry.",
+            toolbar_key="semantic_objects",
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "semantic_labels",
+            "Object labels",
+            "Show or hide persisted canonical semantic labels without changing semantic membership.",
+            callback=self._reconstruction_canvas.set_canonical_semantic_labels_visible,
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "semantic_selection",
+            "Selection highlight",
+            "Show or hide the selected object's persisted canonical-surface highlight.",
+            callback=self._reconstruction_canvas.set_canonical_semantic_selection_visible,
+        )
+        self._add_scene_layer_toggle(
+            layer_layout,
+            "inspection_evidence",
+            "Inspection evidence",
+            "Show or hide the already-qualified 9.3E measurement/QC callout. Evidence validity and rejection state are unchanged.",
+            callback=self._reconstruction_canvas.set_canonical_inspection_overlay_visible,
+        )
+        layout.addWidget(self._scene_layers_group)
+        self._refresh_scene_layer_controls()
+
         self._offline_inspection_group = self._settings_group("OFFLINE INSPECTION")
         inspection_layout = self._offline_inspection_group.content_layout
         selector_row = QHBoxLayout()
@@ -3380,6 +3482,87 @@ class ReconstructionPage(QWidget):
         title.setObjectName("reconstructionSectionTitle")
         layout.addWidget(title)
         return card
+
+    def _add_scene_layer_toggle(
+        self,
+        layout: QVBoxLayout,
+        key: str,
+        label_text: str,
+        tooltip: str,
+        *,
+        toolbar_key: str | None = None,
+        callback=None,
+    ) -> ToggleSwitch:
+        normalized = str(key).strip()
+        if not normalized or normalized in self._scene_layer_toggles:
+            raise ValueError("Scene layer keys must be unique and non-empty.")
+        if (toolbar_key is None) == (callback is None):
+            raise ValueError("Scene layer must bind either a toolbar toggle or one canvas callback.")
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        label = QLabel(str(label_text).strip())
+        label.setObjectName("reconstructionRowLabel")
+        label.setToolTip(tooltip)
+        label.setMinimumWidth(0)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        row.addWidget(label, 1)
+
+        switch = ToggleSwitch(checked=True, width=32, height=18)
+        switch.setObjectName("reconstructionSceneLayerToggle")
+        switch.setToolTip(tooltip)
+        switch.setAccessibleName(f"{label_text} scene layer")
+        self._scene_layer_toggles[normalized] = switch
+        if toolbar_key is not None:
+            button = self._viewport_tool_buttons[toolbar_key]
+            switch.setChecked(button.isChecked())
+            switch.toggled.connect(button.setChecked)
+            button.toggled.connect(switch.setChecked)
+        else:
+            switch.toggled.connect(callback)
+        row.addWidget(switch, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(row)
+        return switch
+
+    def _refresh_scene_layer_controls(self) -> None:
+        if not self._scene_layer_toggles or not hasattr(self, "_reconstruction_canvas"):
+            return
+        canvas = self._reconstruction_canvas
+        selection_active = canvas.selected_semantic_object_id is not None
+        availability = build_reconstruction_scene_layer_availability(
+            canonical_surface_loaded=canvas.canonical_mesh_loaded,
+            semantic_objects_available=canvas.semantic_objects_available,
+            canonical_semantics_loaded=canvas.canonical_semantic_loaded,
+            semantic_selection_active=selection_active,
+            inspection_evidence_available=self._canonical_inspection_overlay_presentation is not None,
+        )
+
+        enabled = {
+            "canonical_surface": availability.canonical_surface,
+            "semantic_objects": availability.semantic_objects,
+            "semantic_labels": availability.semantic_labels,
+            "semantic_selection": availability.semantic_selection,
+            "inspection_evidence": availability.inspection_evidence,
+        }
+        for key, state in enabled.items():
+            toggle = self._scene_layer_toggles.get(key)
+            if toggle is not None:
+                toggle.setEnabled(state)
+
+        # Existing live/offline context controls remain usable before a
+        # persistent canonical scene is loaded.  Their toolbar buttons remain
+        # the compatibility source of truth and are mirrored bidirectionally.
+        for key in (
+            "grid",
+            "axes",
+            "camera_frustums",
+            "camera_trajectory",
+            "sparse_landmarks",
+            "sparse_envelope",
+        ):
+            toggle = self._scene_layer_toggles.get(key)
+            if toggle is not None:
+                toggle.setEnabled(True)
 
     @staticmethod
     def _settings_group(title_text: str) -> ReconstructionSettingsDisclosureGroup:
@@ -5205,6 +5388,7 @@ class ReconstructionPage(QWidget):
         self._refresh_canonical_scene_presentation()
         self._refresh_canonical_geometry_viewer()
         self._refresh_canonical_camera_viewer()
+        self._refresh_scene_layer_controls()
         self._refresh_reconstruction_export_controls()
         self._refresh_appearance_representation_controls()
         self._refresh_gaussian_visualization_controls()
@@ -5232,6 +5416,7 @@ class ReconstructionPage(QWidget):
             return
         self._apply_semantic_presentation(presentation)
         self._refresh_canonical_semantic_viewer()
+        self._refresh_scene_layer_controls()
 
     def set_persistent_authority_snapshot(
         self,

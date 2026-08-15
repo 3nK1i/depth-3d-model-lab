@@ -174,6 +174,13 @@ def _install_fake_vispy_canvas() -> None:
             self._interaction_mode = "orbit"
             self._grid_visible = True
             self._axes_visible = True
+            self._canonical_mesh_layer_visible = True
+            self._canonical_camera_frustums_layer_visible = True
+            self._canonical_camera_trajectory_layer_visible = True
+            self._semantic_support_layer_visible = True
+            self._canonical_semantic_labels_layer_visible = True
+            self._canonical_semantic_selection_layer_visible = True
+            self._canonical_inspection_overlay_layer_visible = True
             self._trajectory_visible = True
             self._trajectory_positions = []
             self._trajectory_display_count = 0
@@ -327,11 +334,7 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_trajectory_visible(self, visible: bool) -> None:
             self._trajectory_visible = bool(visible)
-            self._canonical_camera_trajectory_visible = bool(
-                self._trajectory_visible
-                and self._canonical_camera_loaded
-                and self._canonical_camera_trajectory_display_count >= 2
-            )
+            self._refresh_canonical_camera_layer_visibility()
 
         def update_sparse_landmarks(
             self,
@@ -473,7 +476,7 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_artifact_id = str(artifact_id)
             self._canonical_mesh_source_path = str(source_path)
             self._canonical_mesh_loaded = True
-            self._canonical_mesh_visible = True
+            self._canonical_mesh_visible = bool(self._canonical_mesh_layer_visible)
 
         def clear_canonical_mesh(self, *, update_canvas: bool = True) -> None:
             self.clear_canonical_semantic_objects(update_canvas=False)
@@ -487,6 +490,33 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
+
+        def set_canonical_mesh_visible(self, visible: bool) -> None:
+            self._canonical_mesh_layer_visible = bool(visible)
+            self._canonical_mesh_visible = bool(
+                self._canonical_mesh_loaded and self._canonical_mesh_layer_visible
+            )
+
+        def set_canonical_camera_frustums_visible(self, visible: bool) -> None:
+            self._canonical_camera_frustums_layer_visible = bool(visible)
+            self._refresh_canonical_camera_layer_visibility()
+
+        def set_canonical_camera_trajectory_visible(self, visible: bool) -> None:
+            self._canonical_camera_trajectory_layer_visible = bool(visible)
+            self._refresh_canonical_camera_layer_visibility()
+
+        def _refresh_canonical_camera_layer_visibility(self) -> None:
+            self._canonical_camera_frustums_visible = bool(
+                self._canonical_camera_loaded
+                and self._keyframes_visible
+                and self._canonical_camera_frustums_layer_visible
+            )
+            self._canonical_camera_trajectory_visible = bool(
+                self._canonical_camera_loaded
+                and self._trajectory_visible
+                and self._canonical_camera_trajectory_layer_visible
+                and self._canonical_camera_trajectory_display_count >= 2
+            )
 
         def set_canonical_camera_trajectory(
             self,
@@ -529,10 +559,7 @@ def _install_fake_vispy_canvas() -> None:
             )
             self._canonical_camera_frustum_display_count = int(frustum_indices.shape[0])
             self._canonical_camera_trajectory_display_count = int(trajectory_indices.shape[0])
-            self._canonical_camera_frustums_visible = self._keyframes_visible
-            self._canonical_camera_trajectory_visible = bool(
-                self._trajectory_visible and trajectory_indices.shape[0] >= 2
-            )
+            self._refresh_canonical_camera_layer_visibility()
 
         def clear_canonical_camera_trajectory(self, *, update_canvas: bool = True) -> None:
             self._canonical_camera_loaded = False
@@ -643,7 +670,8 @@ def _install_fake_vispy_canvas() -> None:
 
         def _refresh_canonical_inspection_overlay_visibility(self) -> None:
             self._canonical_inspection_overlay_visible = bool(
-                self._semantic_objects_visible
+                self._canonical_inspection_overlay_layer_visible
+                and self._semantic_objects_visible
                 and self._semantic_objects_available
                 and self._canonical_semantic_loaded
                 and self._canonical_inspection_overlay_text
@@ -662,9 +690,13 @@ def _install_fake_vispy_canvas() -> None:
                 and index < len(self._semantic_object_ids)
                 and self._canonical_semantic_object_ids[index] == self._semantic_object_ids[index]
             )
-            self._selected_canonical_semantic_label_visible = active
+            self._selected_canonical_semantic_label_visible = bool(
+                active and self._canonical_semantic_labels_layer_visible
+            )
             self._selected_canonical_semantic_surface_visible = bool(
-                active and self._canonical_semantic_surface_faces[index].shape[0]
+                active
+                and self._canonical_semantic_selection_layer_visible
+                and self._canonical_semantic_surface_faces[index].shape[0]
             ) if active else False
 
         def set_semantic_objects(
@@ -715,8 +747,28 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_semantic_objects_visible(self, visible: bool) -> None:
             self._semantic_objects_visible = bool(visible)
+            self._refresh_semantic_layer_state()
+
+        def set_semantic_support_visible(self, visible: bool) -> None:
+            self._semantic_support_layer_visible = bool(visible)
+            self._refresh_semantic_layer_state()
+
+        def set_canonical_semantic_labels_visible(self, visible: bool) -> None:
+            self._canonical_semantic_labels_layer_visible = bool(visible)
+            self._refresh_semantic_layer_state()
+
+        def set_canonical_semantic_selection_visible(self, visible: bool) -> None:
+            self._canonical_semantic_selection_layer_visible = bool(visible)
+            self._refresh_semantic_layer_state()
+
+        def set_canonical_inspection_overlay_visible(self, visible: bool) -> None:
+            self._canonical_inspection_overlay_layer_visible = bool(visible)
+            self._refresh_canonical_inspection_overlay_visibility()
+
+        def _refresh_semantic_layer_state(self) -> None:
             self._selected_semantic_object_visible = bool(
                 self._semantic_objects_visible
+                and self._semantic_support_layer_visible
                 and self._semantic_objects_available
                 and self._selected_semantic_object_index is not None
             )
@@ -730,7 +782,9 @@ def _install_fake_vispy_canvas() -> None:
             if index < 0 or index >= self._semantic_bounds_min.shape[0]:
                 raise IndexError("Semantic object index is out of range.")
             self._selected_semantic_object_index = index
-            self._selected_semantic_object_visible = self._semantic_objects_visible
+            self._selected_semantic_object_visible = bool(
+                self._semantic_objects_visible and self._semantic_support_layer_visible
+            )
             self._refresh_selected_canonical_semantic_state()
             self._refresh_canonical_inspection_overlay_visibility()
 
@@ -819,9 +873,7 @@ def _install_fake_vispy_canvas() -> None:
             self._selected_offline_camera_visible = bool(
                 self._keyframes_visible and self._selected_offline_camera_index is not None
             )
-            self._canonical_camera_frustums_visible = bool(
-                self._keyframes_visible and self._canonical_camera_loaded
-            )
+            self._refresh_canonical_camera_layer_visibility()
 
         def fit_scene(self) -> None:
             self.fit_calls += 1
@@ -969,6 +1021,34 @@ def _install_fake_vispy_canvas() -> None:
             return self._offline_scale_status
 
         @property
+        def canonical_mesh_layer_visible(self) -> bool:
+            return bool(self._canonical_mesh_layer_visible)
+
+        @property
+        def canonical_camera_frustums_layer_visible(self) -> bool:
+            return bool(self._canonical_camera_frustums_layer_visible)
+
+        @property
+        def canonical_camera_trajectory_layer_visible(self) -> bool:
+            return bool(self._canonical_camera_trajectory_layer_visible)
+
+        @property
+        def semantic_support_layer_visible(self) -> bool:
+            return bool(self._semantic_support_layer_visible)
+
+        @property
+        def canonical_semantic_labels_layer_visible(self) -> bool:
+            return bool(self._canonical_semantic_labels_layer_visible)
+
+        @property
+        def canonical_semantic_selection_layer_visible(self) -> bool:
+            return bool(self._canonical_semantic_selection_layer_visible)
+
+        @property
+        def canonical_inspection_overlay_layer_visible(self) -> bool:
+            return bool(self._canonical_inspection_overlay_layer_visible)
+
+        @property
         def canonical_mesh_loaded(self) -> bool:
             return bool(self._canonical_mesh_loaded)
 
@@ -1074,6 +1154,7 @@ def _install_fake_vispy_canvas() -> None:
         def canonical_semantic_labels_visible(self) -> bool:
             return bool(
                 self._canonical_semantic_loaded
+                and self._canonical_semantic_labels_layer_visible
                 and self._semantic_objects_visible
                 and self._semantic_objects_available
                 and self._canonical_semantic_label_display_count

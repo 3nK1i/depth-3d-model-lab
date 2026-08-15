@@ -1536,6 +1536,11 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         letter-spacing: 0.55px;
     }}
 
+    QLabel#reconstructionSettingsHint {{
+        color: {p.settings_text_secondary};
+        font-size: 9px;
+    }}
+
     QToolButton#reconstructionSettingsDisclosureToggle {{
         background: transparent;
         border: none;
