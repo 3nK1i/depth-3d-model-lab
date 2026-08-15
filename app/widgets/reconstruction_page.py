@@ -30,6 +30,9 @@ canonical surface. Phase 9.3C adds the canonical reconstruction world frame plus
 persisted camera frustums and trajectory without inventing missing poses or scale.
 Phase 9.3F adds professional presentation-only scene-layer controls over the
 already-qualified canonical, camera, semantic and inspection viewer resources.
+Phase 9.4E adds backend-free interactive persisted Gaussian appearance, and
+Phase 9.4F adds presentation-only Gaussian density/size/opacity plus a scene-layer
+visibility control without changing canonical picking or any authority contract.
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QProgressBar,
     QScrollArea,
+    QSlider,
     QSizePolicy,
     QSplitter,
     QVBoxLayout,
@@ -170,6 +174,16 @@ from app.reconstruction_gaussian_visualization import (
 from app.reconstruction_gaussian_interactive import (
     InteractiveGaussianScene,
     load_interactive_gaussian_scene,
+)
+from app.reconstruction_gaussian_controls import (
+    GAUSSIAN_DENSITY_PERCENT_OPTIONS,
+    GAUSSIAN_OPACITY_PERCENT_MAX,
+    GAUSSIAN_OPACITY_PERCENT_MIN,
+    GAUSSIAN_SIZE_PERCENT_MAX,
+    GAUSSIAN_SIZE_PERCENT_MIN,
+    GaussianDisplayBuffers,
+    GaussianDisplaySettings,
+    apply_gaussian_display_settings,
 )
 from app.reconstruction_nerf_visualization import (
     NerfVisualizationPresentation,
@@ -352,6 +366,8 @@ class ReconstructionPage(QWidget):
         self._gaussian_preview_visible = False
         self._interactive_gaussian_scene: InteractiveGaussianScene | None = None
         self._interactive_gaussian_visible = False
+        self._gaussian_display_settings = GaussianDisplaySettings()
+        self._gaussian_display_buffers: GaussianDisplayBuffers | None = None
         self._nerf_visualization_presentation: NerfVisualizationPresentation | None = None
         self._nerf_preview_visible = False
         self._representation_switch_target: RepresentationSwitchTarget | None = None
@@ -2597,6 +2613,112 @@ class ReconstructionPage(QWidget):
         if self._nerf_preview_visible:
             self._hide_nerf_preview()
 
+    def _gaussian_settings_from_controls(self) -> GaussianDisplaySettings:
+        density = int(self._gaussian_density_combo.currentData() or 100)
+        return GaussianDisplaySettings(
+            density_percent=density,
+            size_percent=int(self._gaussian_size_slider.value()),
+            opacity_percent=int(self._gaussian_opacity_slider.value()),
+        )
+
+    def _set_gaussian_scene_layer_checked(self, checked: bool) -> None:
+        toggle = getattr(self, "_gaussian_scene_layer_toggle", None)
+        if toggle is None or toggle.isChecked() == bool(checked):
+            return
+        toggle.blockSignals(True)
+        toggle.setChecked(bool(checked))
+        toggle.blockSignals(False)
+
+    def _on_gaussian_scene_layer_toggled(self, checked: bool) -> None:
+        if checked:
+            if not self.interactive_gaussian_visible:
+                self._show_interactive_gaussian()
+            if not self.interactive_gaussian_visible:
+                self._set_gaussian_scene_layer_checked(False)
+        elif self.interactive_gaussian_visible:
+            self._hide_interactive_gaussian()
+
+    def _on_gaussian_display_controls_changed(self, _value: object = None) -> None:
+        try:
+            settings = self._gaussian_settings_from_controls()
+        except ValueError:
+            return
+        self._gaussian_display_settings = settings
+        self._gaussian_size_value.setText(f"{settings.size_percent}%")
+        self._gaussian_opacity_value.setText(f"{settings.opacity_percent}%")
+        if self.interactive_gaussian_visible and self._interactive_gaussian_scene is not None:
+            self._apply_interactive_gaussian_display_settings()
+        else:
+            self._refresh_gaussian_display_summary()
+
+    def _reset_gaussian_display_controls(self) -> None:
+        self._gaussian_density_combo.blockSignals(True)
+        self._gaussian_size_slider.blockSignals(True)
+        self._gaussian_opacity_slider.blockSignals(True)
+        self._gaussian_density_combo.setCurrentIndex(0)
+        self._gaussian_size_slider.setValue(100)
+        self._gaussian_opacity_slider.setValue(100)
+        self._gaussian_density_combo.blockSignals(False)
+        self._gaussian_size_slider.blockSignals(False)
+        self._gaussian_opacity_slider.blockSignals(False)
+        self._gaussian_display_settings = GaussianDisplaySettings()
+        self._gaussian_size_value.setText("100%")
+        self._gaussian_opacity_value.setText("100%")
+        if self.interactive_gaussian_visible and self._interactive_gaussian_scene is not None:
+            self._apply_interactive_gaussian_display_settings()
+        else:
+            self._refresh_gaussian_display_summary()
+
+    def _apply_interactive_gaussian_display_settings(self) -> None:
+        scene = self._interactive_gaussian_scene
+        if scene is None:
+            self._gaussian_display_buffers = None
+            self._refresh_gaussian_display_summary()
+            return
+        buffers = apply_gaussian_display_settings(scene, self._gaussian_display_settings)
+        self._reconstruction_canvas.set_interactive_gaussian_scene(
+            buffers.positions_reconstruction,
+            buffers.colors_rgba,
+            buffers.sizes_px,
+            scene_id=scene.scene_id,
+            artifact_id=scene.artifact_id,
+            total_count=scene.total_gaussian_count,
+        )
+        self._gaussian_display_buffers = buffers
+        self._refresh_gaussian_display_summary()
+
+    def _refresh_gaussian_display_summary(self) -> None:
+        if not hasattr(self, "_gaussian_display_value"):
+            return
+        buffers = self._gaussian_display_buffers
+        if buffers is not None and self.interactive_gaussian_visible:
+            self._gaussian_display_value.setText(buffers.status_text)
+            self._gaussian_display_value.setToolTip(
+                "Presentation-only controls over already-persisted Gaussian display buffers. "
+                "Canonical geometry, scale, measurement and QC authority are unchanged."
+            )
+            return
+        presentation = self._gaussian_visualization_presentation
+        selected = self.selected_appearance_representation
+        if (
+            presentation is None
+            or selected is None
+            or selected.representation_kind != "gaussian_scene"
+        ):
+            self._gaussian_display_value.setText("Interactive display unavailable")
+            self._gaussian_display_value.setToolTip(
+                "Select a persisted Gaussian appearance representation to enable interactive display controls."
+            )
+            return
+        settings = self._gaussian_display_settings
+        self._gaussian_display_value.setText(
+            f"Ready • density {settings.density_percent}% • size {settings.size_percent}% • "
+            f"opacity {settings.opacity_percent}%"
+        )
+        self._gaussian_display_value.setToolTip(
+            "These settings apply the next time Interactive Gaussian appearance is shown."
+        )
+
     @property
     def gaussian_visualization_presentation(self) -> GaussianVisualizationPresentation | None:
         return self._gaussian_visualization_presentation
@@ -2630,6 +2752,15 @@ class ReconstructionPage(QWidget):
             self._gaussian_show_button.setEnabled(False)
             self._gaussian_interactive_button.setEnabled(False)
             self._gaussian_hide_button.setEnabled(False)
+            for control in (
+                self._gaussian_density_combo,
+                self._gaussian_size_slider,
+                self._gaussian_opacity_slider,
+                self._gaussian_reset_display_button,
+            ):
+                control.setEnabled(False)
+            if hasattr(self, "_gaussian_scene_layer_toggle"):
+                self._gaussian_scene_layer_toggle.setEnabled(False)
             self._hide_interactive_gaussian()
             self._hide_gaussian_preview()
             self._gaussian_visualization_presentation = None
@@ -2680,6 +2811,22 @@ class ReconstructionPage(QWidget):
                 if self._gaussian_preview_visible:
                     self._hide_gaussian_preview()
 
+        controls_enabled = bool(
+            presentation is not None
+            and gaussian_selected
+            and self._persistent_scene is not None
+        )
+        for control in (
+            self._gaussian_density_combo,
+            self._gaussian_size_slider,
+            self._gaussian_opacity_slider,
+            self._gaussian_reset_display_button,
+        ):
+            control.setEnabled(controls_enabled)
+        if hasattr(self, "_gaussian_scene_layer_toggle"):
+            self._gaussian_scene_layer_toggle.setEnabled(controls_enabled)
+            self._set_gaussian_scene_layer_checked(self.interactive_gaussian_visible)
+        self._refresh_gaussian_display_summary()
         if presentation != previous:
             self.gaussian_visualization_changed.emit(presentation)
 
@@ -2744,6 +2891,9 @@ class ReconstructionPage(QWidget):
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self._interactive_gaussian_scene = None
             self._interactive_gaussian_visible = False
+            self._gaussian_display_buffers = None
+            self._set_gaussian_scene_layer_checked(False)
+            self._refresh_gaussian_display_summary()
             self._gaussian_state_value.setText("Interactive Gaussian viewer unavailable")
             self._gaussian_state_value.setToolTip(str(exc))
             self._gaussian_interactive_button.setEnabled(False)
@@ -2755,16 +2905,10 @@ class ReconstructionPage(QWidget):
             self._hide_nerf_preview()
         if self._gaussian_preview_visible:
             self._hide_gaussian_preview()
-        self._reconstruction_canvas.set_interactive_gaussian_scene(
-            interactive.positions_reconstruction,
-            interactive.colors_rgba,
-            interactive.sizes_px,
-            scene_id=interactive.scene_id,
-            artifact_id=interactive.artifact_id,
-            total_count=interactive.total_gaussian_count,
-        )
         self._interactive_gaussian_scene = interactive
         self._interactive_gaussian_visible = True
+        self._apply_interactive_gaussian_display_settings()
+        self._set_gaussian_scene_layer_checked(True)
         self._appearance_preview.hide()
         self._viewport_placeholder.setVisible(False)
         self._viewport_state.setText("Interactive Gaussian appearance • canonical picking")
@@ -2784,6 +2928,9 @@ class ReconstructionPage(QWidget):
             return
         self._reconstruction_canvas.clear_interactive_gaussian_scene()
         self._interactive_gaussian_visible = False
+        self._gaussian_display_buffers = None
+        self._set_gaussian_scene_layer_checked(False)
+        self._refresh_gaussian_display_summary()
         selected = self.selected_appearance_representation
         presentation = self._gaussian_visualization_presentation
         if hasattr(self, "_gaussian_interactive_button"):
@@ -3261,6 +3408,29 @@ class ReconstructionPage(QWidget):
             "Show or hide the already-materialized authoritative canonical surface. Hiding it never unloads or demotes the canonical artifact.",
             callback=self._reconstruction_canvas.set_canonical_mesh_visible,
         )
+        gaussian_layer_row = QHBoxLayout()
+        gaussian_layer_row.setSpacing(8)
+        gaussian_layer_label = QLabel("Gaussian appearance")
+        gaussian_layer_label.setObjectName("reconstructionRowLabel")
+        gaussian_layer_label.setMinimumWidth(0)
+        gaussian_layer_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        gaussian_layer_label.setToolTip(
+            "Show or hide the persisted interactive Gaussian appearance layer. "
+            "Canonical geometry stays loaded underneath and remains the only picking/measurement authority."
+        )
+        gaussian_layer_row.addWidget(gaussian_layer_label, 1)
+        self._gaussian_scene_layer_toggle = ToggleSwitch(checked=False, width=32, height=18)
+        self._gaussian_scene_layer_toggle.setObjectName("reconstructionGaussianSceneLayerToggle")
+        self._gaussian_scene_layer_toggle.setAccessibleName("Gaussian appearance scene layer")
+        self._gaussian_scene_layer_toggle.setToolTip(gaussian_layer_label.toolTip())
+        self._gaussian_scene_layer_toggle.setEnabled(False)
+        self._gaussian_scene_layer_toggle.toggled.connect(self._on_gaussian_scene_layer_toggled)
+        gaussian_layer_row.addWidget(
+            self._gaussian_scene_layer_toggle,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        layer_layout.addLayout(gaussian_layer_row)
         self._add_scene_layer_toggle(
             layer_layout,
             "grid",
@@ -3853,6 +4023,7 @@ class ReconstructionPage(QWidget):
         self._gaussian_preview_value = self._settings_value("—")
         self._gaussian_scale_value = self._settings_value("—")
         self._gaussian_state_value = self._settings_value("No persistent Gaussian representation")
+        self._gaussian_display_value = self._settings_value("Interactive display not active")
         self._gaussian_authority_value = self._settings_value(
             "Appearance only • canonical geometry remains authoritative"
         )
@@ -3864,7 +4035,88 @@ class ReconstructionPage(QWidget):
         self._add_status_row(gaussian_layout, "Preview", self._gaussian_preview_value)
         self._add_status_row(gaussian_layout, "Scale", self._gaussian_scale_value)
         self._add_status_row(gaussian_layout, "State", self._gaussian_state_value)
+        self._add_status_row(gaussian_layout, "Display", self._gaussian_display_value)
         self._add_status_row(gaussian_layout, "Authority", self._gaussian_authority_value)
+
+        gaussian_controls_hint = QLabel(
+            "Interactive display only • density, size and opacity never modify the persisted Gaussian artifact."
+        )
+        gaussian_controls_hint.setObjectName("reconstructionSettingsHint")
+        gaussian_controls_hint.setWordWrap(True)
+        gaussian_layout.addWidget(gaussian_controls_hint)
+
+        density_row = QHBoxLayout()
+        density_row.setSpacing(8)
+        density_label = QLabel("Density")
+        density_label.setObjectName("reconstructionRowLabel")
+        density_row.addWidget(density_label)
+        self._gaussian_density_combo = QComboBox()
+        self._gaussian_density_combo.setObjectName("reconstructionGaussianDensityCombo")
+        for percent in GAUSSIAN_DENSITY_PERCENT_OPTIONS:
+            label = "Full" if percent == 100 else f"{percent}%"
+            self._gaussian_density_combo.addItem(label, percent)
+        self._gaussian_density_combo.setCurrentIndex(0)
+        self._gaussian_density_combo.setMinimumWidth(0)
+        self._gaussian_density_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._gaussian_density_combo.setToolTip(
+            "Display a deterministic subset of the persisted Gaussians. This changes presentation density only."
+        )
+        self._gaussian_density_combo.currentIndexChanged.connect(self._on_gaussian_display_controls_changed)
+        density_row.addWidget(self._gaussian_density_combo, 1)
+        gaussian_layout.addLayout(density_row)
+
+        size_row = QHBoxLayout()
+        size_row.setSpacing(8)
+        size_label = QLabel("Splat size")
+        size_label.setObjectName("reconstructionRowLabel")
+        size_row.addWidget(size_label)
+        self._gaussian_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self._gaussian_size_slider.setObjectName("reconstructionGaussianDisplaySlider")
+        self._gaussian_size_slider.setRange(GAUSSIAN_SIZE_PERCENT_MIN, GAUSSIAN_SIZE_PERCENT_MAX)
+        self._gaussian_size_slider.setValue(100)
+        self._gaussian_size_slider.setToolTip(
+            "Scale screen-space splat size for interactive viewing only. Persisted Gaussian scales are unchanged."
+        )
+        self._gaussian_size_slider.valueChanged.connect(self._on_gaussian_display_controls_changed)
+        size_row.addWidget(self._gaussian_size_slider, 1)
+        self._gaussian_size_value = QLabel("100%")
+        self._gaussian_size_value.setObjectName("reconstructionSettingsValue")
+        self._gaussian_size_value.setMinimumWidth(40)
+        self._gaussian_size_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        size_row.addWidget(self._gaussian_size_value)
+        gaussian_layout.addLayout(size_row)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.setSpacing(8)
+        opacity_label = QLabel("Opacity")
+        opacity_label.setObjectName("reconstructionRowLabel")
+        opacity_row.addWidget(opacity_label)
+        self._gaussian_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._gaussian_opacity_slider.setObjectName("reconstructionGaussianDisplaySlider")
+        self._gaussian_opacity_slider.setRange(
+            GAUSSIAN_OPACITY_PERCENT_MIN, GAUSSIAN_OPACITY_PERCENT_MAX
+        )
+        self._gaussian_opacity_slider.setValue(100)
+        self._gaussian_opacity_slider.setToolTip(
+            "Scale interactive Gaussian alpha only. Persisted opacities and all scene evidence remain unchanged."
+        )
+        self._gaussian_opacity_slider.valueChanged.connect(self._on_gaussian_display_controls_changed)
+        opacity_row.addWidget(self._gaussian_opacity_slider, 1)
+        self._gaussian_opacity_value = QLabel("100%")
+        self._gaussian_opacity_value.setObjectName("reconstructionSettingsValue")
+        self._gaussian_opacity_value.setMinimumWidth(40)
+        self._gaussian_opacity_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        opacity_row.addWidget(self._gaussian_opacity_value)
+        gaussian_layout.addLayout(opacity_row)
+
+        self._gaussian_reset_display_button = QPushButton("Reset display")
+        self._gaussian_reset_display_button.setObjectName("reconstructionGaussianPreviewAction")
+        self._gaussian_reset_display_button.setToolTip(
+            "Restore Full density, 100% splat size and 100% opacity. No persisted data is modified."
+        )
+        self._gaussian_reset_display_button.clicked.connect(self._reset_gaussian_display_controls)
+        gaussian_layout.addWidget(self._gaussian_reset_display_button)
+
         gaussian_buttons = QHBoxLayout()
         gaussian_buttons.setSpacing(6)
         self._gaussian_interactive_button = QPushButton("Interactive")
