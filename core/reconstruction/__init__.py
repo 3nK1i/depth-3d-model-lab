@@ -305,6 +305,15 @@ from core.reconstruction.gaussian_interactive_runtime import (
     probe_phase9_gaussian_interactive_runtime,
 )
 
+from core.reconstruction.gaussian_input_bridge import (
+    PHASE9_4B_GAUSSIAN_INPUT_BRIDGE_SCHEMA_VERSION,
+    GaussianCanonicalInputBridgeResult,
+    GaussianInputBridgeState,
+    GaussianInputFrameEvidence,
+    materialize_gaussian_input_from_canonical_scene,
+    materialize_gaussian_input_from_da3_persistent_scene,
+)
+
 from core.reconstruction.gaussian_benchmarking import (
     GAUSSIAN_BENCHMARK_SCHEMA_VERSION,
     GAUSSIAN_HELD_OUT_RENDER_SCHEMA_VERSION,
@@ -1051,6 +1060,12 @@ __all__ = [
     "default_phase9_gaussian_runtime_spec",
     "probe_gaussian_checkout",
     "probe_phase9_gaussian_interactive_runtime",
+    "PHASE9_4B_GAUSSIAN_INPUT_BRIDGE_SCHEMA_VERSION",
+    "GaussianCanonicalInputBridgeResult",
+    "GaussianInputBridgeState",
+    "GaussianInputFrameEvidence",
+    "materialize_gaussian_input_from_canonical_scene",
+    "materialize_gaussian_input_from_da3_persistent_scene",
     "GAUSSIAN_BENCHMARK_SCHEMA_VERSION",
     "GaussianBenchmarkBackendResult",
     "GaussianBenchmarkHardwareProfile",
