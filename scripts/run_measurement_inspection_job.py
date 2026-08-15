@@ -147,6 +147,7 @@ def _box_payload(box: BoundingBox3D, intrinsics: np.ndarray) -> dict[str, Any]:
         "fit_method": box.fit_method,
         "fit_residual_m": box.fit_residual_m,
         "support_point_count": box.support_point_count,
+        "coordinate_frame_id": box.coordinate_frame_id,
         "corners_xyz_m": corners.tolist(),
         "projected_segments": segments,
     }
@@ -291,6 +292,7 @@ def _initial_analysis(args):
     bgr = np.ascontiguousarray(bgr, dtype=np.uint8)
     if bgr.ndim != 3 or bgr.shape[2] != 3:
         raise ValueError("Inspection input must be an HxWx3 BGR image.")
+    source_frame_sha256 = source_image_sha256(bgr)
 
     reviewed_selection = None
     if args.reviewed_semantics:
@@ -460,6 +462,7 @@ def _initial_analysis(args):
         "semantic_source": ("reviewed_auto_segment" if reviewed_selection is not None else "perception_model"),
         "semantic_workspace_id": reviewed_selection.workspace_id if reviewed_selection is not None else "",
         "semantic_workspace_revision": reviewed_selection.workspace_revision if reviewed_selection is not None else 0,
+        "source_frame_sha256": source_frame_sha256,
         **calibration_meta,
     }
 
@@ -608,6 +611,7 @@ def _write_bundle(output: Path, aligned, extraction, fitting, measurements, obse
         "semantic_source": str(models.get("semantic_source", "perception_model")),
         "semantic_workspace_id": str(models.get("semantic_workspace_id", "")),
         "semantic_workspace_revision": int(models.get("semantic_workspace_revision", 0)),
+        "source_frame_sha256": str(models.get("source_frame_sha256", "")),
     }
     (output / BUNDLE_FILENAME).write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

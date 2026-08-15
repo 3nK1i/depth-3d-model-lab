@@ -98,7 +98,7 @@ def test_c1_viewport_navigation_controls_drive_dedicated_canvas(window, qtbot) -
 
     buttons = page.findChildren(type(grid_button))
     by_tip = {button.toolTip(): button for button in buttons}
-    qtbot.mouseClick(by_tip["Fit known camera path to view"], Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(by_tip["Fit available scene geometry and camera context to view"], Qt.MouseButton.LeftButton)
     qtbot.mouseClick(by_tip["Focus current camera"], Qt.MouseButton.LeftButton)
     qtbot.mouseClick(by_tip["Reset reconstruction view"], Qt.MouseButton.LeftButton)
     assert canvas.fit_calls >= 1

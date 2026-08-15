@@ -33,6 +33,9 @@ from PyQt6.QtWidgets import (
 )
 
 from app.measurement_inspection_controller import InspectionControllerState
+from app.measurement_canonical_registration_presentation import (
+    MeasurementCanonicalRegistrationPresentation,
+)
 from app.widgets.inspection_3d_canvas import Inspection3DCanvas
 from app.widgets.inspection_canvas import InspectionImageCanvas
 from core.inspection import (
@@ -57,6 +60,7 @@ class InspectionPage(QWidget):
     export_requested = pyqtSignal(str)
     calibration_requested = pyqtSignal()
     auto_segment_requested = pyqtSignal()
+    selected_object_changed = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -77,6 +81,7 @@ class InspectionPage(QWidget):
         self._camera_calibration_profile: CameraCalibrationProfile | None = None
         self._reviewed_semantics: ReviewedSemanticSelection | None = None
         self._reviewed_semantic_source_label = ""
+        self._canonical_registration_presentation: MeasurementCanonicalRegistrationPresentation | None = None
         self._build_ui()
         self._populate_perception_models()
         self.set_controller_state(InspectionControllerState.IDLE)
@@ -254,6 +259,7 @@ class InspectionPage(QWidget):
         layout.addWidget(self._build_correction_card())
         layout.addWidget(self._build_calibration_card())
         layout.addWidget(self._build_measurement_card())
+        layout.addWidget(self._build_canonical_registration_card())
         layout.addWidget(self._build_export_card())
         layout.addWidget(self._build_details_card())
         layout.addStretch(1)
@@ -500,6 +506,73 @@ class InspectionPage(QWidget):
         layout.addWidget(self._measurement_table)
         return frame
 
+    def _build_canonical_registration_card(self) -> QFrame:
+        frame, layout = self._card("CANONICAL REGISTRATION")
+        notice = QLabel(
+            "Optional Digital Twin placement. Missing calibration/scale/registration never blocks the original measurement workflow."
+        )
+        notice.setObjectName("inspectionMuted")
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        self._canonical_registration_state = QLabel("Unavailable")
+        self._canonical_registration_state.setObjectName("inspectionWarningText")
+        self._canonical_registration_state.setWordWrap(True)
+        layout.addWidget(self._canonical_registration_state)
+        self._canonical_registration_binding = QLabel("No canonical scene/object/camera binding")
+        self._canonical_registration_binding.setObjectName("inspectionMuted")
+        self._canonical_registration_binding.setWordWrap(True)
+        layout.addWidget(self._canonical_registration_binding)
+        self._canonical_registration_dimensions = QLabel("No canonical dimension geometry")
+        self._canonical_registration_dimensions.setObjectName("inspectionMuted")
+        self._canonical_registration_dimensions.setWordWrap(True)
+        layout.addWidget(self._canonical_registration_dimensions)
+        self._canonical_registration_uncertainty = QLabel("No canonical dimension placement uncertainty")
+        self._canonical_registration_uncertainty.setObjectName("inspectionMuted")
+        self._canonical_registration_uncertainty.setWordWrap(True)
+        layout.addWidget(self._canonical_registration_uncertainty)
+        self._canonical_registration_reason = QLabel("No qualified measurement→canonical registration")
+        self._canonical_registration_reason.setObjectName("inspectionMuted")
+        self._canonical_registration_reason.setWordWrap(True)
+        layout.addWidget(self._canonical_registration_reason)
+        return frame
+
+    @property
+    def bundle_summary(self) -> InspectionBundleSummary | None:
+        return self._summary
+
+    @property
+    def canonical_registration_presentation(self) -> MeasurementCanonicalRegistrationPresentation | None:
+        return self._canonical_registration_presentation
+
+    def set_canonical_registration_presentation(
+        self,
+        presentation: MeasurementCanonicalRegistrationPresentation | None,
+    ) -> None:
+        if presentation is not None and not isinstance(
+            presentation, MeasurementCanonicalRegistrationPresentation
+        ):
+            raise TypeError(
+                "presentation must be MeasurementCanonicalRegistrationPresentation or None."
+            )
+        self._canonical_registration_presentation = presentation
+        if presentation is None:
+            self._canonical_registration_state.setText("Unavailable")
+            self._canonical_registration_binding.setText("No canonical scene/object/camera binding")
+            self._canonical_registration_dimensions.setText("No canonical dimension geometry")
+            self._canonical_registration_uncertainty.setText(
+                "No canonical dimension placement uncertainty"
+            )
+            self._canonical_registration_reason.setText(
+                "No qualified measurement→canonical registration"
+            )
+            return
+        self._canonical_registration_state.setText(presentation.status_text)
+        self._canonical_registration_binding.setText(presentation.binding_text)
+        self._canonical_registration_dimensions.setText(presentation.dimensions_text)
+        self._canonical_registration_uncertainty.setText(presentation.uncertainty_text)
+        self._canonical_registration_reason.setText(presentation.reason_text)
+        self._canonical_registration_reason.setToolTip(presentation.authority_text)
+
     def _build_export_card(self) -> QFrame:
         frame, layout = self._card("EXPORT & REPORT")
         notice = QLabel("Exports the current approved inspection bundle without rerunning depth or perception.")
@@ -555,6 +628,7 @@ class InspectionPage(QWidget):
         rgb = image[..., ::-1]
         self._summary = None
         self._arrays = {}
+        self.set_canonical_registration_presentation(None)
         self._object_list.clear()
         self._image_canvas.set_bundle(rgb, (), {})
         self._inspection_3d.clear()
@@ -614,6 +688,7 @@ class InspectionPage(QWidget):
         self._update_object_panels(obj)
         self._refresh_visuals()
         self._apply_state()
+        self.selected_object_changed.emit(obj)
 
     def _on_list_selection(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is not None:

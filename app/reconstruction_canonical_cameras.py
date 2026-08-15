@@ -46,6 +46,9 @@ class CanonicalCameraTrajectoryPresentation:
     matrices_reconstruction: np.ndarray
     positions_viewer: np.ndarray
     total_pose_count: int
+    source_frame_sha256: tuple[str, ...] = ()
+    translation_uncertainty_m: tuple[float, ...] = ()
+    rotation_uncertainty_rad: tuple[float, ...] = ()
     certified_metrology: bool = False
 
     def __post_init__(self) -> None:
@@ -53,6 +56,9 @@ class CanonicalCameraTrajectoryPresentation:
         positions = np.asarray(self.positions_viewer, dtype=np.float32)
         ids = tuple(str(value).strip() for value in self.camera_ids)
         layers = tuple(str(value).strip() for value in self.pose_layers)
+        fingerprints = tuple(str(value).strip().lower() for value in self.source_frame_sha256)
+        translation_uncertainty = tuple(float(value) for value in self.translation_uncertainty_m)
+        rotation_uncertainty = tuple(float(value) for value in self.rotation_uncertainty_rad)
 
         if self.certified_metrology:
             raise ValueError("Canonical camera presentation cannot claim certified metrology.")
@@ -72,6 +78,20 @@ class CanonicalCameraTrajectoryPresentation:
             raise ValueError("camera_ids must be unique.")
         if layers and (len(layers) != matrices.shape[0] or any(not value for value in layers)):
             raise ValueError("pose_layers must be empty or contain one non-empty layer per camera pose.")
+        if fingerprints:
+            if len(fingerprints) != matrices.shape[0]:
+                raise ValueError("source_frame_sha256 must be empty or match the camera pose count.")
+            for digest in fingerprints:
+                if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                    raise ValueError("source_frame_sha256 entries must be hexadecimal SHA-256 values.")
+            nonempty = [value for value in fingerprints if value]
+            if len(nonempty) != len(set(nonempty)):
+                raise ValueError("Non-empty source frame fingerprints must be unique.")
+        for name, values in (("translation_uncertainty_m", translation_uncertainty), ("rotation_uncertainty_rad", rotation_uncertainty)):
+            if values and len(values) != matrices.shape[0]:
+                raise ValueError(f"{name} must be empty or match the camera pose count.")
+            if any((not np.isfinite(value)) or value < 0.0 for value in values):
+                raise ValueError(f"{name} values must be finite and non-negative.")
         total = int(self.total_pose_count)
         if total < matrices.shape[0]:
             raise ValueError("total_pose_count cannot be smaller than the persisted pose count.")
@@ -90,6 +110,9 @@ class CanonicalCameraTrajectoryPresentation:
         object.__setattr__(self, "reconstruction_frame_id", str(self.reconstruction_frame_id).strip())
         object.__setattr__(self, "camera_ids", ids)
         object.__setattr__(self, "pose_layers", layers)
+        object.__setattr__(self, "source_frame_sha256", fingerprints)
+        object.__setattr__(self, "translation_uncertainty_m", translation_uncertainty)
+        object.__setattr__(self, "rotation_uncertainty_rad", rotation_uncertainty)
         object.__setattr__(self, "matrices_reconstruction", matrices)
         object.__setattr__(self, "positions_viewer", positions)
         object.__setattr__(self, "total_pose_count", total)
@@ -103,6 +126,33 @@ class CanonicalCameraTrajectoryPresentation:
     def trajectory_available(self) -> bool:
         return self.persisted_pose_count >= 2
 
+    def camera_index_for_source_frame(self, source_frame_sha256: str) -> int | None:
+        """Return the uniquely persisted camera bound to an exact source-frame digest."""
+
+        digest = str(source_frame_sha256).strip().lower()
+        if not digest or not self.source_frame_sha256:
+            return None
+        matches = [index for index, value in enumerate(self.source_frame_sha256) if value == digest]
+        return matches[0] if len(matches) == 1 else None
+
+    def pose_uncertainty_for_camera(self, index: int) -> tuple[float | None, float | None]:
+        """Return quantified translation/rotation uncertainty when explicitly persisted."""
+
+        idx = int(index)
+        if idx < 0 or idx >= self.persisted_pose_count:
+            raise IndexError("Canonical camera index is out of range.")
+        translation = (
+            self.translation_uncertainty_m[idx]
+            if len(self.translation_uncertainty_m) == self.persisted_pose_count
+            else None
+        )
+        rotation = (
+            self.rotation_uncertainty_rad[idx]
+            if len(self.rotation_uncertainty_rad) == self.persisted_pose_count
+            else None
+        )
+        return translation, rotation
+
 
 def build_canonical_camera_trajectory_snapshot(
     *,
@@ -112,6 +162,9 @@ def build_canonical_camera_trajectory_snapshot(
     pose_layers: Sequence[str] = (),
     reconstruction_frame_id: str = "",
     total_pose_count: int | None = None,
+    source_frame_sha256: Sequence[str] = (),
+    translation_uncertainty_m: Sequence[float] = (),
+    rotation_uncertainty_rad: Sequence[float] = (),
 ) -> dict[str, JsonValue]:
     """Build the bounded JSON snapshot shape consumed by Phase 9.3C.
 
@@ -124,6 +177,9 @@ def build_canonical_camera_trajectory_snapshot(
     matrices = np.asarray(matrices_reconstruction, dtype=np.float64)
     ids = tuple(str(value).strip() for value in camera_ids)
     layers = tuple(str(value).strip() for value in pose_layers)
+    fingerprints = tuple(str(value).strip().lower() for value in source_frame_sha256)
+    translation_uncertainty = tuple(float(value) for value in translation_uncertainty_m)
+    rotation_uncertainty = tuple(float(value) for value in rotation_uncertainty_rad)
     if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or matrices.shape[0] < 1:
         raise ValueError("matrices_reconstruction must have shape (N, 4, 4) with N >= 1.")
     if matrices.shape[0] > MAX_PERSISTED_CANONICAL_CAMERA_POSES:
@@ -134,6 +190,16 @@ def build_canonical_camera_trajectory_snapshot(
         raise ValueError("camera_ids must be unique.")
     if layers and (len(layers) != matrices.shape[0] or any(not value for value in layers)):
         raise ValueError("pose_layers must be empty or match the pose count.")
+    if fingerprints and len(fingerprints) != matrices.shape[0]:
+        raise ValueError("source_frame_sha256 must be empty or match the pose count.")
+    for digest in fingerprints:
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise ValueError("source_frame_sha256 entries must be hexadecimal SHA-256 values.")
+    for name, values in (("translation_uncertainty_m", translation_uncertainty), ("rotation_uncertainty_rad", rotation_uncertainty)):
+        if values and len(values) != matrices.shape[0]:
+            raise ValueError(f"{name} must be empty or match the pose count.")
+        if any((not np.isfinite(value)) or value < 0.0 for value in values):
+            raise ValueError(f"{name} values must be finite and non-negative.")
     for index, matrix in enumerate(matrices):
         _validate_pose(matrix, field_name=f"T_reconstruction_from_camera[{index}]")
     total = matrices.shape[0] if total_pose_count is None else int(total_pose_count)
@@ -146,6 +212,9 @@ def build_canonical_camera_trajectory_snapshot(
         "frame_count": total,
         "T_reconstruction_from_camera": matrices.tolist(),
         "pose_layers": list(layers),
+        "source_frame_sha256": list(fingerprints),
+        "translation_uncertainty_m": list(translation_uncertainty),
+        "rotation_uncertainty_rad": list(rotation_uncertainty),
         "source_provider_id": _nonempty(provider_id, "provider_id"),
         "reconstruction_frame_id": str(reconstruction_frame_id).strip(),
         "canonical_geometry_authoritative": False,
@@ -203,6 +272,14 @@ def load_persistent_canonical_camera_trajectory(
     if not isinstance(raw_layers, list):
         raise ValueError("Persistent camera trajectory pose_layers must be a JSON array when present.")
     pose_layers = tuple(str(value).strip() for value in raw_layers)
+    raw_fingerprints = snapshot.get("source_frame_sha256", []) or []
+    raw_translation_uncertainty = snapshot.get("translation_uncertainty_m", []) or []
+    raw_rotation_uncertainty = snapshot.get("rotation_uncertainty_rad", []) or []
+    if not isinstance(raw_fingerprints, list) or not isinstance(raw_translation_uncertainty, list) or not isinstance(raw_rotation_uncertainty, list):
+        raise ValueError("Persistent camera registration metadata must use JSON arrays.")
+    source_frame_sha256 = tuple(str(value).strip().lower() for value in raw_fingerprints)
+    translation_uncertainty_m = tuple(float(value) for value in raw_translation_uncertainty)
+    rotation_uncertainty_rad = tuple(float(value) for value in raw_rotation_uncertainty)
 
     provider = str(snapshot.get("source_provider_id", artifact.provider_id)).strip()
     if provider != artifact.provider_id:
@@ -225,6 +302,9 @@ def load_persistent_canonical_camera_trajectory(
         reconstruction_frame_id=frame_id,
         camera_ids=camera_ids,
         pose_layers=pose_layers,
+        source_frame_sha256=source_frame_sha256,
+        translation_uncertainty_m=translation_uncertainty_m,
+        rotation_uncertainty_rad=rotation_uncertainty_rad,
         matrices_reconstruction=matrices,
         positions_viewer=positions,
         total_pose_count=total_count,

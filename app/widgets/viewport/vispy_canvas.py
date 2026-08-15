@@ -648,7 +648,7 @@ class ReconstructionCanvas(QObject):
             text="",
             pos=np.zeros((1, 3), dtype=np.float32),
             color=(1.0, 0.84, 0.34, 1.0),
-            font_size=10.0,
+            font_size=12.0,
             bold=True,
             anchor_x="center",
             anchor_y="bottom",
@@ -677,6 +677,41 @@ class ReconstructionCanvas(QObject):
         self._canonical_inspection_overlay_object_id = ""
         self._canonical_inspection_overlay_text = ""
         self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
+        # Phase 9.3J genuine canonical dimension lines. Endpoints are supplied
+        # only by the qualified measurement-registration presentation; this
+        # visual never derives dimensions from semantic support bounds.
+        self._canonical_registered_dimensions = scene.visuals.Line(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            connect="segments",
+            color=(1.0, 0.79, 0.20, 1.0),
+            width=2.4,
+            parent=self._view.scene,
+        )
+        self._canonical_registered_dimensions.visible = False
+        self._canonical_registered_dimension_endpoints = scene.visuals.Markers(parent=self._view.scene)
+        self._canonical_registered_dimension_endpoints.set_data(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            face_color=(1.0, 0.79, 0.20, 1.0),
+            edge_color=(0.08, 0.08, 0.08, 1.0),
+            size=7.0,
+            edge_width=1.0,
+        )
+        self._canonical_registered_dimension_endpoints.visible = False
+        self._canonical_registered_dimension_labels = scene.visuals.Text(
+            text="",
+            pos=np.zeros((1, 3), dtype=np.float32),
+            color=(1.0, 0.88, 0.42, 1.0),
+            font_size=12.0,
+            bold=True,
+            anchor_x="center",
+            anchor_y="bottom",
+            parent=self._view.scene,
+        )
+        self._canonical_registered_dimension_labels.visible = False
+        self._canonical_registered_dimension_scene_id = ""
+        self._canonical_registered_dimension_object_id = ""
+        self._canonical_registered_dimension_count = 0
+        self._canonical_registered_dimension_text: tuple[str, ...] = ()
         self._canonical_semantic_loaded = False
         self._canonical_semantic_scene_id = ""
         self._canonical_semantic_artifact_id = ""
@@ -1396,6 +1431,7 @@ class ReconstructionCanvas(QObject):
         preserve_selected_mesh_visual: bool = False,
     ) -> None:
         self.clear_canonical_inspection_overlay(update_canvas=False)
+        self.clear_canonical_registered_dimensions(update_canvas=False)
         self._canonical_semantic_labels.visible = False
         self._canonical_semantic_labels.text = ""
         self._selected_canonical_semantic_label.visible = False
@@ -1480,6 +1516,87 @@ class ReconstructionCanvas(QObject):
             and selected == self._canonical_inspection_overlay_object_id
             and self._canonical_inspection_overlay_scene_id == self._canonical_semantic_scene_id
         )
+
+    def set_canonical_registered_dimensions(
+        self,
+        *,
+        scene_id: str,
+        object_id: str,
+        starts_reconstruction: np.ndarray,
+        ends_reconstruction: np.ndarray,
+        labels: tuple[str, ...] | list[str],
+    ) -> None:
+        """Render up to three already-qualified measurement dimensions."""
+
+        if not self._canonical_semantic_loaded:
+            raise ValueError("Canonical registered dimensions require loaded canonical semantics.")
+        scene_id = str(scene_id).strip()
+        object_id = str(object_id).strip()
+        if scene_id != self._canonical_semantic_scene_id or object_id not in self._canonical_semantic_object_ids:
+            raise ValueError("Canonical registered dimension binding does not match the loaded semantic scene.")
+        if self.selected_semantic_object_id != object_id:
+            raise ValueError("Canonical registered dimensions must target the selected semantic object.")
+        starts = np.asarray(starts_reconstruction, dtype=np.float64)
+        ends = np.asarray(ends_reconstruction, dtype=np.float64)
+        texts = tuple(str(value).strip() for value in labels)
+        if starts.ndim != 2 or starts.shape[1:] != (3,) or ends.shape != starts.shape:
+            raise ValueError("Registered dimension endpoints must have matching shape (N, 3).")
+        if not 1 <= starts.shape[0] <= 3 or len(texts) != starts.shape[0] or any(not value for value in texts):
+            raise ValueError("Registered dimensions require 1-3 non-empty labeled segments.")
+        if not np.isfinite(starts).all() or not np.isfinite(ends).all():
+            raise ValueError("Registered dimension endpoints must be finite.")
+        from app.reconstruction_visualization import reconstruction_points_to_viewer
+
+        start_view = reconstruction_points_to_viewer(starts).astype(np.float32, copy=False)
+        end_view = reconstruction_points_to_viewer(ends).astype(np.float32, copy=False)
+        segments = np.empty((starts.shape[0] * 2, 3), dtype=np.float32)
+        segments[0::2] = start_view
+        segments[1::2] = end_view
+        endpoints = np.concatenate([start_view, end_view], axis=0)
+        midpoints = (start_view + end_view) * 0.5
+        self._canonical_registered_dimensions.set_data(pos=segments, connect="segments")
+        self._canonical_registered_dimension_endpoints.set_data(
+            pos=endpoints,
+            face_color=(1.0, 0.79, 0.20, 1.0),
+            edge_color=(0.08, 0.08, 0.08, 1.0),
+            size=7.0,
+            edge_width=1.0,
+        )
+        self._canonical_registered_dimension_labels.text = list(texts)
+        self._canonical_registered_dimension_labels.pos = midpoints
+        self._canonical_registered_dimension_scene_id = scene_id
+        self._canonical_registered_dimension_object_id = object_id
+        self._canonical_registered_dimension_count = int(starts.shape[0])
+        self._canonical_registered_dimension_text = texts
+        self._refresh_canonical_registered_dimension_visibility()
+        self._canvas.update()
+
+    def clear_canonical_registered_dimensions(self, *, update_canvas: bool = True) -> None:
+        self._canonical_registered_dimensions.visible = False
+        self._canonical_registered_dimension_endpoints.visible = False
+        self._canonical_registered_dimension_labels.visible = False
+        self._canonical_registered_dimension_labels.text = ""
+        self._canonical_registered_dimension_scene_id = ""
+        self._canonical_registered_dimension_object_id = ""
+        self._canonical_registered_dimension_count = 0
+        self._canonical_registered_dimension_text = ()
+        if update_canvas:
+            self._canvas.update()
+
+    def _refresh_canonical_registered_dimension_visibility(self) -> None:
+        selected = self.selected_semantic_object_id
+        visible = bool(
+            self._canonical_inspection_overlay_layer_visible
+            and self._semantic_objects_visible
+            and self._semantic_objects_available
+            and self._canonical_semantic_loaded
+            and self._canonical_registered_dimension_count
+            and selected == self._canonical_registered_dimension_object_id
+            and self._canonical_registered_dimension_scene_id == self._canonical_semantic_scene_id
+        )
+        self._canonical_registered_dimensions.visible = visible
+        self._canonical_registered_dimension_endpoints.visible = visible
+        self._canonical_registered_dimension_labels.visible = visible
 
     def _clear_selected_canonical_semantic_mesh(self, *, preserve_visual: bool = False) -> None:
         # Match the qualified 9.3B MeshVisual lifecycle: never submit a zero-
@@ -1688,6 +1805,7 @@ class ReconstructionCanvas(QObject):
     def set_canonical_inspection_overlay_visible(self, visible: bool) -> None:
         self._canonical_inspection_overlay_layer_visible = bool(visible)
         self._refresh_canonical_inspection_overlay_visibility()
+        self._refresh_canonical_registered_dimension_visibility()
         self._canvas.update()
 
     def _refresh_semantic_layer_visibility(self) -> None:
@@ -1718,6 +1836,7 @@ class ReconstructionCanvas(QObject):
             and self._selected_canonical_semantic_surface_loaded
         )
         self._refresh_canonical_inspection_overlay_visibility()
+        self._refresh_canonical_registered_dimension_visibility()
 
     def select_semantic_object(self, object_index: int) -> None:
         index = int(object_index)
@@ -2463,6 +2582,22 @@ class ReconstructionCanvas(QObject):
     @property
     def canonical_inspection_overlay_object_id(self) -> str:
         return self._canonical_inspection_overlay_object_id
+
+    @property
+    def canonical_registered_dimension_count(self) -> int:
+        return int(self._canonical_registered_dimension_count)
+
+    @property
+    def canonical_registered_dimensions_visible(self) -> bool:
+        return bool(self._canonical_registered_dimensions.visible)
+
+    @property
+    def canonical_registered_dimension_object_id(self) -> str:
+        return self._canonical_registered_dimension_object_id
+
+    @property
+    def canonical_registered_dimension_text(self) -> tuple[str, ...]:
+        return self._canonical_registered_dimension_text
 
     @property
     def semantic_objects_available(self) -> bool:

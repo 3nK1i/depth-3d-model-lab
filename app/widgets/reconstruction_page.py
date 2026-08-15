@@ -109,6 +109,9 @@ from app.reconstruction_canonical_inspection_overlays import (
     CanonicalObjectInspectionOverlayPresentation,
     build_canonical_object_inspection_overlay,
 )
+from app.measurement_canonical_registration_presentation import (
+    MeasurementCanonicalRegistrationPresentation,
+)
 from app.reconstruction_scene_layers import build_reconstruction_scene_layer_availability
 from app.reconstruction_dense_provider_presentation import (
     DenseProviderEntry,
@@ -257,6 +260,7 @@ class ReconstructionPage(QWidget):
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
+    canonical_measurement_registration_changed = pyqtSignal(object)
     dense_provider_presentation_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
@@ -302,6 +306,7 @@ class ReconstructionPage(QWidget):
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation: CanonicalObjectInspectionOverlayPresentation | None = None
         self._canonical_inspection_overlay_error = ""
+        self._canonical_measurement_registration_presentation: MeasurementCanonicalRegistrationPresentation | None = None
         self._dense_provider_presentation: DenseProviderPresentation | None = None
         self._selected_dense_provider_id = ""
         self._scene_runtime_health: ReconstructionSceneRuntimeHealth | None = None
@@ -1286,8 +1291,95 @@ class ReconstructionPage(QWidget):
             self._inspection_authority_value.setText(selection.authority_text)
 
         self._refresh_reconstruction_measurement_presentation()
+        self._refresh_canonical_measurement_registration_presentation()
         if changed:
             self.inspection_target_changed.emit(selection)
+
+    @property
+    def canonical_measurement_registration_presentation(
+        self,
+    ) -> MeasurementCanonicalRegistrationPresentation | None:
+        return self._canonical_measurement_registration_presentation
+
+    def set_canonical_measurement_registration_presentation(
+        self,
+        presentation: MeasurementCanonicalRegistrationPresentation | None,
+    ) -> None:
+        if presentation is not None and not isinstance(
+            presentation, MeasurementCanonicalRegistrationPresentation
+        ):
+            raise TypeError(
+                "presentation must be MeasurementCanonicalRegistrationPresentation or None."
+            )
+        changed = presentation != self._canonical_measurement_registration_presentation
+        self._canonical_measurement_registration_presentation = presentation
+        self._refresh_canonical_measurement_registration_presentation()
+        if changed:
+            self.canonical_measurement_registration_changed.emit(presentation)
+
+    def clear_canonical_measurement_registration(self) -> None:
+        self.set_canonical_measurement_registration_presentation(None)
+
+    def _refresh_canonical_measurement_registration_presentation(self) -> None:
+        presentation = self._canonical_measurement_registration_presentation
+        if hasattr(self, "_canonical_registration_state_value"):
+            if presentation is None:
+                self._canonical_registration_state_value.setText("Unavailable")
+                self._canonical_registration_binding_value.setText("No exact canonical binding")
+                self._canonical_registration_dimensions_value.setText("No canonical dimension geometry")
+                self._canonical_registration_uncertainty_value.setText("No placement uncertainty")
+                self._canonical_registration_reason_value.setText(
+                    "No qualified measurement→canonical registration"
+                )
+                self._canonical_registration_authority_value.setText(
+                    "Original measurement remains source truth • canonical placement is additive"
+                )
+            else:
+                self._canonical_registration_state_value.setText(presentation.status_text)
+                self._canonical_registration_binding_value.setText(presentation.binding_text)
+                self._canonical_registration_dimensions_value.setText(presentation.dimensions_text)
+                self._canonical_registration_uncertainty_value.setText(presentation.uncertainty_text)
+                self._canonical_registration_reason_value.setText(presentation.reason_text)
+                self._canonical_registration_authority_value.setText(presentation.authority_text)
+
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        if canvas is None:
+            return
+        canvas.clear_canonical_registered_dimensions(update_canvas=False)
+        selection = self._inspection_selection
+        if (
+            presentation is not None
+            and presentation.dimensions
+            and selection.has_object
+            and selection.object_id == presentation.canonical_object_id
+            and self._persistent_scene is not None
+            and presentation.scene_id == self._persistent_scene.scene_id
+        ):
+            starts = np.asarray(
+                [item.start_reconstruction for item in presentation.dimensions], dtype=np.float64
+            )
+            ends = np.asarray(
+                [item.end_reconstruction for item in presentation.dimensions], dtype=np.float64
+            )
+            canvas.set_canonical_registered_dimensions(
+                scene_id=presentation.scene_id,
+                object_id=presentation.canonical_object_id,
+                starts_reconstruction=starts,
+                ends_reconstruction=ends,
+                labels=[item.value_text for item in presentation.dimensions],
+            )
+        self._refresh_scene_layer_controls()
+
+    def select_semantic_object_by_id(self, object_id: str) -> bool:
+        target = str(object_id).strip()
+        presentation = self._offline_semantics
+        if not target or presentation is None:
+            return False
+        for index, item in enumerate(presentation.objects):
+            if item.object_id == target:
+                self._semantic_object_combo.setCurrentIndex(index + 1)
+                return True
+        return False
 
     @property
     def reconstruction_measurement_presentation(self) -> ReconstructionMeasurementPresentation | None:
@@ -1892,6 +1984,14 @@ class ReconstructionPage(QWidget):
             self._visualizer_fitted_once = True
         self._apply_canonical_viewer_status()
         return bool(was_loaded and self._reconstruction_canvas.canonical_mesh_loaded)
+
+    @property
+    def persistent_scene(self):
+        return self._persistent_scene
+
+    @property
+    def persistent_authority_snapshot(self) -> PersistentSceneAuthoritySnapshot | None:
+        return self._persistent_authority_snapshot
 
     @property
     def canonical_camera_presentation(self) -> CanonicalCameraTrajectoryPresentation | None:
@@ -3328,6 +3428,33 @@ class ReconstructionPage(QWidget):
         )
         layout.addWidget(self._measurement_validity_group)
 
+        # 9.3J adds an optional, fail-closed spatial registration layer over the
+        # original Phase 7.5 measurement. It never makes calibration mandatory
+        # and only draws canonical dimension endpoints when registration is qualified.
+        self._canonical_registration_group = self._settings_group("CANONICAL MEASUREMENT REGISTRATION")
+        self._canonical_registration_group.set_expanded(False)
+        canonical_registration_layout = self._canonical_registration_group.content_layout
+        self._canonical_registration_state_value = self._settings_value("Unavailable")
+        self._canonical_registration_binding_value = self._settings_value("No exact canonical binding")
+        self._canonical_registration_dimensions_value = self._settings_value("No canonical dimension geometry")
+        self._canonical_registration_uncertainty_value = self._settings_value("No placement uncertainty")
+        self._canonical_registration_reason_value = self._settings_value(
+            "No qualified measurement→canonical registration"
+        )
+        self._canonical_registration_authority_value = self._settings_value(
+            "Original measurement remains source truth • canonical placement is additive"
+        )
+        self._add_status_row(canonical_registration_layout, "State", self._canonical_registration_state_value)
+        self._add_status_row(canonical_registration_layout, "Binding", self._canonical_registration_binding_value)
+        self._add_status_row(canonical_registration_layout, "Dimensions", self._canonical_registration_dimensions_value)
+        self._add_status_row(canonical_registration_layout, "Placement ±", self._canonical_registration_uncertainty_value)
+        self._add_status_row(canonical_registration_layout, "Reason", self._canonical_registration_reason_value)
+        self._add_status_row(canonical_registration_layout, "Authority", self._canonical_registration_authority_value)
+        self._canonical_registration_authority_value.setToolTip(
+            "Registration never rewrites the original Phase 7.5 value/uncertainty, never creates metric scale, and never certifies metrology."
+        )
+        layout.addWidget(self._canonical_registration_group)
+
         # E4 presents an already-produced Phase 8.7C inspection/QC report.
         # The decision and findings remain source-authored. Registration/QC is
         # not rerun here and the reference selection/comparison workflow is E5.
@@ -3984,7 +4111,13 @@ class ReconstructionPage(QWidget):
             semantic_objects_available=canvas.semantic_objects_available,
             canonical_semantics_loaded=canvas.canonical_semantic_loaded,
             semantic_selection_active=selection_active,
-            inspection_evidence_available=self._canonical_inspection_overlay_presentation is not None,
+            inspection_evidence_available=(
+                self._canonical_inspection_overlay_presentation is not None
+                or bool(
+                    self._canonical_measurement_registration_presentation
+                    and self._canonical_measurement_registration_presentation.dimensions
+                )
+            ),
         )
 
         enabled = {
@@ -5909,6 +6042,8 @@ class ReconstructionPage(QWidget):
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation = None
         self._canonical_inspection_overlay_error = ""
+        self._canonical_measurement_registration_presentation = None
+        self._reconstruction_canvas.clear_canonical_registered_dimensions(update_canvas=False)
         self._reconstruction_canvas.clear_canonical_camera_trajectory()
         self._canonical_camera_presentation = None
         self._canonical_camera_error = ""
@@ -6079,6 +6214,7 @@ class ReconstructionPage(QWidget):
         self._canonical_semantic_error = ""
         self._canonical_inspection_overlay_presentation = None
         self._canonical_inspection_overlay_error = ""
+        self._canonical_measurement_registration_presentation = None
         self._reconstruction_canvas.close()
 
     @staticmethod

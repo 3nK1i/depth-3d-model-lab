@@ -241,6 +241,11 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_inspection_overlay_object_id = ""
             self._canonical_inspection_overlay_text = ""
             self._canonical_inspection_overlay_anchor = np.zeros((3,), dtype=np.float32)
+            self._canonical_registered_dimension_count = 0
+            self._canonical_registered_dimension_scene_id = ""
+            self._canonical_registered_dimension_object_id = ""
+            self._canonical_registered_dimension_text = ()
+            self._canonical_registered_dimensions_visible = False
             self._semantic_objects_visible = True
             self._semantic_objects_available = False
             self._semantic_bounds_min = np.zeros((0, 3), dtype=np.float64)
@@ -632,6 +637,7 @@ def _install_fake_vispy_canvas() -> None:
             preserve_selected_mesh_visual: bool = False,
         ) -> None:
             self.clear_canonical_inspection_overlay(update_canvas=False)
+            self.clear_canonical_registered_dimensions(update_canvas=False)
             self._canonical_semantic_loaded = False
             self._canonical_semantic_scene_id = ""
             self._canonical_semantic_artifact_id = ""
@@ -686,6 +692,46 @@ def _install_fake_vispy_canvas() -> None:
                 and self._canonical_inspection_overlay_text
                 and self.selected_semantic_object_id == self._canonical_inspection_overlay_object_id
                 and self._canonical_inspection_overlay_scene_id == self._canonical_semantic_scene_id
+            )
+
+        def set_canonical_registered_dimensions(
+            self, *, scene_id, object_id, starts_reconstruction, ends_reconstruction, labels
+        ) -> None:
+            if not self._canonical_semantic_loaded:
+                raise ValueError("Canonical registered dimensions require loaded canonical semantics.")
+            starts = np.asarray(starts_reconstruction, dtype=np.float64)
+            ends = np.asarray(ends_reconstruction, dtype=np.float64)
+            texts = tuple(str(value).strip() for value in labels)
+            if starts.ndim != 2 or starts.shape[1:] != (3,) or ends.shape != starts.shape:
+                raise ValueError("Registered dimension endpoints must have shape (N, 3).")
+            if not 1 <= len(starts) <= 3 or len(texts) != len(starts):
+                raise ValueError("Registered dimensions require 1-3 labels.")
+            if str(scene_id) != self._canonical_semantic_scene_id:
+                raise ValueError("Registered dimension scene mismatch.")
+            if str(object_id) != self.selected_semantic_object_id:
+                raise ValueError("Registered dimensions require selected object.")
+            self._canonical_registered_dimension_count = len(texts)
+            self._canonical_registered_dimension_scene_id = str(scene_id)
+            self._canonical_registered_dimension_object_id = str(object_id)
+            self._canonical_registered_dimension_text = texts
+            self._refresh_canonical_registered_dimension_visibility()
+
+        def clear_canonical_registered_dimensions(self, *, update_canvas: bool = True) -> None:
+            self._canonical_registered_dimension_count = 0
+            self._canonical_registered_dimension_scene_id = ""
+            self._canonical_registered_dimension_object_id = ""
+            self._canonical_registered_dimension_text = ()
+            self._canonical_registered_dimensions_visible = False
+
+        def _refresh_canonical_registered_dimension_visibility(self) -> None:
+            self._canonical_registered_dimensions_visible = bool(
+                self._canonical_inspection_overlay_layer_visible
+                and self._semantic_objects_visible
+                and self._semantic_objects_available
+                and self._canonical_semantic_loaded
+                and self._canonical_registered_dimension_count
+                and self.selected_semantic_object_id == self._canonical_registered_dimension_object_id
+                and self._canonical_registered_dimension_scene_id == self._canonical_semantic_scene_id
             )
 
         def _refresh_selected_canonical_semantic_state(self) -> None:
@@ -773,6 +819,7 @@ def _install_fake_vispy_canvas() -> None:
         def set_canonical_inspection_overlay_visible(self, visible: bool) -> None:
             self._canonical_inspection_overlay_layer_visible = bool(visible)
             self._refresh_canonical_inspection_overlay_visibility()
+            self._refresh_canonical_registered_dimension_visibility()
 
         def _refresh_semantic_layer_state(self) -> None:
             self._selected_semantic_object_visible = bool(
@@ -783,6 +830,7 @@ def _install_fake_vispy_canvas() -> None:
             )
             self._refresh_selected_canonical_semantic_state()
             self._refresh_canonical_inspection_overlay_visibility()
+            self._refresh_canonical_registered_dimension_visibility()
 
         def select_semantic_object(self, object_index: int) -> None:
             index = int(object_index)
@@ -796,6 +844,7 @@ def _install_fake_vispy_canvas() -> None:
             )
             self._refresh_selected_canonical_semantic_state()
             self._refresh_canonical_inspection_overlay_visibility()
+            self._refresh_canonical_registered_dimension_visibility()
 
         def clear_semantic_object_selection(self) -> None:
             self._selected_semantic_object_index = None
@@ -1188,6 +1237,22 @@ def _install_fake_vispy_canvas() -> None:
         @property
         def canonical_inspection_overlay_object_id(self) -> str:
             return self._canonical_inspection_overlay_object_id
+
+        @property
+        def canonical_registered_dimension_count(self) -> int:
+            return int(self._canonical_registered_dimension_count)
+
+        @property
+        def canonical_registered_dimensions_visible(self) -> bool:
+            return bool(self._canonical_registered_dimensions_visible)
+
+        @property
+        def canonical_registered_dimension_object_id(self) -> str:
+            return self._canonical_registered_dimension_object_id
+
+        @property
+        def canonical_registered_dimension_text(self) -> tuple[str, ...]:
+            return self._canonical_registered_dimension_text
 
         @property
         def semantic_objects_available(self) -> bool:

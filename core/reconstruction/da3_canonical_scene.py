@@ -78,6 +78,7 @@ class DA3CanonicalSceneIntegrationResult:
     da3_manifest: DA3ResultManifest
     frame_ids: tuple[str, ...]
     reconstruction_frame_id: str
+    source_frame_sha256: tuple[str, ...] = ()
     semantic_context_available: bool = False
     inspection_qc_available: bool = False
     certified_metrology: bool = False
@@ -117,6 +118,20 @@ class DA3CanonicalSceneIntegrationResult:
             )
         if self.surface.unit_to_metre is not None:
             raise ReconstructionValidationError("Phase 9.3H must not invent unit_to_metre.")
+        fingerprints = tuple(str(value).strip().lower() for value in self.source_frame_sha256)
+        if fingerprints:
+            if len(fingerprints) != len(self.frame_ids):
+                raise ReconstructionValidationError(
+                    "source_frame_sha256 must be empty or match the integrated DA3 frame count."
+                )
+            for digest in fingerprints:
+                if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                    raise ReconstructionValidationError(
+                        "source_frame_sha256 entries must be hexadecimal SHA-256 values."
+                    )
+            if len(set(fingerprints)) != len(fingerprints):
+                raise ReconstructionValidationError("DA3 source-frame fingerprints must be unique.")
+        object.__setattr__(self, "source_frame_sha256", fingerprints)
 
     @property
     def canonical_geometry_authoritative(self) -> bool:
@@ -226,6 +241,7 @@ def integrate_da3_result_to_canonical_scene(
     request_id: str,
     rgb_frames: Sequence[np.ndarray],
     frame_ids: Sequence[str] | None = None,
+    source_frame_sha256: Sequence[str] = (),
     timestamps_ns: Sequence[int] | None = None,
     source_label: str = "phase9-3h-da3-input",
     reconstruction_frame_id: str = PHASE9_3H_RECONSTRUCTION_FRAME_ID,
@@ -258,6 +274,19 @@ def integrate_da3_result_to_canonical_scene(
     ids = tuple(frame_ids or (f"da3-9.3h-{index:04d}" for index in range(manifest.frame_count)))
     if len(ids) != manifest.frame_count or len(set(ids)) != len(ids) or any(not str(v).strip() for v in ids):
         raise ReconstructionValidationError("frame_ids must provide one unique non-empty ID per DA3 frame.")
+    fingerprints = tuple(str(value).strip().lower() for value in source_frame_sha256)
+    if fingerprints:
+        if len(fingerprints) != manifest.frame_count:
+            raise ReconstructionValidationError(
+                "source_frame_sha256 must be empty or provide one digest per DA3 frame."
+            )
+        for digest in fingerprints:
+            if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise ReconstructionValidationError(
+                    "source_frame_sha256 entries must be hexadecimal SHA-256 values."
+                )
+        if len(set(fingerprints)) != len(fingerprints):
+            raise ReconstructionValidationError("DA3 source-frame fingerprints must be unique.")
     if timestamps_ns is None:
         timestamps = tuple(1_000_000_000 + index * 50_000_000 for index in range(manifest.frame_count))
     else:
@@ -433,6 +462,7 @@ def integrate_da3_result_to_canonical_scene(
         da3_manifest=manifest,
         frame_ids=ids,
         reconstruction_frame_id=reconstruction_frame_id,
+        source_frame_sha256=fingerprints,
         semantic_context_available=False,
         inspection_qc_available=False,
         certified_metrology=False,

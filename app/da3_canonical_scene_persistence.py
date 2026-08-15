@@ -49,12 +49,14 @@ def materialize_da3_canonical_persistent_scene(
         provider_id=DA3_PROVIDER_ID,
         pose_layers=integration.trajectory.pose_layers,
         reconstruction_frame_id=integration.reconstruction_frame_id,
+        source_frame_sha256=integration.source_frame_sha256,
     )
     snapshots: dict[str, dict[str, Any]] = {
         "ingestion_result": {
             "session_id": integration.ingestion.session_id,
             "frame_ids": list(integration.frame_ids),
             "frame_count": len(integration.frame_ids),
+            "source_frame_sha256": list(integration.source_frame_sha256),
             "source_label": integration.ingestion.source_label,
             "reconstruction_frame_id": integration.reconstruction_frame_id,
             "calibration_required": False,

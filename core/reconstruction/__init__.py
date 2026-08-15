@@ -91,6 +91,14 @@ from core.reconstruction.semantic_geometry import (
     write_semantic_groups_obj,
 )
 
+from core.reconstruction.measurement_registration import (
+    CanonicalMeasurementRegistrationEvidence,
+    CanonicalMeasurementRegistrationResult,
+    CanonicalMeasurementRegistrationState,
+    CanonicalRegisteredDimension,
+    build_registered_dimensions,
+)
+
 from core.reconstruction.inspection_qc import (
     INSPECTION_QC_POSE_CONVENTION,
     INSPECTION_QC_SCHEMA_VERSION,
@@ -1042,6 +1050,11 @@ __all__ = [
     "build_semantic_3d_geometry",
     "project_surface_mesh_vertices",
     "write_semantic_groups_obj",
+    "CanonicalMeasurementRegistrationEvidence",
+    "CanonicalMeasurementRegistrationResult",
+    "CanonicalMeasurementRegistrationState",
+    "CanonicalRegisteredDimension",
+    "build_registered_dimensions",
     "INSPECTION_QC_POSE_CONVENTION",
     "INSPECTION_QC_SCHEMA_VERSION",
     "FeatureTolerance",

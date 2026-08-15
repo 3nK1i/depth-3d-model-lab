@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
@@ -58,6 +58,12 @@ from app.widgets.benchmark_page import BenchmarkPage
 from app.widgets.depth_view import DepthMapView
 from app.widgets.header_widget import HeaderWidget
 from app.widgets.inspection_page import InspectionPage
+from app.measurement_canonical_registration_presentation import (
+    build_measurement_canonical_registration_presentation,
+)
+from app.reconstruction_measurement_validity_presentation import (
+    ReconstructionMeasurementValidityContext,
+)
 from app.widgets.mode_tabs import AppMode, ModeTabs
 from app.widgets.original_view import OriginalSourceView
 from app.widgets.reconstruction_page import ReconstructionPage
@@ -184,6 +190,7 @@ class MainWindow(QMainWindow):
         self._reviewed_semantic_selection: ReviewedSemanticSelection | None = None
         self._reviewed_semantic_image_bgr: np.ndarray | None = None
         self._reviewed_semantic_source_label = ""
+        self._measurement_canonical_registration_refresh_pending = False
         self._snapshot_frame: np.ndarray | None = None
         self._stable_previous_smoothing: float | None = None
         self._snapshot_page.capture_requested.connect(self._capture_snapshot_frame)
@@ -201,6 +208,18 @@ class MainWindow(QMainWindow):
         self._inspection_page.cancel_requested.connect(self._inspection_controller.cancel)
         self._inspection_page.recompute_requested.connect(self._recompute_inspection)
         self._inspection_page.export_requested.connect(self._export_inspection)
+        self._inspection_page.selected_object_changed.connect(
+            lambda _obj: self._schedule_measurement_canonical_registration_refresh()
+        )
+        self._reconstruction_page.inspection_target_changed.connect(
+            lambda _selection: self._schedule_measurement_canonical_registration_refresh()
+        )
+        self._reconstruction_page.canonical_camera_presentation_changed.connect(
+            lambda _presentation: self._schedule_measurement_canonical_registration_refresh()
+        )
+        self._reconstruction_page.canonical_scene_presentation_changed.connect(
+            lambda _presentation: self._schedule_measurement_canonical_registration_refresh()
+        )
         self._inspection_controller.state_changed.connect(self._on_inspection_state_changed)
         self._inspection_controller.progress_changed.connect(self._inspection_page.set_progress)
         self._inspection_controller.result_ready.connect(self._on_inspection_result)
@@ -634,6 +653,7 @@ class MainWindow(QMainWindow):
         self._reviewed_semantic_selection = None
         self._reviewed_semantic_image_bgr = None
         self._reviewed_semantic_source_label = ""
+        self._measurement_canonical_registration_refresh_pending = False
         if hasattr(self, "_inspection_page"):
             self._inspection_page.set_reviewed_semantic_context(None)
 
@@ -751,10 +771,76 @@ class MainWindow(QMainWindow):
         try:
             summary, arrays = load_inspection_bundle(bundle_dir)
             self._inspection_page.load_bundle(summary, arrays)
+            self._schedule_measurement_canonical_registration_refresh()
         except (OSError, ValueError, TypeError) as exc:
             self._inspection_page.show_failure(f"Inspection bundle could not be loaded: {exc}")
         finally:
             self._mode_tabs.set_navigation_locked(False)
+
+    def _schedule_measurement_canonical_registration_refresh(self) -> None:
+        # Coalesce the signals emitted while a persistent scene/camera/semantic
+        # presentation is rebound. The bridge is read-only and never starts a backend.
+        if self._measurement_canonical_registration_refresh_pending:
+            return
+        self._measurement_canonical_registration_refresh_pending = True
+        QTimer.singleShot(0, self._run_scheduled_measurement_canonical_registration_refresh)
+
+    def _run_scheduled_measurement_canonical_registration_refresh(self) -> None:
+        self._measurement_canonical_registration_refresh_pending = False
+        self._refresh_measurement_canonical_registration()
+
+    def _refresh_measurement_canonical_registration(self) -> None:
+        page = self._reconstruction_page
+        inspection = self._inspection_page
+        summary = inspection.bundle_summary
+        obj = inspection.selected_object
+        try:
+            presentation = build_measurement_canonical_registration_presentation(
+                scene=page.persistent_scene,
+                canonical_cameras=page.canonical_camera_presentation,
+                canonical_semantics=page.canonical_semantic_presentation,
+                authority=page.persistent_authority_snapshot,
+                inspection_summary=summary,
+                inspection_object=obj,
+            )
+        except (TypeError, ValueError) as exc:
+            inspection.set_canonical_registration_presentation(None)
+            page.clear_canonical_measurement_registration()
+            return
+
+        inspection.set_canonical_registration_presentation(presentation)
+
+        # Exact observation-ID association may still feed E2/E3 when the user
+        # selects that same canonical object in Reconstruction. Never force the
+        # reconstruction selection and never match by class/proximity.
+        selected = page.inspection_selection
+        exact_target_selected = bool(
+            presentation.canonical_object_id
+            and selected.has_object
+            and selected.object_id == presentation.canonical_object_id
+        )
+        if exact_target_selected and obj is not None:
+            try:
+                page.set_reconstruction_measurement_evidence(
+                    obj, source="phase7_5_measurement"
+                )
+                if summary is not None:
+                    page.set_reconstruction_measurement_validity_evidence(
+                        obj,
+                        source="phase7_5_measurement",
+                        context=ReconstructionMeasurementValidityContext(
+                            depth_scale=summary.depth_scale,
+                            intrinsics_source=summary.intrinsics_source,
+                            calibration_status=summary.calibration_status,
+                            confidence_kind=summary.confidence_kind,
+                        ),
+                    )
+            except (TypeError, ValueError):
+                # The existing E2/E3 bridge is fail-closed and remains optional.
+                pass
+            page.set_canonical_measurement_registration_presentation(presentation)
+        else:
+            page.clear_canonical_measurement_registration()
 
     def _export_inspection(self, scope: str) -> None:
         reconstruction_conflict = self._reconstruction_conflict_for_application_job(

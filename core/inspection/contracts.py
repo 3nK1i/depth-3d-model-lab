@@ -173,6 +173,7 @@ class InspectionBundleSummary:
     semantic_source: str = "perception_model"
     semantic_workspace_id: str = ""
     semantic_workspace_revision: int = 0
+    source_frame_sha256: str = ""
 
     def __post_init__(self) -> None:
         directory = Path(self.bundle_dir)
@@ -204,6 +205,10 @@ class InspectionBundleSummary:
         if isinstance(self.semantic_workspace_revision, bool) or int(self.semantic_workspace_revision) < 0:
             raise ContractValidationError("semantic_workspace_revision must be a non-negative integer.")
         object.__setattr__(self, "semantic_workspace_revision", int(self.semantic_workspace_revision))
+        digest = str(self.source_frame_sha256).strip().lower()
+        if digest and (len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest)):
+            raise ContractValidationError("source_frame_sha256 must be hexadecimal SHA-256 when present.")
+        object.__setattr__(self, "source_frame_sha256", digest)
 
     @property
     def arrays_path(self) -> Path:

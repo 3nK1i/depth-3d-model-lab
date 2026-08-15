@@ -30,19 +30,26 @@ def test_3a_smoke_uses_persistent_scene_and_authority_contracts_without_backend_
     assert payload["backend_started_by_9_3a"] is False
 
 
-def test_3a_does_not_modify_locked_persistence_schema_or_add_canonical_mesh_renderer() -> None:
+def test_3a_keeps_locked_persistence_schema_while_later_3b_owns_canonical_mesh_renderer() -> None:
     persistent = (ROOT / "core/reconstruction/persistent_scene.py").read_text(encoding="utf-8")
     page = (ROOT / "app/widgets/reconstruction_page.py").read_text(encoding="utf-8")
     canvas = (ROOT / "app/widgets/viewport/vispy_canvas.py").read_text(encoding="utf-8")
     presentation = (ROOT / "app/reconstruction_canonical_scene_presentation.py").read_text(encoding="utf-8")
 
+    # Phase 9.3A's persistence contract remains locked.  Phase 9.3B later
+    # introduced the canonical MeshVisual in the dedicated viewer layer; that
+    # additive renderer must not migrate mesh parsing/rendering into the 9.3A
+    # presentation contract itself.
     assert 'PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION = 1' in persistent
     assert '"reconstruction_ui_enabled": False' in persistent
     assert "Reconstruction UI remains disabled until Phase 8.8." in persistent
     assert "build_canonical_scene_presentation" in page
     assert "surface_obj_path" in presentation
-    assert "set_canonical_mesh" not in canvas
-    assert "scene.visuals.Mesh" not in canvas
+
+    assert "def set_canonical_mesh(" in canvas
+    assert "scene.visuals.Mesh(" in canvas
+    assert "set_canonical_mesh" not in presentation
+    assert "scene.visuals.Mesh" not in presentation
 
 
 def test_3a_keeps_heavy_runtime_and_appearance_authority_boundaries_unchanged() -> None:

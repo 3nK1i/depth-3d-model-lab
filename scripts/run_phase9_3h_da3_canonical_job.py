@@ -40,6 +40,7 @@ from core.reconstruction.da3_provider import (
     write_da3_input_manifest,
 )
 from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
+from core.perception.reviewed_analysis import source_image_sha256
 
 PROTOCOL = "eia.reconstruction.da3-canonical.v1"
 DA3_WORKER = PROJECT_ROOT / "scripts" / "da3_workers" / "da3_worker.py"
@@ -152,6 +153,17 @@ def _qualified_da3_import_source(da3_python: Path, da3_repo: Path) -> Path:
         ) from exc
     return imported
 
+
+
+
+def _source_frame_fingerprints(paths: tuple[Path, ...]) -> tuple[str, ...]:
+    fingerprints: list[str] = []
+    for path in paths:
+        bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise RuntimeError(f"Unable to read DA3 source image for fingerprinting: {path}")
+        fingerprints.append(source_image_sha256(bgr))
+    return tuple(fingerprints)
 
 def _load_rgb_frames(paths: tuple[Path, ...], *, width: int, height: int) -> tuple[np.ndarray, ...]:
     frames = []
@@ -288,6 +300,7 @@ def main() -> int:
 
         if input_manifest.request_id != manifest.request_id:
             raise RuntimeError("DA3 input/result request identity mismatch.")
+        source_fingerprints = _source_frame_fingerprints(source_paths)
         rgbs = _load_rgb_frames(source_paths, width=manifest.width, height=manifest.height)
         _event("canonicalizing", frame_count=manifest.frame_count, scale="relative_arbitrary_scale")
         integration = integrate_da3_result_to_canonical_scene(
@@ -296,6 +309,7 @@ def main() -> int:
             request_id=f"phase9-3h-{session_id[:8]}",
             rgb_frames=rgbs,
             frame_ids=tuple(f"da3-{index:04d}" for index in range(manifest.frame_count)),
+            source_frame_sha256=source_fingerprints,
             source_label=("phase9-3h-recorded-video" if args.video else "phase9-3h-image-sequence"),
             pixel_stride=int(args.pixel_stride),
         )

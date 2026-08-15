@@ -94,6 +94,7 @@ def load_inspection_bundle(bundle_dir: str | Path) -> tuple[InspectionBundleSumm
         semantic_source=str(payload.get("semantic_source", "perception_model")),
         semantic_workspace_id=str(payload.get("semantic_workspace_id", "")),
         semantic_workspace_revision=int(payload.get("semantic_workspace_revision", 0)),
+        source_frame_sha256=str(payload.get("source_frame_sha256", "")),
     )
     if not summary.arrays_path.is_file():
         raise ContractValidationError(f"Inspection array archive is missing: {summary.arrays_path}")
