@@ -1195,8 +1195,18 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         background-color: {p.bg_input}; border: 1px solid {p.settings_input_border}; border-radius: 5px;
         color: {p.settings_text}; selection-background-color: #2a1417; selection-color: {p.text_primary};
     }}
-    QListWidget#autoSegmentObjectList::item {{ padding: 7px 6px; border-bottom: 1px solid {p.border}; }}
+    QListWidget#autoSegmentObjectList::item {{ padding: 0; border-bottom: 1px solid {p.border}; }}
     QListWidget#autoSegmentObjectList::item:selected {{ border-left: 3px solid {p.accent}; }}
+    QWidget#autoSegmentProposalRow {{ background-color: {p.bg_input}; }}
+    QLabel#autoSegmentProposalRowLabel {{ color: {p.settings_text}; font-size: 11px; padding: 0; }}
+    QToolButton#autoSegmentProposalDeleteButton {{
+        background-color: transparent; border: 0; border-radius: 4px; color: {p.text_muted};
+        font-size: 17px; font-weight: 700; padding: 0;
+    }}
+    QToolButton#autoSegmentProposalDeleteButton:hover {{
+        background-color: {p.toolbar_red_bg}; color: {p.toolbar_red_fg};
+    }}
+    QToolButton#autoSegmentProposalDeleteButton:disabled {{ color: {p.border}; background-color: transparent; }}
     QPushButton#autoSegmentPrimaryButton, QPushButton#autoSegmentSecondaryButton,
     QPushButton#autoSegmentDangerButton, QPushButton#autoSegmentMiniButton {{
         border-radius: 5px; padding: 6px 10px; font-size: 11px; font-weight: 700;

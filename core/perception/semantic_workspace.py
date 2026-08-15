@@ -403,6 +403,47 @@ def append_workspace_mask_proposal(
     )
 
 
+def delete_workspace_object(
+    workspace: SemanticWorkspace,
+    object_id: str,
+) -> SemanticWorkspace:
+    """Permanently remove one disposable proposal from a semantic workspace.
+
+    Deletion is intentionally narrower than review rejection. Pending and rejected
+    proposal-backed objects may be removed, but accepted objects and merged semantic
+    results are protected because they may already participate in reviewed downstream
+    semantics/provenance. The operation never reruns segmentation and never grants
+    geometry, metric, or measurement authority.
+    """
+
+    if not isinstance(workspace, SemanticWorkspace):
+        raise TypeError("workspace must be SemanticWorkspace.")
+    key = require_nonempty(object_id, field_name="object_id")
+    target = workspace.object_by_id(key)
+    if target is None:
+        raise ContractValidationError(f"Unknown semantic workspace object: {key!r}.")
+    if target.proposal_mask is None:
+        raise ContractValidationError(
+            "Proposal deletion currently requires a proposal-backed workspace object."
+        )
+    if target.review_status is SemanticReviewStatus.ACCEPTED:
+        raise ContractValidationError(
+            "Accepted semantic objects are protected from proposal deletion. Return the object to Pending review first."
+        )
+    if target.merged_from_object_ids or target.merged_from_mask_ids:
+        raise ContractValidationError(
+            "Merged semantic results are protected from proposal deletion to preserve review provenance."
+        )
+    remaining = tuple(item for item in workspace.objects if item.object_id != key)
+    return SemanticWorkspace(
+        workspace_id=workspace.workspace_id,
+        frame_reference=workspace.frame_reference,
+        class_catalog=workspace.class_catalog,
+        objects=remaining,
+        revision=workspace.revision + 1,
+    )
+
+
 def replace_workspace_object_mask(
     workspace: SemanticWorkspace,
     object_id: str,

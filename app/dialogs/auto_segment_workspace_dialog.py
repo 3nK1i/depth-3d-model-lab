@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QToolButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -53,11 +54,74 @@ from core.perception.semantic_workspace import (
     SemanticWorkspace,
     append_workspace_mask_proposal,
     assign_workspace_class,
+    delete_workspace_object,
     merge_workspace_objects,
     replace_workspace_object_mask,
     set_workspace_review_status,
     workspace_from_mask_proposals,
 )
+
+
+class _ProposalListRow(QWidget):
+    """Compact proposal row with merge selection and persistent delete affordance."""
+
+    activated = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
+    merge_toggled = pyqtSignal(str, bool)
+
+    def __init__(
+        self,
+        object_id: str,
+        label: str,
+        *,
+        merge_checked: bool,
+        delete_enabled: bool,
+        delete_tooltip: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._object_id = str(object_id).strip()
+        self.setObjectName("autoSegmentProposalRow")
+        layout = QHBoxLayout(self)
+        self.setMinimumHeight(30)
+        layout.setContentsMargins(8, 3, 6, 3)
+        layout.setSpacing(8)
+
+        self.merge_check = QCheckBox()
+        self.merge_check.setObjectName("autoSegmentProposalMergeCheck")
+        self.merge_check.setToolTip("Select proposal for mask merge")
+        self.merge_check.setChecked(bool(merge_checked))
+        self.merge_check.toggled.connect(
+            lambda checked: self.merge_toggled.emit(self._object_id, bool(checked))
+        )
+        layout.addWidget(self.merge_check)
+
+        self.label = QLabel(str(label))
+        self.label.setObjectName("autoSegmentProposalRowLabel")
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(self.label, stretch=1)
+
+        self.delete_button = QToolButton()
+        self.delete_button.setObjectName("autoSegmentProposalDeleteButton")
+        self.delete_button.setText("×")
+        self.delete_button.setAutoRaise(True)
+        self.delete_button.setFixedSize(24, 24)
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.setEnabled(bool(delete_enabled))
+        self.delete_button.setToolTip(str(delete_tooltip))
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self._object_id))
+        layout.addWidget(self.delete_button)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.activated.emit(self._object_id)
+        super().mousePressEvent(event)
+
+    def set_merge_checked(self, checked: bool) -> None:
+        self.merge_check.blockSignals(True)
+        try:
+            self.merge_check.setChecked(bool(checked))
+        finally:
+            self.merge_check.blockSignals(False)
 
 
 def default_segmentation_project_root() -> Path:
@@ -693,6 +757,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
         self._done.setEnabled(not self._running)
         self._refresh_prompt_controls()
         self._sync_merge_selection()
+        self._sync_proposal_delete_controls()
 
     def set_progress(self, progress: int, stage: str, message: str) -> None:
         self._progress.setValue(max(0, min(100, int(progress))))
@@ -870,15 +935,108 @@ class AutoSegmentWorkspaceDialog(QDialog):
         except ContractValidationError as exc:
             QMessageBox.warning(self, "Review proposal", str(exc))
 
+    @staticmethod
+    def _proposal_delete_policy(obj) -> tuple[bool, str]:
+        if obj.review_status is SemanticReviewStatus.ACCEPTED:
+            return False, "Accepted objects are protected. Return to Pending before deleting."
+        if obj.merged_from_object_ids or obj.merged_from_mask_ids:
+            return False, "Merged semantic results are protected to preserve review provenance."
+        return True, "Delete proposal permanently from this saved workspace"
+
+    def _on_row_merge_toggled(self, object_id: str, checked: bool) -> None:
+        key = str(object_id).strip()
+        if not key or self._workspace is None or self._workspace.object_by_id(key) is None:
+            return
+        # Keep the legacy QListWidgetItem check-state contract synchronized with
+        # the visible custom-row checkbox. Existing Phase 9.2F callers/tests may
+        # still toggle the backing item directly. The row widget is opaque, so Qt
+        # does not visually paint a duplicate checkbox underneath it.
+        for row in range(self._object_list.count()):
+            item = self._object_list.item(row)
+            if str(item.data(Qt.ItemDataRole.UserRole) or "").strip() != key:
+                continue
+            desired = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            if item.checkState() != desired:
+                self._object_list.blockSignals(True)
+                try:
+                    item.setCheckState(desired)
+                finally:
+                    self._object_list.blockSignals(False)
+            break
+        if checked:
+            self._merge_selected_ids.add(key)
+        else:
+            self._merge_selected_ids.discard(key)
+        self._sync_merge_selection()
+
+    def _delete_proposal(self, object_id: str) -> None:
+        if self._workspace is None or self._running:
+            return
+        key = str(object_id).strip()
+        obj = self._workspace.object_by_id(key)
+        if obj is None:
+            return
+        allowed, reason = self._proposal_delete_policy(obj)
+        if not allowed:
+            QMessageBox.information(self, "Delete proposal", reason)
+            return
+        if obj.class_id is not None:
+            name = obj.instance_name or obj.class_name or "this labeled proposal"
+            answer = QMessageBox.question(
+                self,
+                "Delete labeled proposal",
+                f"Delete {name!r} from this Auto Segment workspace?\n\n"
+                "Its proposal mask and saved review state will be removed.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            self._workspace = delete_workspace_object(self._workspace, key)
+        except ContractValidationError as exc:
+            QMessageBox.warning(self, "Delete proposal", str(exc))
+            return
+        self._merge_selected_ids.discard(key)
+        if self._selected_id == key:
+            self._selected_id = ""
+            self._clear_prompt_points()
+            self._canvas.set_selected_object("")
+        self._canvas.set_workspace(self._workspace)
+        self._status_text.setText(
+            "Proposal deleted from this workspace. Reopening the saved image will keep it removed; "
+            "running Auto Segment again may generate a new proposal."
+        )
+        self._persist_workspace()
+        self._refresh_all()
+
     def _on_merge_item_changed(self, item: QListWidgetItem) -> None:
         object_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
         if not object_id:
             return
-        if item.checkState() == Qt.CheckState.Checked:
+        checked = item.checkState() == Qt.CheckState.Checked
+        row_widget = self._object_list.itemWidget(item)
+        if isinstance(row_widget, _ProposalListRow):
+            row_widget.set_merge_checked(checked)
+        if checked:
             self._merge_selected_ids.add(object_id)
         else:
             self._merge_selected_ids.discard(object_id)
         self._sync_merge_selection()
+
+    def _sync_proposal_delete_controls(self) -> None:
+        if self._workspace is None or not hasattr(self, "_object_list"):
+            return
+        for row in range(self._object_list.count()):
+            item = self._object_list.item(row)
+            object_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            obj = self._workspace.object_by_id(object_id) if object_id else None
+            row_widget = self._object_list.itemWidget(item)
+            if obj is None or not isinstance(row_widget, _ProposalListRow):
+                continue
+            allowed, tooltip = self._proposal_delete_policy(obj)
+            row_widget.delete_button.setEnabled(allowed and not self._running)
+            row_widget.delete_button.setToolTip(tooltip)
 
     def _sync_merge_selection(self) -> None:
         if self._workspace is not None:
@@ -905,7 +1063,11 @@ class AutoSegmentWorkspaceDialog(QDialog):
             self._object_list.blockSignals(True)
             try:
                 for row in range(self._object_list.count()):
-                    self._object_list.item(row).setCheckState(Qt.CheckState.Unchecked)
+                    item = self._object_list.item(row)
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                    row_widget = self._object_list.itemWidget(item)
+                    if isinstance(row_widget, _ProposalListRow):
+                        row_widget.set_merge_checked(False)
             finally:
                 self._object_list.blockSignals(False)
         self._sync_merge_selection()
@@ -1200,6 +1362,7 @@ class AutoSegmentWorkspaceDialog(QDialog):
             )
         self._refresh_prompt_controls()
         self._sync_merge_selection()
+        self._sync_proposal_delete_controls()
         if keep_selection and self._selected_id:
             self._canvas.set_selected_object(self._selected_id)
 
@@ -1214,15 +1377,36 @@ class AutoSegmentWorkspaceDialog(QDialog):
                     SemanticReviewStatus.REJECTED: "×",
                 }[obj.review_status]
                 name = obj.instance_name or obj.class_name or f"Proposal {index:02d}"
-                item = QListWidgetItem(f"{state}  {name}")
+                display = f"{state}  {name}"
+                # Keep the backing item checkable for the established Phase 9.2F
+                # merge-selection contract, but leave its text empty. The opaque custom
+                # row covers Qt's backing-item checkbox so only one checkbox is visible.
+                item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, obj.object_id)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                merge_checked = obj.object_id in self._merge_selected_ids
                 item.setCheckState(
-                    Qt.CheckState.Checked
-                    if obj.object_id in self._merge_selected_ids
-                    else Qt.CheckState.Unchecked
+                    Qt.CheckState.Checked if merge_checked else Qt.CheckState.Unchecked
                 )
                 self._object_list.addItem(item)
+                delete_enabled, delete_tooltip = self._proposal_delete_policy(obj)
+                row_widget = _ProposalListRow(
+                    obj.object_id,
+                    display,
+                    merge_checked=merge_checked,
+                    delete_enabled=delete_enabled and not self._running,
+                    delete_tooltip=delete_tooltip,
+                    parent=self._object_list,
+                )
+                row_widget.activated.connect(self.select_object)
+                row_widget.merge_toggled.connect(self._on_row_merge_toggled)
+                row_widget.delete_requested.connect(self._delete_proposal)
+                item.setSizeHint(row_widget.sizeHint())
+                self._object_list.setItemWidget(item, row_widget)
                 if obj.object_id == self._selected_id:
                     self._object_list.setCurrentItem(item)
         self._object_list.blockSignals(False)
