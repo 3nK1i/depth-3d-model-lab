@@ -53,11 +53,7 @@ from time import monotonic
 
 import numpy as np
 
-from core.measurement.interactive_distance import (
-    InteractiveDistanceEstimate,
-    estimate_reconstruction_distance,
-    format_interactive_distance,
-)
+from core.measurement.interactive_distance import InteractiveDistanceEstimate
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -70,6 +66,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QInputDialog,
     QMessageBox,
     QPushButton,
     QProgressBar,
@@ -192,6 +189,12 @@ from app.reconstruction_digital_twin_navigation import (
 from app.reconstruction_digital_twin_interaction import (
     DigitalTwinInteractionPresentation,
     build_digital_twin_interaction_presentation,
+)
+from app.reconstruction_estimated_metric_measurement import (
+    EstimatedMetricScaleHint,
+    ReconstructionRulerMetricRecord,
+    build_reconstruction_ruler_metric_record,
+    estimated_scale_from_ruler_reference,
 )
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
@@ -336,6 +339,8 @@ class ReconstructionPage(QWidget):
     digital_twin_scene_composition_changed = pyqtSignal(object)
     digital_twin_navigation_changed = pyqtSignal(object)
     digital_twin_interaction_changed = pyqtSignal(object)
+    estimated_metric_scale_changed = pyqtSignal(object)
+    ruler_metric_record_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -379,6 +384,9 @@ class ReconstructionPage(QWidget):
         self._canonical_scene_presentation: CanonicalScenePresentation | None = None
         self._interactive_measure_points_reconstruction: list[np.ndarray] = []
         self._interactive_distance_estimate: InteractiveDistanceEstimate | None = None
+        self._estimated_metric_scale_hint: EstimatedMetricScaleHint | None = None
+        self._ruler_metric_record: ReconstructionRulerMetricRecord | None = None
+        self._last_ruler_reference_distance_reconstruction_units: float | None = None
         self._canonical_viewer_mesh: CanonicalViewerMesh | None = None
         self._canonical_viewer_error = ""
         self._canonical_camera_presentation: CanonicalCameraTrajectoryPresentation | None = None
@@ -870,7 +878,7 @@ class ReconstructionPage(QWidget):
         self._interactive_measure_primary.setObjectName("reconstructionInteractiveMeasurePrimary")
         self._interactive_measure_primary.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._interactive_measure_secondary = QLabel(
-            "Canonical surface ruler • estimated metric value shown only when scale evidence exists"
+            "Canonical surface ruler • metres require qualified/provisional scale or an explicit estimate"
         )
         self._interactive_measure_secondary.setObjectName("reconstructionInteractiveMeasureSecondary")
         self._interactive_measure_secondary.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1001,20 +1009,62 @@ class ReconstructionPage(QWidget):
         if not available and self._reconstruction_canvas.interaction_mode == "measure":
             self._cancel_reconstruction_interactive_measurement(switch_to_orbit=True)
 
+    def _interactive_measurement_scene_id(self) -> str:
+        if self._persistent_scene is not None:
+            scene_id = str(getattr(self._persistent_scene, "scene_id", "")).strip()
+            if scene_id:
+                return scene_id
+        presentation = self._canonical_scene_presentation
+        if presentation is not None and presentation.available and presentation.scene_id:
+            return presentation.scene_id
+        mesh = self._canonical_viewer_mesh
+        return "" if mesh is None else str(mesh.scene_id).strip()
+
     def _begin_reconstruction_interactive_measurement(self) -> None:
         if not self._reconstruction_interactive_measurement_available():
             self._refresh_reconstruction_interactive_measurement_availability()
             return
         self._interactive_measure_points_reconstruction = []
         self._interactive_distance_estimate = None
+        self._ruler_metric_record = None
         self._reconstruction_canvas.clear_interactive_measurement_overlay()
         self._reconstruction_canvas.set_interaction_mode("measure")
         self._interactive_measure_primary.setText("Click Point A")
         self._interactive_measure_secondary.setText(
-            "Click two canonical surface points • estimated distance includes ± uncertainty"
+            "Click two canonical surface points • metres use scene scale or an explicit estimated-scale hint"
         )
+        self._interactive_measure_primary.setToolTip("")
+        self._interactive_measure_secondary.setToolTip("")
         self._interactive_measure_hud.show()
+        self._refresh_estimated_metric_scale_presentation()
         self._refresh_digital_twin_interaction_presentation()
+
+    def _apply_ruler_metric_record(self, record: ReconstructionRulerMetricRecord) -> None:
+        previous = self._ruler_metric_record
+        self._ruler_metric_record = record
+        self._interactive_distance_estimate = record.current
+        self._interactive_measure_primary.setText(record.primary_text)
+        self._interactive_measure_secondary.setText(record.secondary_text)
+        self._interactive_measure_primary.setToolTip(record.provenance_tooltip)
+        self._interactive_measure_secondary.setToolTip(record.provenance_tooltip)
+        if previous != record:
+            self.ruler_metric_record_changed.emit(record)
+
+    def _refresh_active_ruler_metric_record(self) -> None:
+        if len(self._interactive_measure_points_reconstruction) != 2:
+            return
+        scene_id = self._interactive_measurement_scene_id()
+        if not scene_id:
+            return
+        record = build_reconstruction_ruler_metric_record(
+            scene_id=scene_id,
+            point_a_reconstruction=self._interactive_measure_points_reconstruction[0],
+            point_b_reconstruction=self._interactive_measure_points_reconstruction[1],
+            canonical_scene=self._canonical_scene_presentation,
+            estimated_scale_hint=self._estimated_metric_scale_hint,
+            previous=self._ruler_metric_record,
+        )
+        self._apply_ruler_metric_record(record)
 
     def _on_reconstruction_interactive_measurement_point(self, point) -> None:
         if self._reconstruction_canvas.interaction_mode != "measure":
@@ -1025,6 +1075,7 @@ class ReconstructionPage(QWidget):
         if len(self._interactive_measure_points_reconstruction) >= 2:
             self._interactive_measure_points_reconstruction = []
             self._interactive_distance_estimate = None
+            self._ruler_metric_record = None
         self._interactive_measure_points_reconstruction.append(np.array(value, copy=True))
         self._reconstruction_canvas.set_interactive_measurement_overlay(
             np.asarray(self._interactive_measure_points_reconstruction, dtype=np.float64)
@@ -1034,27 +1085,156 @@ class ReconstructionPage(QWidget):
             self._interactive_measure_secondary.setText(
                 "Surface point locked to canonical geometry • Esc or right-click cancels"
             )
+            self._interactive_measure_primary.setToolTip("")
+            self._interactive_measure_secondary.setToolTip("")
+            self._refresh_estimated_metric_scale_presentation()
             return
 
-        presentation = self._canonical_scene_presentation
-        estimate = estimate_reconstruction_distance(
+        scene_id = self._interactive_measurement_scene_id()
+        if not scene_id:
+            return
+        record = build_reconstruction_ruler_metric_record(
+            scene_id=scene_id,
             point_a_reconstruction=self._interactive_measure_points_reconstruction[0],
             point_b_reconstruction=self._interactive_measure_points_reconstruction[1],
-            unit_to_metre=(presentation.scale_unit_to_metre if presentation is not None else None),
-            relative_scale_uncertainty=(
-                presentation.scale_relative_uncertainty if presentation is not None else None
-            ),
-            scale_state=(presentation.scale_state.value if presentation is not None else "not_qualified"),
-            calibration_available=bool(presentation is not None and presentation.calibration_available),
+            canonical_scene=self._canonical_scene_presentation,
+            estimated_scale_hint=self._estimated_metric_scale_hint,
         )
-        self._interactive_distance_estimate = estimate
-        primary, secondary = format_interactive_distance(estimate)
-        self._interactive_measure_primary.setText(primary)
-        self._interactive_measure_secondary.setText(secondary)
+        self._last_ruler_reference_distance_reconstruction_units = (
+            record.current.distance_source_units
+        )
+        self._apply_ruler_metric_record(record)
+        self._refresh_estimated_metric_scale_presentation()
+
+    @property
+    def estimated_metric_scale_hint(self) -> EstimatedMetricScaleHint | None:
+        return self._estimated_metric_scale_hint
+
+    @property
+    def ruler_metric_record(self) -> ReconstructionRulerMetricRecord | None:
+        return self._ruler_metric_record
+
+    def set_estimated_metric_scale_hint(self, hint: EstimatedMetricScaleHint) -> None:
+        """Bind one non-authoritative estimated scale to the active scene.
+
+        Future automatic metric-depth scale estimators may call this same API; the
+        Phase 9.6E0 UI currently creates a hint from an approximate canonical ruler
+        reference. The hint never mutates persistent scene authority.
+        """
+
+        if not isinstance(hint, EstimatedMetricScaleHint):
+            raise TypeError("hint must be EstimatedMetricScaleHint.")
+        scene_id = self._interactive_measurement_scene_id()
+        if not scene_id or hint.scene_id != scene_id:
+            raise ValueError("Estimated metric scale hint must match the active canonical scene.")
+        changed = hint != self._estimated_metric_scale_hint
+        self._estimated_metric_scale_hint = hint
+        self._refresh_estimated_metric_scale_presentation()
+        self._refresh_active_ruler_metric_record()
+        if changed:
+            self.estimated_metric_scale_changed.emit(hint)
+
+    def clear_estimated_metric_scale_hint(self) -> None:
+        previous = self._estimated_metric_scale_hint
+        self._estimated_metric_scale_hint = None
+        self._refresh_estimated_metric_scale_presentation()
+        self._refresh_active_ruler_metric_record()
+        if previous is not None:
+            self.estimated_metric_scale_changed.emit(None)
+
+    def _set_estimated_metric_scale_from_last_ruler_interaction(self) -> None:
+        native = self._last_ruler_reference_distance_reconstruction_units
+        scene_id = self._interactive_measurement_scene_id()
+        if native is None or native <= 0.0 or not scene_id:
+            return
+        approximate_m, accepted = QInputDialog.getDouble(
+            self,
+            "Estimated Metric Scale",
+            (
+                f"Last canonical ruler: {native:.4f} reconstruction units\n"
+                "Approximate real-world distance (m):"
+            ),
+            1.0,
+            0.001,
+            1000000.0,
+            3,
+        )
+        if not accepted:
+            return
+        uncertainty_percent, accepted = QInputDialog.getDouble(
+            self,
+            "Estimated Metric Scale",
+            (
+                "Estimated uncertainty of that physical reference (%):\n"
+                "Use a conservative value when the reference is approximate."
+            ),
+            20.0,
+            0.1,
+            99.0,
+            1,
+        )
+        if not accepted:
+            return
+        hint = estimated_scale_from_ruler_reference(
+            scene_id=scene_id,
+            distance_reconstruction_units=native,
+            approximate_distance_m=approximate_m,
+            reference_relative_uncertainty=uncertainty_percent / 100.0,
+        )
+        self.set_estimated_metric_scale_hint(hint)
+
+    def _refresh_estimated_metric_scale_presentation(self) -> None:
+        if not hasattr(self, "_estimated_ruler_scale_state_value"):
+            return
+        hint = self._estimated_metric_scale_hint
+        canonical = self._canonical_scene_presentation
+        canonical_scale_available = bool(
+            canonical is not None and canonical.scale_unit_to_metre is not None
+        )
+        if hint is None:
+            self._estimated_ruler_scale_state_value.setText(
+                "Scene scale available • estimate not required"
+                if canonical_scale_available
+                else "No estimated scale"
+            )
+            self._estimated_ruler_scale_value.setText("—")
+            self._estimated_ruler_reference_value.setText(
+                "Use qualified/provisional scene scale"
+                if canonical_scale_available
+                else (
+                    f"Last ruler: {self._last_ruler_reference_distance_reconstruction_units:.4f} reconstruction units"
+                    if self._last_ruler_reference_distance_reconstruction_units is not None
+                    else "Measure two canonical points first"
+                )
+            )
+            self._estimated_ruler_scale_authority_value.setToolTip(
+                "No session-side estimated scale is active. Canonical scene scale authority is unchanged."
+            )
+        else:
+            self._estimated_ruler_scale_state_value.setText(
+                "Estimate retained • scene scale takes precedence"
+                if canonical_scale_available
+                else "Estimated • uncalibrated • session-only"
+            )
+            self._estimated_ruler_scale_value.setText(hint.scale_text)
+            self._estimated_ruler_reference_value.setText(hint.reference_text)
+            self._estimated_ruler_scale_authority_value.setToolTip(
+                f"{hint.provenance}\n"
+                "Estimate only; canonical unit_to_metre authority is unchanged; metrology is not certified."
+            )
+        can_set = bool(
+            self._interactive_measurement_scene_id()
+            and self._last_ruler_reference_distance_reconstruction_units is not None
+            and self._last_ruler_reference_distance_reconstruction_units > 0.0
+            and not canonical_scale_available
+        )
+        self._estimated_ruler_scale_set_button.setEnabled(can_set)
+        self._estimated_ruler_scale_clear_button.setEnabled(hint is not None)
 
     def _cancel_reconstruction_interactive_measurement(self, *, switch_to_orbit: bool = True) -> None:
         self._interactive_measure_points_reconstruction = []
         self._interactive_distance_estimate = None
+        self._ruler_metric_record = None
         self._reconstruction_canvas.clear_interactive_measurement_overlay()
         self._interactive_measure_hud.hide()
         if switch_to_orbit and self._reconstruction_canvas.interaction_mode == "measure":
@@ -1062,6 +1242,7 @@ class ReconstructionPage(QWidget):
             if orbit is not None:
                 orbit.setChecked(True)
             self._reconstruction_canvas.set_interaction_mode("orbit")
+        self._refresh_estimated_metric_scale_presentation()
         self._refresh_digital_twin_interaction_presentation()
         if self._interactive_nerf_visible and self._reconstruction_canvas.interaction_mode != "measure":
             self._request_interactive_nerf_render(force=True)
@@ -2449,6 +2630,8 @@ class ReconstructionPage(QWidget):
                 self._viewport_safety.setText("VIEWER Z-UP • ARBITRARY GAUGE")
                 self._viewport_safety.setToolTip(str(exc))
             self._refresh_reconstruction_interactive_measurement_availability()
+            self._refresh_estimated_metric_scale_presentation()
+            self._refresh_active_ruler_metric_record()
             self._refresh_digital_twin_workspace_presentation()
             self.canonical_scene_presentation_changed.emit(None)
             return
@@ -2490,6 +2673,8 @@ class ReconstructionPage(QWidget):
                 "the scene-bound Phase 9.1H metric qualification assessment; metrology is not certified."
             )
         self._refresh_reconstruction_interactive_measurement_availability()
+        self._refresh_estimated_metric_scale_presentation()
+        self._refresh_active_ruler_metric_record()
         self._refresh_digital_twin_workspace_presentation()
         if changed:
             self.canonical_scene_presentation_changed.emit(presentation)
@@ -4370,6 +4555,52 @@ class ReconstructionPage(QWidget):
         self._add_status_row(canonical_layout, "State", self._canonical_scene_status_value)
         layout.addWidget(self._canonical_scene_group)
         self._refresh_canonical_scene_presentation()
+
+        # Phase 9.6E0 keeps estimated ruler scale explicitly separate from the
+        # canonical scene's metric authority. One approximate physical ruler
+        # reference may provide a useful metre estimate with explicit uncertainty,
+        # but it never changes unit_to_metre authority or certified-metrology state.
+        self._estimated_ruler_scale_group = self._settings_group("RULER METRIC ESTIMATE")
+        self._estimated_ruler_scale_group.set_expanded(False)
+        estimated_scale_layout = self._estimated_ruler_scale_group.content_layout
+        self._estimated_ruler_scale_state_value = self._settings_value("No estimated scale")
+        self._estimated_ruler_scale_value = self._settings_value("—")
+        self._estimated_ruler_reference_value = self._settings_value("Measure two canonical points first")
+        self._estimated_ruler_scale_authority_value = self._settings_value(
+            "Estimate only • canonical scale authority unchanged"
+        )
+        self._add_status_row(estimated_scale_layout, "State", self._estimated_ruler_scale_state_value)
+        self._add_status_row(estimated_scale_layout, "Scale ±", self._estimated_ruler_scale_value)
+        self._add_status_row(estimated_scale_layout, "Reference", self._estimated_ruler_reference_value)
+        self._add_status_row(estimated_scale_layout, "Authority", self._estimated_ruler_scale_authority_value)
+        self._estimated_ruler_scale_authority_value.setToolTip(
+            "This session-side estimate never writes canonical unit_to_metre, never qualifies scene scale, "
+            "and never certifies metrology. Phase 9.6F owns persistence/restore."
+        )
+        estimated_scale_actions = QHBoxLayout()
+        estimated_scale_actions.setSpacing(6)
+        self._estimated_ruler_scale_set_button = QPushButton("Set from last ruler")
+        self._estimated_ruler_scale_set_button.setObjectName("reconstructionRuntimeAction")
+        self._estimated_ruler_scale_set_button.setToolTip(
+            "Use the last canonical ruler segment plus an approximate physical distance and ± uncertainty "
+            "to create a scene-bound uncalibrated metre estimate."
+        )
+        self._estimated_ruler_scale_set_button.clicked.connect(
+            self._set_estimated_metric_scale_from_last_ruler_interaction
+        )
+        self._estimated_ruler_scale_clear_button = QPushButton("Clear estimate")
+        self._estimated_ruler_scale_clear_button.setObjectName("reconstructionRuntimeAction")
+        self._estimated_ruler_scale_clear_button.setToolTip(
+            "Clear only the session-side estimated scale. Canonical geometry and persisted metric authority are unchanged."
+        )
+        self._estimated_ruler_scale_clear_button.clicked.connect(self.clear_estimated_metric_scale_hint)
+        for button in (self._estimated_ruler_scale_set_button, self._estimated_ruler_scale_clear_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            estimated_scale_actions.addWidget(button)
+        estimated_scale_layout.addLayout(estimated_scale_actions)
+        layout.addWidget(self._estimated_ruler_scale_group)
+        self._refresh_estimated_metric_scale_presentation()
 
         # Phase 9.3F keeps the dense quick toolbar intact for backward
         # compatibility while exposing the same scene resources as a readable,
@@ -7659,6 +7890,13 @@ class ReconstructionPage(QWidget):
             next_scene_id,
             selected_object_id=selected_before,
         )
+        if next_scene_id != previous_scene_id:
+            # E0 estimates are scene-bound and session-side only. A different
+            # scene must never inherit an approximate scale/reference. Same-scene
+            # reload keeps it until Phase 9.6F owns explicit persistence/restore.
+            self._estimated_metric_scale_hint = None
+            self._ruler_metric_record = None
+            self._last_ruler_reference_distance_reconstruction_units = None
 
         self._hide_interactive_gaussian()
         self._hide_gaussian_preview()
