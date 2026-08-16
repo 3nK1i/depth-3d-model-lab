@@ -14,8 +14,8 @@ from core.version import RELEASE_NAME, __version__
 
 
 def test_phase8_4a_preserves_release_identity_and_disabled_reconstruction_ui() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
     source = Path("app/widgets/mode_tabs.py").read_text(encoding="utf-8")
     enabled_line = next(line for line in source.splitlines() if line.startswith("_ENABLED_MODES"))
     assert "AppMode.RECONSTRUCTION" not in enabled_line

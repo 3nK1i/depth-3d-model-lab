@@ -9,7 +9,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_g2_plan_only_cli_preserves_frozen_pre_release_gate_after_v080_transition(tmp_path):
+def test_g2_plan_only_cli_preserves_frozen_pre_release_gate_after_v090_transition(tmp_path):
     """The frozen G2 plan remains inspectable but must reject post-transition metadata."""
     out = tmp_path / "g2-plan"
     proc = subprocess.run(
@@ -43,8 +43,8 @@ def test_g2_plan_only_cli_preserves_frozen_pre_release_gate_after_v080_transitio
             assert passed is True, f"{name} unexpectedly failed"
 
     release = pre["release"]
-    assert release["core_version"] == "0.8.0"
-    assert release["config_version"] == "0.8.0"
+    assert release["core_version"] == "0.9.0"
+    assert release["config_version"] == "0.9.0"
 
     assert payload["plan_only"] is True
     assert payload["execution_started"] is False

@@ -23,9 +23,9 @@ def _import_roots(path: Path) -> set[str]:
 
 
 def test_g4_preserves_current_release_identity_after_phase8_release() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
-    assert RELEASE_PHASE == 8.0
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
+    assert RELEASE_PHASE == 9.0
 
 
 def test_reconstruction_core_has_no_direct_heavy_backend_imports() -> None:

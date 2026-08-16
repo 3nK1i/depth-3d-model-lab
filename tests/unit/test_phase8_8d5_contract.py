@@ -39,4 +39,4 @@ def test_d5_does_not_change_reconstruction_or_heavy_backend_boundaries() -> None
         assert token not in semantic
 
     version = _text("core/version.py")
-    assert '__version__ = "0.8.0"' in version
+    assert '__version__ = "0.9.0"' in version

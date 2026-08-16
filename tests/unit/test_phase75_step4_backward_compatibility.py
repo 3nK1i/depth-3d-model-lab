@@ -9,7 +9,7 @@ from core.version import __version__
 
 
 def test_existing_registries_phase75_version_and_runtime_sources_are_preserved():
-    assert __version__ == "0.8.0"
+    assert __version__ == "0.9.0"
     assert tuple(MODEL_REGISTRY.ids()) == (
         "moge-2", "depth-pro", "unidepth-v2", "metric3d-v2",
         "depth-anything-v2", "video-depth-anything", "marigold", "development-mock",

@@ -63,11 +63,11 @@ def test_g1_backward_inputs_cover_stable_release_layers():
     assert "backward" in legacy["phase8_8_h3"]
 
 
-def test_g1_historical_runner_observes_current_v080_release_identity():
+def test_g1_historical_runner_observes_current_v090_release_identity():
     module = _module()
     release = module._release_version()
-    assert release["core_version"] == "0.8.0"
-    assert release["config_version"] == "0.8.0"
+    assert release["core_version"] == "0.9.0"
+    assert release["config_version"] == "0.9.0"
     # G1 itself remains frozen as pre-release evidence; the current release
     # identity is qualified by the dedicated 8.9I2 gate instead.
 

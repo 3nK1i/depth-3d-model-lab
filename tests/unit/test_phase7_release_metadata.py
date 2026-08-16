@@ -9,9 +9,9 @@ from core.version import RELEASE_NAME, RELEASE_PHASE, __version__
 
 
 def test_current_release_identity_with_phase7_contracts() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
-    assert RELEASE_PHASE == 8.0
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
+    assert RELEASE_PHASE == 9.0
 
 
 def test_phase7_required_files_are_present() -> None:

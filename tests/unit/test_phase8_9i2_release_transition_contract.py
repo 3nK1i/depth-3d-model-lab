@@ -20,22 +20,22 @@ def _module():
     return module
 
 
-def test_final_release_identity_is_exact_and_consistent() -> None:
+def test_current_release_identity_has_advanced_beyond_phase8_transition() -> None:
     version = _read("core/version.py")
     pyproject = _read("pyproject.toml")
     app_yaml = _read("config/app.yaml")
-    assert '__version__ = "0.8.0"' in version
-    assert 'RELEASE_NAME = "Phase 8 Reconstruction Stable"' in version
-    assert "RELEASE_PHASE = 8.0" in version
-    assert 'version = "0.8.0"' in pyproject
-    assert 'version: "0.8.0"' in app_yaml
-    assert 'release: "Phase 8 Reconstruction Stable"' in app_yaml
+    assert '__version__ = "0.9.0"' in version
+    assert 'RELEASE_NAME = "Phase 9 Digital Twin Stable"' in version
+    assert "RELEASE_PHASE = 9.0" in version
+    assert 'version = "0.9.0"' in pyproject
+    assert 'version: "0.9.0"' in app_yaml
+    assert 'release: "Phase 9 Digital Twin Stable"' in app_yaml
 
 
 def test_readme_and_release_notes_are_finalized_without_weakening_authority() -> None:
     readme = _read("README.md")
     notes = _read("RELEASE_NOTES_v0.8.0.md")
-    assert "Version `0.8.0` is the **Phase 8 Reconstruction Stable** release" in readme
+    assert "Version `0.9.0` is the **Phase 9 Digital Twin Stable** release" in readme
     assert "Release status" in notes
     assert "Release-preparation status" not in notes
     for phrase in (
@@ -96,9 +96,9 @@ def test_historical_g_h_runner_files_remain_outside_i2_overlay() -> None:
     g1 = _read("tests/integration/test_phase8_9g1_regression_contract.py")
     g2 = _read("tests/integration/test_phase8_9g2_full_regression_contract.py")
     assert 'assert "release_version_still_0_7_5" in blockers' in g1
-    assert 'assert release["core_version"] == "0.8.0"' in g1
+    assert 'assert release["core_version"] == "0.9.0"' in g1
     assert 'assert "repository_preflight:version_0_7_5" in blockers' in g2
-    assert 'assert release["core_version"] == "0.8.0"' in g2
+    assert 'assert release["core_version"] == "0.9.0"' in g2
 
 
 def test_i2_runner_cannot_create_release_tag() -> None:
@@ -136,12 +136,12 @@ def test_status_parser_preserves_first_porcelain_path(monkeypatch) -> None:
         "docs/phase_history/PHASE8_9I2_RELEASE_TRANSITION.md",
     ]
 
-def test_non_strict_transition_contract_is_green_on_finalized_tree() -> None:
+def test_historical_i2_runner_truthfully_rejects_post_v080_current_identity() -> None:
     module = _module()
     payload = module.qualify(strict_git=False)
-    assert payload["pass"] is True
-    assert payload["blockers"] == []
-    assert payload["checks"]["historical_g1_g2_cli_contracts_transitioned"] is True
+    assert payload["pass"] is False
+    assert "metadata_final_0_8_0" in payload["blockers"]
+    assert payload["checks"]["historical_g1_g2_cli_contracts_transitioned"] is False
     assert payload["release_tag_created_by_i2"] is False
     assert payload["production_reconstruction_implementation_changed_by_i2"] is False
     assert payload["heavy_real_backend_campaign_started_by_i2"] is False

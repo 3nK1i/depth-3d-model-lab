@@ -12,8 +12,8 @@ from core.version import RELEASE_NAME, __version__
 
 
 def test_phase82_preserves_release_and_existing_capture_contracts() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
     assert SourceFrame is not None
     assert ReconstructionSession is not None
     assert ImageSequenceReader is not None

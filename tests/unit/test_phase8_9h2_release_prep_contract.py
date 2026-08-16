@@ -44,17 +44,17 @@ def test_v080_release_notes_are_finalized_after_h2_preparation() -> None:
     assert "8.9I2" in notes and "8.9I3" in notes
 
 
-def test_current_metadata_has_transitioned_after_h2_history() -> None:
+def test_current_metadata_has_advanced_after_h2_history() -> None:
     version_py = _read("core/version.py")
     pyproject = _read("pyproject.toml")
     app_yaml = _read("config/app.yaml")
 
-    assert '__version__ = "0.8.0"' in version_py
-    assert 'RELEASE_NAME = "Phase 8 Reconstruction Stable"' in version_py
-    assert "RELEASE_PHASE = 8.0" in version_py
-    assert 'version = "0.8.0"' in pyproject
-    assert 'version: "0.8.0"' in app_yaml
-    assert 'release: "Phase 8 Reconstruction Stable"' in app_yaml
+    assert '__version__ = "0.9.0"' in version_py
+    assert 'RELEASE_NAME = "Phase 9 Digital Twin Stable"' in version_py
+    assert "RELEASE_PHASE = 9.0" in version_py
+    assert 'version = "0.9.0"' in pyproject
+    assert 'version: "0.9.0"' in app_yaml
+    assert 'release: "Phase 9 Digital Twin Stable"' in app_yaml
 
 
 def test_h1_h2_phase_history_records_exist_and_define_release_boundary() -> None:

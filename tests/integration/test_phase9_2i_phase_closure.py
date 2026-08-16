@@ -60,8 +60,8 @@ def test_2i_combined_closure_smoke_passes_and_keeps_semantics_non_authoritative(
 
 
 def test_2i_closure_does_not_prematurely_change_release_or_semantic_schema_identity() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
-    assert RELEASE_PHASE == 8.0
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
+    assert RELEASE_PHASE == 9.0
     assert SEGMENTATION_PROJECT_SCHEMA_VERSION == 1
     assert SEMANTIC_WORKSPACE_PERSISTENCE_SCHEMA_VERSION == 1

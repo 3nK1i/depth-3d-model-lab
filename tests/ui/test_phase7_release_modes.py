@@ -10,8 +10,8 @@ from core.version import RELEASE_NAME, __version__
 def test_phase7_header_uses_central_version(qtbot) -> None:
     header = HeaderWidget()
     qtbot.addWidget(header)
-    assert APP_VERSION == f"v{__version__}" == "v0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert APP_VERSION == f"v{__version__}" == "v0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
 
 
 def test_phase7_operational_modes_remain_enabled_with_b5_reconstruction(qtbot) -> None:

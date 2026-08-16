@@ -9,8 +9,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_g1_inventory_cli_preserves_frozen_pre_release_gate_after_v080_transition(tmp_path):
-    """The frozen G1 CLI must truthfully refuse the post-transition 0.8.0 tree."""
+def test_g1_inventory_cli_preserves_frozen_pre_release_gate_after_v090_transition(tmp_path):
+    """The frozen G1 CLI must truthfully refuse the post-transition 0.9.0 tree."""
     out = tmp_path / "g1"
     proc = subprocess.run(
         [
@@ -45,8 +45,8 @@ def test_g1_inventory_cli_preserves_frozen_pre_release_gate_after_v080_transitio
             assert passed is True, f"{name} unexpectedly failed"
 
     release = payload["inventory"]["release"]
-    assert release["core_version"] == "0.8.0"
-    assert release["config_version"] == "0.8.0"
+    assert release["core_version"] == "0.9.0"
+    assert release["config_version"] == "0.9.0"
 
     assert payload["planned_g2"]["scope"] == "complete_current_tree_regression"
     assert payload["planned_g3"]["scope"] == "explicit_backward_compatibility_and_final_regression_gate"

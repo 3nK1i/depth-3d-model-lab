@@ -7,7 +7,7 @@ from core.version import __version__
 
 
 def test_step8_keeps_version_depth_registry_and_reconstruction_contract():
-    assert __version__ == "0.8.0"
+    assert __version__ == "0.9.0"
     ids = MODEL_REGISTRY.ids()
     assert "development-mock" in ids
     source = Path("app/widgets/mode_tabs.py").read_text(encoding="utf-8")

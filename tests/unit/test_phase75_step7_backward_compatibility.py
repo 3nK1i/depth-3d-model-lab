@@ -11,5 +11,5 @@ def test_step7_imports_do_not_load_optional_frameworks():
 
 def test_current_release_identity_after_phase75():
     from core.version import __version__,RELEASE_NAME
-    assert __version__=='0.8.0'
-    assert RELEASE_NAME=='Phase 8 Reconstruction Stable'
+    assert __version__=='0.9.0'
+    assert RELEASE_NAME=='Phase 9 Digital Twin Stable'

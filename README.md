@@ -4,29 +4,26 @@ A PyQt6 desktop application for live monocular depth estimation, measurement and
 
 ## Current status
 
-Version `0.8.0` is the **Phase 8 Reconstruction Stable** release. The release commit is qualified before the annotated `v0.8.0` tag is created in the final 8.9I3 release step.
+Version `0.9.0` is the **Phase 9 Digital Twin Stable** release. It advances the qualified Phase 8 Reconstruction foundation into one authority-aware Digital Twin workspace without changing the established Live 3D, Benchmark, Snapshot, Stable Video or Measure & Inspect workflows.
 
-The `v0.8.0` release includes:
+The `v0.9.0` release includes:
 
-- Live 3D for Image, Video, USB camera and RTSP sources
-- Interactive Benchmark, Snapshot and Stable Video operational modes
-- Process-isolated, model-agnostic inference with bounded crash, timeout and OOM recovery
-- Automatic capability-driven GPU profiles from RTX 2060-class hardware through the qualified high-end path
-- MoGe-2, Depth Pro, UniDepthV2, Metric3D v2, Depth Anything V2, Video Depth Anything and Marigold
-- YOLO instance segmentation, prompted SAM2 refinement, depth/perception alignment and object-specific 3D extraction
-- Estimated 3D boxes, measurements, uncertainty, temporal stabilization and Measure & Inspect workflows
-- Dedicated Reconstruction workspace with live SLAM and offline SfM workflows
-- Canonical geometry, geometry quality/uncertainty, surface reconstruction, semantic context and inspection/QC
-- Gaussian splatting and NeRF/Nerfacto appearance representations behind isolated external backend boundaries
-- Reconstruction session persistence, checkpoint/resume, representation switching, recovery and authority-aware export
-- Reconstruction fullscreen/focus interaction and responsive UI behavior across the existing operational modes
-- Final current-tree, backward-compatibility, RTSP and combined-UI qualification gates
+- the complete v0.8.0 Reconstruction feature set and isolated-backend architecture
+- automatic calibration and metric-qualification evidence paths without treating intrinsics alone as physical scale
+- semantic workspace/project persistence, Auto Segment/prompt refinement and reviewed semantic measurement context
+- canonical Digital Twin presentation with cameras, semantic objects, inspection overlays and canonical picking
+- estimated metric ruler results with explicit uncertainty and preserved provenance when qualified scale evidence is unavailable
+- full-scene recorded-video DA3 supporting geometry with bounded overlapping-window consolidation and persistent canonicalization
+- persistent Gaussian splatting and Nerfacto/NeRF appearance workflows, including preview and interactive presentation, while remaining appearance only
+- unified Digital Twin navigation, interaction, progressive-disclosure UX, save/restart/restore and non-portable state export
+- application-wide heavy-runtime ownership and reciprocal resource handoff across Reconstruction, DA3, Gaussian and NeRF workflows
+- final 2–3 minute real-scene qualification plus complete current-tree regression before the v0.9.0 release transition
 
-Measurements remain engineering estimates rather than certified metrology unless a separate qualified metric reference/calibration path is supplied. The calibrated known-size campaign is deliberately post-`v0.8.0` work.
+Measurements remain engineering estimates unless separately qualified calibration/reference evidence establishes metric authority. `certified_metrology=false` remains the release posture; the final Phase 9.6H scene was intentionally accepted without inventing metric scale or photorealistic/loop-closure claims.
 
-## Deferred calibrated known-size validation
+## Metric qualification and known-size validation
 
-The known-size benchmark tooling is retained for a post-`v0.8.0` calibrated validation campaign. It is not required for the engineering-estimate measurement workflow, and its presence does not make the current product certified metrology.
+Phase 9 includes calibration and metric-qualification evidence paths, but a scene becomes metric-authoritative only when the required qualified evidence is actually present. The retained known-size benchmark tooling remains available for independent physical validation and does not by itself make the product certified metrology.
 
 Create an editable benchmark manifest when that campaign begins:
 
@@ -170,7 +167,13 @@ The release keeps explicit authority boundaries:
 - `certified_metrology=false` remains the correct product posture unless a separate qualified calibration/reference process establishes otherwise
 - monocular live SLAM or monocular reconstruction may remain in arbitrary scale without a valid metric reference; camera intrinsics alone do not establish metric scale
 
-`v0.8.0` does not claim the future calibration/metric-qualification workflow, a broader custom Auto Segment workspace, a unified digital-twin workspace, or a fully interactive neural free-view renderer. Existing YOLO/SAM2 measurement adapters remain available, while those larger workflows are reserved for post-`v0.8.0` development.
+## Phase 9 Digital Twin
+
+Phase 9 builds on the Phase 8 Reconstruction foundation with calibration/metric-evidence workflows, semantic project tooling and one unified Digital Twin workspace. Canonical geometry remains the spatial, picking and measurement authority; semantic content remains contextual; inspection/QC remains separate authority; Gaussian and NeRF/Nerfacto remain appearance-only representations.
+
+The Digital Twin workspace synchronizes canonical geometry, camera trajectory, semantics, measurement presentation and neural appearance without creating a second scene authority. Recorded-video full-scene DA3 can provide supporting relative geometry and cameras in arbitrary scale, while explicit ruler/reference evidence can expose an estimated metric value with `±` uncertainty without overwriting its original provenance. Persistent save/restart/restore and state export retain those authority boundaries and never auto-resume heavyweight jobs.
+
+The release does not certify global loop closure, photorealistic convergence or metrology. Intrinsics alone never establish metric scale, and a scene with no qualified reference remains non-metric even when its camera trajectory and neural appearance are available.
 
 
 ## Viewport controls
@@ -379,7 +382,7 @@ The final Phase 8 pre-H release-candidate requalification remains available as h
 ./scripts/run_phase8_9_pre_h_final_requalification_tests.sh full
 ```
 
-The `v0.8.0` metadata transition is qualified by the dedicated final-release gate:
+The historical `v0.8.0` metadata transition remains available as Phase 8 release evidence:
 
 ```bash
 ./scripts/run_phase8_9i2_tests.sh quick
@@ -387,7 +390,17 @@ The `v0.8.0` metadata transition is qualified by the dedicated final-release gat
 ./scripts/run_phase8_9i2_tests.sh full
 ```
 
-The final-release gate validates the coordinated `0.8.0` identity, documentation and authority boundaries, then runs the current unit/UI/integration/stress suites without restarting the expensive real SfM/Gaussian/NeRF campaigns.
+The final Phase 9.6H real-scene/release gate and the v0.9.0 metadata transition are qualified separately:
+
+```bash
+./scripts/run_phase9_6h_tests.sh quick
+./scripts/run_phase9_6h_tests.sh full
+./scripts/run_phase9_release_transition_tests.sh quick
+./scripts/run_phase9_release_transition_tests.sh affected
+./scripts/run_phase9_release_transition_tests.sh full
+```
+
+The v0.9.0 transition changes release metadata, release-facing documentation and current release assertions only. It does not rerun or alter the already-qualified DA3, Gaussian, NeRF, reconstruction, measurement, persistence or resource-ownership implementations.
 
 ## Project structure
 
@@ -406,4 +419,4 @@ docs/                Phase history and release/test strategy evidence
 tests/               Unit, UI, integration, stress and release tests
 ```
 
-Measurements are engineering estimates; calibrated known-size and metric qualification remains post-`v0.8.0` work.
+Measurements are engineering estimates unless separately qualified metric evidence is present; `certified_metrology=false` remains the default release posture.

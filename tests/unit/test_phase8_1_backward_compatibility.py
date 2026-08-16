@@ -10,8 +10,8 @@ from core.version import RELEASE_NAME, __version__
 
 
 def test_phase81_backward_contracts_survive_current_release_identity() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
     assert CameraIntrinsics is not None
     assert FrameReference is not None
     assert RigidTransform3D is not None

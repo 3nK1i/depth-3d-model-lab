@@ -55,7 +55,7 @@ def test_1i_combined_closure_smoke_passes_and_keeps_deferred_field_validation_tr
 
 
 def test_1i_phase91_closure_does_not_prematurely_change_release_identity_or_scene_schema() -> None:
-    assert __version__ == "0.8.0"
-    assert RELEASE_NAME == "Phase 8 Reconstruction Stable"
-    assert RELEASE_PHASE == 8.0
+    assert __version__ == "0.9.0"
+    assert RELEASE_NAME == "Phase 9 Digital Twin Stable"
+    assert RELEASE_PHASE == 9.0
     assert PERSISTENT_RECONSTRUCTION_SCENE_SCHEMA_VERSION == 1
