@@ -189,6 +189,10 @@ from app.reconstruction_digital_twin_navigation import (
     DigitalTwinNavigationSync,
     build_digital_twin_navigation_sync,
 )
+from app.reconstruction_digital_twin_interaction import (
+    DigitalTwinInteractionPresentation,
+    build_digital_twin_interaction_presentation,
+)
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -331,6 +335,7 @@ class ReconstructionPage(QWidget):
     digital_twin_workspace_changed = pyqtSignal(object)
     digital_twin_scene_composition_changed = pyqtSignal(object)
     digital_twin_navigation_changed = pyqtSignal(object)
+    digital_twin_interaction_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -453,6 +458,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_workspace_presentation: DigitalTwinWorkspacePresentation | None = None
         self._digital_twin_scene_composition: DigitalTwinSceneComposition | None = None
         self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
+        self._digital_twin_interaction_presentation: DigitalTwinInteractionPresentation | None = None
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
@@ -915,16 +921,24 @@ class ReconstructionPage(QWidget):
 
     def _set_viewport_tool(self, mode: str) -> None:
         if mode == "measure":
+            # Static F2/F3 preview images are not synchronized picking surfaces.
+            # Fail closed to the canonical viewport before ruler interaction.
+            if self._gaussian_preview_visible:
+                self._hide_gaussian_preview()
+            if self._nerf_preview_visible:
+                self._hide_nerf_preview()
             if self._interactive_nerf_visible:
-                self._appearance_preview.hide()
                 self._nerf_state_value.setText(
-                    "Canonical measurement active • NeRF appearance paused"
+                    "Canonical measurement active • NeRF appearance paused (frozen + dimmed)"
                 )
             self._begin_reconstruction_interactive_measurement()
             return
+        if self._reconstruction_canvas.interaction_mode == "measure":
+            self._cancel_reconstruction_interactive_measurement(switch_to_orbit=False)
         self._reconstruction_canvas.set_interaction_mode(mode)
         if self._interactive_nerf_visible:
             self._request_interactive_nerf_render()
+        self._refresh_digital_twin_interaction_presentation()
 
     def _fit_reconstruction_view(self) -> None:
         self._reconstruction_canvas.fit_scene()
@@ -1000,6 +1014,7 @@ class ReconstructionPage(QWidget):
             "Click two canonical surface points • estimated distance includes ± uncertainty"
         )
         self._interactive_measure_hud.show()
+        self._refresh_digital_twin_interaction_presentation()
 
     def _on_reconstruction_interactive_measurement_point(self, point) -> None:
         if self._reconstruction_canvas.interaction_mode != "measure":
@@ -1047,6 +1062,9 @@ class ReconstructionPage(QWidget):
             if orbit is not None:
                 orbit.setChecked(True)
             self._reconstruction_canvas.set_interaction_mode("orbit")
+        self._refresh_digital_twin_interaction_presentation()
+        if self._interactive_nerf_visible and self._reconstruction_canvas.interaction_mode != "measure":
+            self._request_interactive_nerf_render(force=True)
 
     def _on_viewport_escape(self) -> None:
         if self._reconstruction_canvas.interaction_mode == "measure":
@@ -1459,9 +1477,16 @@ class ReconstructionPage(QWidget):
             self._semantic_authority_value.setText(presentation.authority_text)
             self._refresh_semantic_navigation()
             self._refresh_inspection_selection()
+            self._refresh_digital_twin_interaction_presentation()
             return
         if index >= len(presentation.objects):
             return
+        # Static backend previews are not camera-synchronized interaction surfaces.
+        # Reveal the canonical viewport before presenting exact semantic membership.
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
         item = presentation.objects[index]
         self._semantic_object_selection_index = index
         self._reconstruction_canvas.select_semantic_object(index)
@@ -1498,6 +1523,7 @@ class ReconstructionPage(QWidget):
         )
         self._refresh_semantic_navigation()
         self._refresh_inspection_selection()
+        self._refresh_digital_twin_interaction_presentation()
 
     def _refresh_semantic_navigation(self) -> None:
         presentation = self._offline_semantics
@@ -1529,6 +1555,10 @@ class ReconstructionPage(QWidget):
         if self._semantic_object_selection_index is None:
             return
         self._reconstruction_canvas.focus_selected_semantic_object()
+        if self._interactive_nerf_visible:
+            self._request_interactive_nerf_render(force=True)
+        self._refresh_digital_twin_navigation_sync()
+        self._refresh_digital_twin_interaction_presentation()
 
     def _clear_semantic_object_selection(self) -> None:
         if self._semantic_object_combo.count():
@@ -2183,6 +2213,7 @@ class ReconstructionPage(QWidget):
                 )
             if previous is not None:
                 self.digital_twin_navigation_changed.emit(None)
+            self._refresh_digital_twin_interaction_presentation()
             return
 
         try:
@@ -2214,6 +2245,7 @@ class ReconstructionPage(QWidget):
                 self._digital_twin_navigation_value.setToolTip(str(exc))
             if previous is not None:
                 self.digital_twin_navigation_changed.emit(None)
+            self._refresh_digital_twin_interaction_presentation()
             return
 
         self._digital_twin_navigation_sync = sync
@@ -2224,6 +2256,110 @@ class ReconstructionPage(QWidget):
             )
         if sync != previous:
             self.digital_twin_navigation_changed.emit(sync)
+        self._refresh_digital_twin_interaction_presentation()
+
+    @property
+    def digital_twin_interaction_presentation(self) -> DigitalTwinInteractionPresentation | None:
+        return self._digital_twin_interaction_presentation
+
+    def _apply_digital_twin_interaction_appearance_policy(self) -> None:
+        """Apply transient NeRF legibility assistance without mutating user settings."""
+
+        presentation = self._digital_twin_interaction_presentation
+        if presentation is None or not self._interactive_nerf_visible:
+            return
+        cap = presentation.effective_nerf_opacity_cap_percent
+        effective = self._nerf_display_settings.opacity_percent
+        if cap is not None:
+            effective = min(int(effective), int(cap))
+        self._appearance_preview.set_image_opacity(effective)
+        self._appearance_preview.set_mouse_passthrough(True)
+        if presentation.measurement_active:
+            self._appearance_preview.set_footer(
+                "NeRF frozen/dimmed for canonical ruler • clicks and measurement remain canonical"
+            )
+        elif presentation.semantic_selection_active:
+            self._appearance_preview.set_footer(
+                "NeRF dimmed for semantic inspection • canonical membership/inspection overlays remain authoritative"
+            )
+        else:
+            self._appearance_preview.set_footer(
+                "External Nerfacto appearance • canonical geometry remains picking/measurement authority"
+            )
+        if self._appearance_preview.has_image and not bool(
+            getattr(self._reconstruction_canvas, "is_interacting", False)
+        ):
+            self._appearance_preview.show()
+
+    def _refresh_digital_twin_interaction_presentation(self) -> None:
+        previous = self._digital_twin_interaction_presentation
+        composition = self._digital_twin_scene_composition
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        if composition is None:
+            self._digital_twin_interaction_presentation = None
+            if hasattr(self, "_digital_twin_interaction_value"):
+                self._digital_twin_interaction_value.setText(
+                    "Interaction unavailable • canonical authority retained"
+                )
+                self._digital_twin_interaction_value.setToolTip(
+                    "Unified scene composition is unavailable. No appearance layer is promoted to picking, measurement, scale, or QC authority."
+                )
+            if previous is not None:
+                self.digital_twin_interaction_changed.emit(None)
+            return
+
+        try:
+            semantic_available = bool(
+                (canvas and getattr(canvas, "semantic_objects_available", False))
+                or self._canonical_semantic_presentation is not None
+                or self._offline_semantics is not None
+            )
+            semantic_selected = bool(
+                self._semantic_object_selection_index is not None
+                or (canvas and getattr(canvas, "selected_semantic_object_id", None))
+            )
+            interaction = build_digital_twin_interaction_presentation(
+                composition,
+                canonical_surface_loaded=bool(
+                    canvas and getattr(canvas, "canonical_mesh_loaded", False)
+                ),
+                semantic_context_available=semantic_available,
+                semantic_selection_active=semantic_selected,
+                measurement_active=bool(
+                    canvas is not None
+                    and getattr(canvas, "interaction_mode", "") == "measure"
+                ),
+                gaussian_interactive=self.interactive_gaussian_visible,
+                nerf_interactive=self.interactive_nerf_visible,
+                gaussian_preview_visible=self.gaussian_preview_visible,
+                nerf_preview_visible=self.nerf_preview_visible,
+            )
+        except (TypeError, ValueError) as exc:
+            self._digital_twin_interaction_presentation = None
+            if hasattr(self, "_digital_twin_interaction_value"):
+                self._digital_twin_interaction_value.setText(
+                    "Interaction policy unavailable • canonical authority retained"
+                )
+                self._digital_twin_interaction_value.setToolTip(str(exc))
+            if previous is not None:
+                self.digital_twin_interaction_changed.emit(None)
+            return
+
+        self._digital_twin_interaction_presentation = interaction
+        if hasattr(self, "_digital_twin_interaction_value"):
+            self._digital_twin_interaction_value.setText(interaction.interaction_text)
+            self._digital_twin_interaction_value.setToolTip(
+                interaction.semantic_text
+                + "\n"
+                + interaction.measurement_text
+                + "\n"
+                + interaction.appearance_text
+                + "\n"
+                + interaction.authority_text
+            )
+        self._apply_digital_twin_interaction_appearance_policy()
+        if interaction != previous:
+            self.digital_twin_interaction_changed.emit(interaction)
 
     def _refresh_digital_twin_workspace_presentation(self) -> None:
         canvas = getattr(self, "_reconstruction_canvas", None)
@@ -2250,6 +2386,8 @@ class ReconstructionPage(QWidget):
                 self._digital_twin_active_view_value.setText("Canonical geometry")
                 self._digital_twin_composition_value.setText("Composition rejected")
                 self._digital_twin_navigation_value.setText("Canonical navigation retained")
+                if hasattr(self, "_digital_twin_interaction_value"):
+                    self._digital_twin_interaction_value.setText("Canonical interaction retained")
                 self._digital_twin_scale_value.setText("Not qualified")
                 self._digital_twin_authority_value.setText("Canonical authority preserved outside summary")
                 self._digital_twin_resource_value.setText("Neural appearance not promoted")
@@ -2970,7 +3108,7 @@ class ReconstructionPage(QWidget):
         self._nerf_display_settings = settings
         self._nerf_opacity_value.setText(f"{settings.opacity_percent}%")
         if self._interactive_nerf_visible:
-            self._appearance_preview.set_image_opacity(settings.opacity_percent)
+            self._apply_digital_twin_interaction_appearance_policy()
             if (
                 settings.auto_refresh
                 and (settings.render_width, settings.render_height)
@@ -2994,7 +3132,7 @@ class ReconstructionPage(QWidget):
         self._nerf_display_settings = NerfDisplaySettings()
         self._nerf_opacity_value.setText("100%")
         if self._interactive_nerf_visible:
-            self._appearance_preview.set_image_opacity(100)
+            self._apply_digital_twin_interaction_appearance_policy()
             self._request_interactive_nerf_render(force=True)
         self._refresh_nerf_display_summary()
 
@@ -3750,8 +3888,7 @@ class ReconstructionPage(QWidget):
                 self._appearance_preview.set_footer(
                     "Starting isolated renderer • canonical geometry remains picking/measurement authority"
                 )
-                if self._reconstruction_canvas.interaction_mode != "measure":
-                    self._appearance_preview.show()
+                self._appearance_preview.show()
             except (OSError, ValueError):
                 self._appearance_preview.hide()
         self._viewport_placeholder.setVisible(False)
@@ -3853,14 +3990,20 @@ class ReconstructionPage(QWidget):
         self._interactive_nerf_latest_frame_path = path
         self._interactive_nerf_last_render_ms = float(data.get("render_ms", 0.0) or 0.0)
         self._nerf_worker_telemetry = dict(data)
-        self._appearance_preview.set_image_opacity(self._nerf_display_settings.opacity_percent)
         self._appearance_preview.set_mouse_passthrough(True)
-        self._appearance_preview.set_footer(
-            f"External Nerfacto render • {self._interactive_nerf_last_render_ms:.0f} ms observed • canonical geometry remains picking/measurement authority"
-        )
-        if self._reconstruction_canvas.interaction_mode != "measure":
+        self._refresh_digital_twin_interaction_presentation()
+        interaction = self._digital_twin_interaction_presentation
+        if interaction is not None and interaction.measurement_active:
+            self._viewport_state.setText("Canonical measurement • NeRF appearance frozen + dimmed")
+        elif interaction is not None and interaction.semantic_selection_active:
+            self._viewport_state.setText("Semantic inspection • NeRF appearance dimmed")
+        else:
+            self._appearance_preview.set_image_opacity(self._nerf_display_settings.opacity_percent)
+            self._appearance_preview.set_footer(
+                f"External Nerfacto render • {self._interactive_nerf_last_render_ms:.0f} ms observed • canonical geometry remains picking/measurement authority"
+            )
             self._appearance_preview.show()
-        self._viewport_state.setText("Interactive Nerfacto • appearance only")
+            self._viewport_state.setText("Interactive Nerfacto • appearance only")
         self._viewport_state.setToolTip(
             "The displayed image comes from the isolated Nerfstudio renderer. Navigation and ruler picking remain bound to the canonical VisPy scene underneath."
         )
@@ -4169,6 +4312,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_active_view_value = self._settings_value("Canonical geometry")
         self._digital_twin_composition_value = self._settings_value("Waiting for persistent scene")
         self._digital_twin_navigation_value = self._settings_value("Waiting for persistent scene")
+        self._digital_twin_interaction_value = self._settings_value("Waiting for canonical interaction")
         self._digital_twin_scale_value = self._settings_value("—")
         self._digital_twin_authority_value = self._settings_value("No canonical scene authority")
         self._digital_twin_resource_value = self._settings_value("No neural appearance resource required")
@@ -4179,6 +4323,7 @@ class ReconstructionPage(QWidget):
         self._add_status_row(workspace_layout, "Active view", self._digital_twin_active_view_value)
         self._add_status_row(workspace_layout, "Composition", self._digital_twin_composition_value)
         self._add_status_row(workspace_layout, "Navigation", self._digital_twin_navigation_value)
+        self._add_status_row(workspace_layout, "Interaction", self._digital_twin_interaction_value)
         self._add_status_row(workspace_layout, "Scale", self._digital_twin_scale_value)
         self._add_status_row(workspace_layout, "Authority", self._digital_twin_authority_value)
         self._add_status_row(workspace_layout, "Resources", self._digital_twin_resource_value)
