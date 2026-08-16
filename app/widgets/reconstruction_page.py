@@ -4964,7 +4964,7 @@ class ReconstructionPage(QWidget):
         self._session_reload_button.setToolTip(
             "Re-read the active persistent scene from its current manifest, verify integrity, "
             "require the same session identity, and restore a matching Phase 9.6F workspace sidecar. "
-            "No checkpoint or heavyweight build resume is executed."
+            "No checkpoint resume is executed, and no heavyweight build resume is executed."
         )
         self._session_reload_button.clicked.connect(self._reload_persistent_scene_interaction)
         self._session_reload_button.setEnabled(False)

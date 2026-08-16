@@ -12,7 +12,7 @@ def test_96c_ui_projects_one_shared_navigation_source_into_existing_workspace() 
     assert "build_digital_twin_navigation_sync" in page
     assert "digital_twin_navigation_changed = pyqtSignal(object)" in page
     assert "def _refresh_digital_twin_navigation_sync" in page
-    assert 'self._add_status_row(workspace_layout, "Navigation", self._digital_twin_navigation_value)' in page
+    assert 'self._add_status_row(\n            workspace_details_layout, "Navigation", self._digital_twin_navigation_value\n        )' in page
     assert 'getattr(canvas, "interactive_render_camera_state", None)' in page
     assert "callable(camera_state_getter)" in page
     assert "gaussian_interactive=self.interactive_gaussian_visible" in page

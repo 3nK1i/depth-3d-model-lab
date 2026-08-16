@@ -11,7 +11,7 @@ CANVAS = ROOT / "app/widgets/viewport/vispy_canvas.py"
 def test_96d_workspace_exposes_compact_interaction_status_without_new_picker() -> None:
     page = PAGE.read_text(encoding="utf-8")
     assert 'self._digital_twin_interaction_value = self._settings_value("Waiting for canonical interaction")' in page
-    assert 'self._add_status_row(workspace_layout, "Interaction", self._digital_twin_interaction_value)' in page
+    assert 'self._add_status_row(\n            workspace_details_layout, "Interaction", self._digital_twin_interaction_value\n        )' in page
     assert "build_digital_twin_interaction_presentation" in page
     assert "_pick_canonical_surface_point" not in page
 
