@@ -123,8 +123,9 @@ def _validate_scene_artifact_compatibility(
     artifact: NerfSceneArtifact,
     *,
     expected_dataset_fingerprint_sha256: str = "",
+    allow_existing: bool = False,
 ) -> None:
-    if scene.nerf_artifact is not None:
+    if scene.nerf_artifact is not None and not allow_existing:
         raise ReconstructionValidationError(
             "Phase 9.5D refuses to overwrite an existing persisted NeRF appearance artifact."
         )
@@ -163,6 +164,8 @@ def _pipeline_payload_with_nerf(
     scene: PersistentReconstructionScene,
     nerf_record: PersistentSceneArtifactRecord,
     provider_use: ReconstructionProviderUse,
+    *,
+    replace_existing: bool = False,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     artifacts = {item.stage: item for item in scene.artifacts}
     artifacts[ReconstructionPipelineStage.NERF_APPEARANCE] = nerf_record
@@ -202,8 +205,11 @@ def _pipeline_payload_with_nerf(
                 }
             )
     provenance = list(scene.provider_provenance)
-    if any(item.provider_id == provider_use.provider_id for item in provenance):
+    matching = [item for item in provenance if item.provider_id == provider_use.provider_id]
+    if matching and not replace_existing:
         raise ReconstructionValidationError("Persistent scene already contains NeRF provider provenance.")
+    if matching:
+        provenance = [item for item in provenance if item.provider_id != provider_use.provider_id]
     provenance.append(provider_use)
     snapshots: dict[str, dict[str, Any]] = {
         item.kind.value: metadata_as_dict(item.payload_snapshot)  # type: ignore[arg-type]
@@ -370,6 +376,7 @@ def persist_nerf_representation(
     source_optimization_summary_path: str | Path = "",
     source_worker_console_path: str | Path = "",
     expected_dataset_fingerprint_sha256: str = "",
+    replace_existing: bool = False,
 ) -> NerfPersistentRepresentationResult:
     """Create a durable persistent-scene revision containing NeRF appearance."""
 
@@ -381,6 +388,7 @@ def persist_nerf_representation(
         base_scene,
         nerf_artifact,
         expected_dataset_fingerprint_sha256=expected_dataset_fingerprint_sha256,
+        allow_existing=bool(replace_existing),
     )
 
     root = Path(output_dir).expanduser()
@@ -575,7 +583,9 @@ def persist_nerf_representation(
         payload_snapshot=snapshot,
     )
     provider = _provider_use_for_artifact(durable_artifact)
-    payload, snapshots = _pipeline_payload_with_nerf(base_scene, record, provider)
+    payload, snapshots = _pipeline_payload_with_nerf(
+        base_scene, record, provider, replace_existing=bool(replace_existing)
+    )
     persisted = persistent_scene_from_pipeline_payload(payload, payload_snapshots_by_kind=snapshots)
     if persisted.canonical_geometry_artifact_id != base_scene.canonical_geometry_artifact_id:
         raise ReconstructionValidationError("NeRF persistence changed canonical geometry artifact identity.")

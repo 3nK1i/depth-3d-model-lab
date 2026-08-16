@@ -206,6 +206,12 @@ from app.reconstruction_processing_jobs import (
 )
 from app.reconstruction_processing_job_controller import DigitalTwinProcessingJobController
 from app.reconstruction_da3_full_scene import DA3_FULL_SCENE_PROTOCOL, build_full_scene_da3_job
+from app.reconstruction_nerf_build import (
+    NERF_BUILD_PROTOCOL,
+    NERF_BUILD_PRESETS,
+    NERF_DEFAULT_BUILD_PRESET,
+    build_nerf_training_job,
+)
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -2661,6 +2667,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_processing_snapshot = snapshot
         self._refresh_digital_twin_processing_presentation()
         self._refresh_da3_full_scene_controls()
+        self._refresh_nerf_build_controls()
         self._refresh_da3_canonical_controls()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
@@ -2718,16 +2725,92 @@ class ReconstructionPage(QWidget):
         self._refresh_source_controls()
         self._refresh_runtime_controls()
 
+    def _start_nerf_build(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        if self._digital_twin_processing_snapshot.is_active:
+            self.set_error("A Digital Twin build job is already active.")
+            return
+        scene = controller.persistent_scene
+        manifest = controller.persistent_scene_manifest
+        if scene is None or manifest is None:
+            self.set_error("Load or build a persistent canonical scene before training NeRF appearance.")
+            self._refresh_nerf_build_controls()
+            return
+        if controller.is_active:
+            self.set_error("Stop the active reconstruction job before training NeRF appearance.")
+            self._refresh_nerf_build_controls()
+            return
+        preset_key = str(self._nerf_build_profile_combo.currentData() or NERF_DEFAULT_BUILD_PRESET)
+        try:
+            # E3 mirrors E2's minimum local guard on the RTX 2060. Phase 9.6G
+            # later owns generic resource coordination across all heavy runtimes.
+            if self._interactive_gaussian_visible:
+                self._hide_interactive_gaussian()
+            if self._gaussian_preview_visible:
+                self._hide_gaussian_preview()
+            if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
+                self._hide_interactive_nerf(blocking=True)
+            if self._nerf_preview_visible:
+                self._hide_nerf_preview()
+            spec, command = build_nerf_training_job(
+                scene=scene,
+                scene_manifest=manifest,
+                output_root=default_reconstruction_output_root(),
+                preset_key=preset_key,
+            )
+            self.start_digital_twin_processing_job(spec, command)
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        self._refresh_nerf_build_controls()
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
+
     def _on_digital_twin_processing_result_ready(
         self, snapshot: DigitalTwinProcessingSnapshot
     ) -> None:
         if not isinstance(snapshot, DigitalTwinProcessingSnapshot) or snapshot.spec is None:
             return
-        if (
-            snapshot.spec.kind.value != "dense_geometry"
-            or snapshot.spec.expected_protocol != DA3_FULL_SCENE_PROTOCOL
-            or not snapshot.result_path
-        ):
+        if not snapshot.result_path:
+            return
+        if snapshot.spec.kind.value == "nerf_appearance" and snapshot.spec.expected_protocol == NERF_BUILD_PROTOCOL:
+            try:
+                summary_path = Path(snapshot.result_path).expanduser().resolve()
+                summary_path.relative_to(snapshot.spec.output_dir)
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                if str(summary.get("job_id", "")).strip() != snapshot.spec.job_id:
+                    raise ValueError("NeRF result job identity does not match the completed build.")
+                if str(summary.get("phase", "")).strip() != "9.6E3" or not bool(summary.get("pass", False)):
+                    raise ValueError("Completed NeRF result is not a valid Phase 9.6E3 result.")
+                if any(bool(summary.get(key, False)) for key in (
+                    "canonical_geometry_authoritative", "metric_scale_authoritative",
+                    "measurement_authoritative", "qc_authoritative", "certified_metrology",
+                )):
+                    raise ValueError("NeRF build result contains an unsafe authority claim.")
+                manifest = Path(str(summary.get("persistent_scene_manifest", ""))).expanduser().resolve()
+                manifest.relative_to(snapshot.spec.output_dir)
+                if self._controller is None:
+                    raise RuntimeError("Reconstruction controller became unavailable before NeRF result admission.")
+                active_scene_id = str(getattr(self._controller.persistent_scene, "scene_id", "")).strip()
+                if active_scene_id != snapshot.spec.scene_id:
+                    raise ValueError("Active canonical scene changed while NeRF was training; stale appearance result was not admitted.")
+                self._controller.load_persistent_scene(manifest, verify_file_references=True)
+                self._nerf_build_value.setText(
+                    f"Ready • {int(summary.get('input_frame_count', 0))} views • {int(summary.get('training_steps', 0))} steps"
+                )
+                self._nerf_build_value.setToolTip(
+                    "Trained Nerfacto appearance persisted as an immutable scene revision. Canonical geometry remains authoritative; quality is not certified."
+                )
+            except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                self.set_error(f"NeRF build result could not be admitted: {exc}")
+            finally:
+                self._refresh_nerf_build_controls()
+                self._refresh_source_controls()
+                self._refresh_runtime_controls()
+            return
+        if snapshot.spec.kind.value != "dense_geometry" or snapshot.spec.expected_protocol != DA3_FULL_SCENE_PROTOCOL:
             return
         try:
             summary_path = Path(snapshot.result_path).expanduser().resolve()
@@ -2803,6 +2886,41 @@ class ReconstructionPage(QWidget):
         else:
             self._da3_full_scene_value.setText("Select a ready Recorded video for Full Scene")
 
+    def _refresh_nerf_build_controls(self) -> None:
+        if not hasattr(self, "_nerf_build_button"):
+            return
+        controller = self._controller
+        snapshot = self._digital_twin_processing_snapshot
+        scene = controller.persistent_scene if controller is not None else None
+        has_scene = bool(scene is not None and getattr(scene, "canonical_geometry_authoritative", False))
+        has_nerf = bool(has_scene and getattr(scene, "nerf_artifact", None) is not None)
+        can_start = bool(
+            controller is not None
+            and not controller.is_shutdown
+            and has_scene
+            and controller.persistent_scene_manifest is not None
+            and not controller.is_active
+            and not snapshot.is_active
+        )
+        self._nerf_build_button.setEnabled(can_start)
+        self._nerf_build_profile_combo.setEnabled(can_start)
+        self._nerf_build_button.setText("Rebuild NeRF" if has_nerf else "Build & Train NeRF")
+        if snapshot.spec is not None and snapshot.spec.kind.value == "nerf_appearance":
+            if snapshot.is_active:
+                self._nerf_build_value.setText(f"{snapshot.stage_text} • {snapshot.progress_text}")
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.FAILED:
+                self._nerf_build_value.setText("Failed • existing canonical/NeRF scene preserved")
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.CANCELLED:
+                self._nerf_build_value.setText("Cancelled • existing scene preserved")
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.COMPLETED and not self._nerf_build_value.text().startswith("Ready •"):
+                self._nerf_build_value.setText("Completed • admitting persistent NeRF appearance")
+        elif has_nerf:
+            self._nerf_build_value.setText("Ready • persisted NeRF available • Rebuild creates a new immutable revision")
+        elif has_scene:
+            self._nerf_build_value.setText("Ready • canonical views available for NeRF training")
+        else:
+            self._nerf_build_value.setText("Load/build a persistent canonical scene first")
+
     def _refresh_digital_twin_processing_presentation(self) -> None:
         if not hasattr(self, "_digital_twin_processing_job_value"):
             return
@@ -2822,6 +2940,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_processing_authority_value.setText(snapshot.authority_text)
         self._digital_twin_processing_cancel_button.setEnabled(snapshot.can_cancel)
         self._refresh_da3_full_scene_controls()
+        self._refresh_nerf_build_controls()
 
         progress = self._digital_twin_processing_progress
         if snapshot.lifecycle is DigitalTwinProcessingLifecycle.IDLE:
@@ -3287,6 +3406,7 @@ class ReconstructionPage(QWidget):
             self._hide_nerf_visualization()
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
+        self._refresh_nerf_build_controls()
         self._refresh_representation_switching_controls()
         self.appearance_representation_changed.emit(self.selected_appearance_representation)
 
@@ -4856,6 +4976,34 @@ class ReconstructionPage(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
 
+        self._nerf_build_value = self._settings_value("Load/build a persistent canonical scene first")
+        self._add_status_row(processing_layout, "NeRF appearance", self._nerf_build_value)
+        nerf_build_profile_row = QHBoxLayout()
+        nerf_build_profile_row.setSpacing(8)
+        nerf_build_profile_label = QLabel("Training profile")
+        nerf_build_profile_label.setObjectName("reconstructionRowLabel")
+        nerf_build_profile_row.addWidget(nerf_build_profile_label)
+        self._nerf_build_profile_combo = QComboBox()
+        self._nerf_build_profile_combo.setObjectName("reconstructionNerfBuildProfileCombo")
+        for preset in NERF_BUILD_PRESETS:
+            self._nerf_build_profile_combo.addItem(preset.label, preset.key)
+        default_index = self._nerf_build_profile_combo.findData(NERF_DEFAULT_BUILD_PRESET)
+        self._nerf_build_profile_combo.setCurrentIndex(max(0, default_index))
+        self._nerf_build_profile_combo.setToolTip(
+            "Bounded Phase 9.5-qualified Nerfacto training profiles. These steps prove/train appearance but do not certify production visual quality."
+        )
+        nerf_build_profile_row.addWidget(self._nerf_build_profile_combo, 1)
+        processing_layout.addLayout(nerf_build_profile_row)
+        self._nerf_build_button = QPushButton("Build & Train NeRF")
+        self._nerf_build_button.setObjectName("reconstructionRuntimeAction")
+        self._nerf_build_button.setToolTip(
+            "Build exact canonical RGB/camera input, train Nerfacto in the isolated eia-nerf-nerfstudio runtime, and persist appearance as a new immutable scene revision. NeRF never becomes geometry or scale authority."
+        )
+        self._nerf_build_button.clicked.connect(self._start_nerf_build)
+        self._nerf_build_button.setMinimumWidth(0)
+        self._nerf_build_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        processing_layout.addWidget(self._nerf_build_button)
+
         processing_actions = QHBoxLayout()
         processing_actions.setSpacing(6)
         self._digital_twin_processing_cancel_button = QPushButton("Cancel build")
@@ -4881,6 +5029,7 @@ class ReconstructionPage(QWidget):
         processing_layout.addLayout(processing_actions)
         layout.addWidget(self._digital_twin_processing_group)
         self._refresh_digital_twin_processing_presentation()
+        self._refresh_nerf_build_controls()
 
         # Phase 9.3A composes the existing persistent canonical-geometry contract
         # and Phase 9.1H authority sidecar into one passive scene summary.  It
@@ -8316,6 +8465,11 @@ class ReconstructionPage(QWidget):
         self._refresh_gaussian_visualization_controls()
         self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
+        # 9.6E3 build eligibility is scene-bound. Persistent-scene load/reload
+        # happens after the page was initially bound, so refresh the build controls
+        # on every scene transition instead of leaving the startup "no scene"
+        # state latched until some unrelated runtime/source event occurs.
+        self._refresh_nerf_build_controls()
 
         if scene is None:
             self._scene_manifest_value.setText("No persistent scene")
