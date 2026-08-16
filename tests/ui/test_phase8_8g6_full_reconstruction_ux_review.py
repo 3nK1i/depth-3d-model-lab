@@ -15,9 +15,14 @@ from tests.reconstruction_g6_helpers import write_full_review_evidence, write_re
 
 
 EXPECTED_GROUP_TITLES = (
+    # Phase 9.6E4 promotes the unified Digital Twin context without removing
+    # the complete Phase 8/9 settings architecture validated by G6.
+    "DIGITAL TWIN WORKSPACE",
+    "BUILD & PROCESSING",
+    "CANONICAL SCENE",
+    "RULER METRIC ESTIMATE",
     "WORKFLOW",
     "SESSION & PERSISTENCE",
-    "CANONICAL SCENE",
     "SCENE LAYERS",
     "SCENE HEALTH",
     "ADVANCED RECONSTRUCTION",

@@ -486,6 +486,10 @@ class ReconstructionPage(QWidget):
         self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
         self._digital_twin_interaction_presentation: DigitalTwinInteractionPresentation | None = None
         self._digital_twin_processing_snapshot: DigitalTwinProcessingSnapshot = idle_digital_twin_processing_snapshot()
+        # Phase 9.6E4 UI focus state only. The first snapshot for each new E1
+        # build job may bring the existing BUILD & PROCESSING disclosure into
+        # view once; this never changes job/controller/backend state.
+        self._digital_twin_processing_focus_job_id = ""
         self._digital_twin_processing_controller = DigitalTwinProcessingJobController(self)
         self._digital_twin_processing_controller.snapshot_changed.connect(
             self._on_digital_twin_processing_snapshot_changed
@@ -2671,8 +2675,37 @@ class ReconstructionPage(QWidget):
         self._refresh_da3_canonical_controls()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
+        self._focus_digital_twin_processing_for_new_job(snapshot)
         if changed:
             self.digital_twin_processing_changed.emit(snapshot)
+
+    def _focus_digital_twin_processing_for_new_job(
+        self, snapshot: DigitalTwinProcessingSnapshot
+    ) -> None:
+        """Reveal the existing processing disclosure once for each new build job.
+
+        Phase 9.6E4 makes heavyweight lifecycle state visible without adding a
+        second job surface. User disclosure choices remain untouched while idle
+        and after the one-time focus transition.
+        """
+
+        spec = snapshot.spec
+        if spec is None or snapshot.lifecycle is DigitalTwinProcessingLifecycle.IDLE:
+            return
+        job_id = str(spec.job_id).strip()
+        if not job_id or job_id == self._digital_twin_processing_focus_job_id:
+            return
+        if not hasattr(self, "_digital_twin_processing_group"):
+            return
+        self._digital_twin_processing_focus_job_id = job_id
+        self._digital_twin_processing_group.set_expanded(True)
+        if hasattr(self, "_settings_scroll"):
+            QTimer.singleShot(
+                0,
+                lambda: self._settings_scroll.ensureWidgetVisible(
+                    self._digital_twin_processing_group, 8, 24
+                ),
+            )
 
     def _on_digital_twin_processing_error(self, message: str) -> None:
         text = str(message).strip()
@@ -4889,15 +4922,48 @@ class ReconstructionPage(QWidget):
         self._digital_twin_safety_value = self._settings_value(
             "Appearance only overlays • QC/reference separate • metrology not certified"
         )
+        # E4 keeps the decision-critical workspace state visible at a glance and
+        # moves supporting navigation/resource diagnostics behind one nested
+        # disclosure. The existing value widgets remain live and unchanged.
         self._add_status_row(workspace_layout, "Workspace", self._digital_twin_workspace_value)
         self._add_status_row(workspace_layout, "Active view", self._digital_twin_active_view_value)
         self._add_status_row(workspace_layout, "Composition", self._digital_twin_composition_value)
-        self._add_status_row(workspace_layout, "Navigation", self._digital_twin_navigation_value)
-        self._add_status_row(workspace_layout, "Interaction", self._digital_twin_interaction_value)
         self._add_status_row(workspace_layout, "Scale", self._digital_twin_scale_value)
         self._add_status_row(workspace_layout, "Authority", self._digital_twin_authority_value)
-        self._add_status_row(workspace_layout, "Resources", self._digital_twin_resource_value)
-        self._add_status_row(workspace_layout, "Safety", self._digital_twin_safety_value)
+
+        self._digital_twin_workspace_details_button = QPushButton("Show details")
+        self._digital_twin_workspace_details_button.setObjectName("reconstructionRuntimeAction")
+        self._digital_twin_workspace_details_button.setToolTip(
+            "Show navigation, interaction, neural-resource and safety details for the unified workspace."
+        )
+        self._digital_twin_workspace_details_button.setMinimumWidth(0)
+        self._digital_twin_workspace_details_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._digital_twin_workspace_details_button.clicked.connect(
+            self._toggle_digital_twin_workspace_details
+        )
+        workspace_layout.addWidget(self._digital_twin_workspace_details_button)
+
+        self._digital_twin_workspace_details = QWidget()
+        self._digital_twin_workspace_details.setObjectName("reconstructionDigitalTwinWorkspaceDetails")
+        workspace_details_layout = QVBoxLayout(self._digital_twin_workspace_details)
+        workspace_details_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_details_layout.setSpacing(5)
+        self._add_status_row(
+            workspace_details_layout, "Navigation", self._digital_twin_navigation_value
+        )
+        self._add_status_row(
+            workspace_details_layout, "Interaction", self._digital_twin_interaction_value
+        )
+        self._add_status_row(
+            workspace_details_layout, "Resources", self._digital_twin_resource_value
+        )
+        self._add_status_row(
+            workspace_details_layout, "Safety", self._digital_twin_safety_value
+        )
+        self._digital_twin_workspace_details.hide()
+        workspace_layout.addWidget(self._digital_twin_workspace_details)
         self._digital_twin_authority_value.setToolTip(
             "Canonical geometry remains the only spatial, picking and measurement authority. "
             "Semantics are context only; Gaussian/NeRF are appearance only; QC/reference stays separate."
@@ -6099,6 +6165,13 @@ class ReconstructionPage(QWidget):
         authority_layout.addLayout(calibration_actions)
         self._add_settings_row(authority_layout, "Heavy backends", "Isolated workers")
         layout.addWidget(authority)
+
+        # Phase 9.6E4 is a presentation-only consolidation. Keep every legacy
+        # group, control, action and disclosure default intact, but promote the
+        # unified Digital Twin context to the first visible sidebar stack. This
+        # avoids duplicating old controls while making active representation,
+        # authority/scale and heavyweight lifecycle understandable at a glance.
+        self._apply_digital_twin_workspace_ux_order(layout)
         layout.addStretch(1)
         self._settings_scroll.setWidget(settings_body)
         panel_layout.addWidget(self._settings_scroll, stretch=1)
@@ -6583,6 +6656,47 @@ class ReconstructionPage(QWidget):
         self._last_scene_view_preserved = bool(view_preserved)
         self._last_scene_selection_preserved = bool(selection_preserved)
         self._refresh_scene_runtime_health()
+
+    def _toggle_digital_twin_workspace_details(self) -> None:
+        if not hasattr(self, "_digital_twin_workspace_details"):
+            return
+        show = self._digital_twin_workspace_details.isHidden()
+        self._digital_twin_workspace_details.setVisible(show)
+        self._digital_twin_workspace_details_button.setText(
+            "Hide details" if show else "Show details"
+        )
+        self._digital_twin_workspace_details_button.setToolTip(
+            "Hide supporting workspace details."
+            if show
+            else "Show navigation, interaction, neural-resource and safety details for the unified workspace."
+        )
+        self._digital_twin_workspace_group.updateGeometry()
+
+    def _apply_digital_twin_workspace_ux_order(self, layout: QVBoxLayout) -> None:
+        """Promote unified workspace groups without removing legacy controls.
+
+        Construction order is intentionally left untouched because older Phase
+        8/9 controls and tests depend on their existing object identities and
+        initialization flow. E4 only changes the final visual order inside the
+        scroll body.
+        """
+
+        primary_groups = (
+            self._digital_twin_workspace_group,
+            self._digital_twin_processing_group,
+            self._canonical_scene_group,
+            self._estimated_ruler_scale_group,
+        )
+        for group in primary_groups:
+            layout.removeWidget(group)
+        for index, group in enumerate(primary_groups):
+            layout.insertWidget(index, group)
+
+        # Dense primary cards need slightly tighter content rhythm at 768p, but
+        # no row/value is hidden and disclosure behavior is unchanged.
+        self._digital_twin_workspace_group.content_layout.setSpacing(5)
+        self._digital_twin_processing_group.content_layout.setSpacing(5)
+        self._canonical_scene_group.content_layout.setSpacing(5)
 
     @staticmethod
     def _settings_group(title_text: str) -> ReconstructionSettingsDisclosureGroup:
