@@ -197,6 +197,15 @@ from app.reconstruction_estimated_metric_measurement import (
     build_reconstruction_ruler_metric_record,
     estimated_scale_from_ruler_reference,
 )
+from app.reconstruction_digital_twin_persistence import (
+    DigitalTwinProcessingHistoryRecord,
+    DigitalTwinWorkspaceState,
+    build_digital_twin_workspace_state,
+    export_digital_twin_state_bundle,
+    read_optional_digital_twin_workspace_state,
+    verify_digital_twin_state_bundle,
+    write_digital_twin_workspace_state,
+)
 from app.reconstruction_processing_jobs import (
     DigitalTwinProcessingCommand,
     DigitalTwinProcessingJobSpec,
@@ -486,6 +495,12 @@ class ReconstructionPage(QWidget):
         self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
         self._digital_twin_interaction_presentation: DigitalTwinInteractionPresentation | None = None
         self._digital_twin_processing_snapshot: DigitalTwinProcessingSnapshot = idle_digital_twin_processing_snapshot()
+        # Phase 9.6F persists only scene-bound presentation state and terminal
+        # build history. It never resumes a heavyweight job or changes scene authority.
+        self._digital_twin_workspace_state: DigitalTwinWorkspaceState | None = None
+        self._digital_twin_workspace_manifest: Path | None = None
+        self._digital_twin_processing_history: DigitalTwinProcessingHistoryRecord | None = None
+        self._last_digital_twin_state_export_dir: Path | None = None
         # Phase 9.6E4 UI focus state only. The first snapshot for each new E1
         # build job may bring the existing BUILD & PROCESSING disclosure into
         # view once; this never changes job/controller/backend state.
@@ -2669,7 +2684,18 @@ class ReconstructionPage(QWidget):
             return
         changed = snapshot != self._digital_twin_processing_snapshot
         self._digital_twin_processing_snapshot = snapshot
+        if snapshot.lifecycle.is_terminal and snapshot.spec is not None:
+            try:
+                self._digital_twin_processing_history = (
+                    DigitalTwinProcessingHistoryRecord.from_snapshot(snapshot)
+                )
+            except (TypeError, ValueError):
+                # History is presentation-only; never disturb the live E1 job
+                # lifecycle if a terminal summary itself cannot be persisted.
+                pass
         self._refresh_digital_twin_processing_presentation()
+        self._refresh_digital_twin_processing_history_presentation()
+        self._refresh_digital_twin_workspace_persistence_controls()
         self._refresh_da3_full_scene_controls()
         self._refresh_nerf_build_controls()
         self._refresh_da3_canonical_controls()
@@ -3015,6 +3041,31 @@ class ReconstructionPage(QWidget):
             minutes = int(elapsed) // 60
             seconds = int(elapsed) % 60
             self._digital_twin_processing_elapsed_value.setText(f"{minutes:02d}:{seconds:02d}")
+
+    def _refresh_digital_twin_processing_history_presentation(self) -> None:
+        if not hasattr(self, "_digital_twin_processing_history_value"):
+            return
+        history = self._digital_twin_processing_history
+        if history is None:
+            self._digital_twin_processing_history_value.setText("No persisted build history")
+            self._digital_twin_processing_history_value.setToolTip(
+                "Phase 9.6F persists terminal build history only; active jobs are never resumable."
+            )
+            return
+        self._digital_twin_processing_history_value.setText(
+            f"{history.title} • {history.lifecycle.value.title()}"
+        )
+        details = [
+            f"Job: {history.job_id}",
+            f"Backend: {history.backend_label}",
+            f"Runtime: {history.runtime_label}",
+            f"Stage: {history.stage or '—'}",
+            f"Profile: {history.profile_label or '—'}",
+            "Historical record only • not resumable • no authority granted",
+        ]
+        if history.result_path:
+            details.append(f"Result: {history.result_path}")
+        self._digital_twin_processing_history_value.setToolTip("\n".join(details))
 
     @property
     def canonical_scene_presentation(self) -> CanonicalScenePresentation | None:
@@ -4766,7 +4817,8 @@ class ReconstructionPage(QWidget):
         self._session_load_button.setObjectName("reconstructionRuntimeAction")
         self._session_load_button.setToolTip(
             "Load a persistent reconstruction scene manifest with checksum and referenced-file "
-            "verification. This does not start reconstruction or resume a checkpoint."
+            "verification. A matching Phase 9.6F workspace sidecar is restored when present. "
+            "This does not start reconstruction or resume a checkpoint."
         )
         self._session_load_button.clicked.connect(self._load_persistent_scene_interaction)
         self._session_load_button.setEnabled(False)
@@ -4775,7 +4827,8 @@ class ReconstructionPage(QWidget):
         self._session_save_button.setObjectName("reconstructionRuntimeAction")
         self._session_save_button.setToolTip(
             "Write the currently loaded persistent scene manifest and checksum to a selected "
-            "folder. Referenced artifact payloads remain at their recorded paths."
+            "folder. Phase 9.6F also writes scene-bound workspace/ruler/build-history state. "
+            "Referenced artifact payloads remain at their recorded paths."
         )
         self._session_save_button.clicked.connect(self._save_persistent_scene_interaction)
         self._session_save_button.setEnabled(False)
@@ -4784,7 +4837,8 @@ class ReconstructionPage(QWidget):
         self._session_reload_button.setObjectName("reconstructionRuntimeAction")
         self._session_reload_button.setToolTip(
             "Re-read the active persistent scene from its current manifest, verify integrity, "
-            "and require the same session identity. No checkpoint resume is executed."
+            "require the same session identity, and restore a matching Phase 9.6F workspace sidecar. "
+            "No checkpoint or heavyweight build resume is executed."
         )
         self._session_reload_button.clicked.connect(self._reload_persistent_scene_interaction)
         self._session_reload_button.setEnabled(False)
@@ -4803,6 +4857,46 @@ class ReconstructionPage(QWidget):
             )
         session_actions.addWidget(self._session_reload_button)
         session_layout.addLayout(session_actions)
+
+        # Phase 9.6F persists only scene-bound workspace presentation state in a
+        # checksum-protected companion sidecar. Heavy payloads remain owned by
+        # the existing persistent scene; no build job is resumed from this state.
+        self._digital_twin_workspace_state_value = self._settings_value(
+            "No Digital Twin workspace sidecar"
+        )
+        self._add_status_row(
+            session_layout, "Twin state", self._digital_twin_workspace_state_value
+        )
+        twin_state_actions = QHBoxLayout()
+        twin_state_actions.setSpacing(6)
+        self._digital_twin_state_export_button = QPushButton("Export State")
+        self._digital_twin_state_export_button.setObjectName("reconstructionRuntimeAction")
+        self._digital_twin_state_export_button.setToolTip(
+            "Export the scene/authority/workspace manifests for audit and same-environment restore. "
+            "Heavy referenced payloads are not embedded; use Product export for materialized geometry/QC evidence."
+        )
+        self._digital_twin_state_export_button.clicked.connect(
+            self._export_digital_twin_state_interaction
+        )
+        self._digital_twin_state_export_button.setEnabled(False)
+        twin_state_actions.addWidget(self._digital_twin_state_export_button)
+        self._digital_twin_state_export_open_button = QPushButton("Open State Export")
+        self._digital_twin_state_export_open_button.setObjectName("reconstructionRuntimeAction")
+        self._digital_twin_state_export_open_button.setToolTip(
+            "Open the most recent Digital Twin state-export folder from this application session."
+        )
+        self._digital_twin_state_export_open_button.clicked.connect(
+            self._open_digital_twin_state_export_interaction
+        )
+        self._digital_twin_state_export_open_button.setEnabled(False)
+        twin_state_actions.addWidget(self._digital_twin_state_export_open_button)
+        for button in (
+            self._digital_twin_state_export_button,
+            self._digital_twin_state_export_open_button,
+        ):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        session_layout.addLayout(twin_state_actions)
 
         # Phase 8.9A2 keeps product export visibly separate from persistent-scene
         # save/reload while preserving the locked Phase 8.8 sidebar information
@@ -4997,12 +5091,16 @@ class ReconstructionPage(QWidget):
         self._digital_twin_processing_authority_value = self._settings_value(
             "Canonical geometry remains authoritative"
         )
+        self._digital_twin_processing_history_value = self._settings_value(
+            "No persisted build history"
+        )
         self._add_status_row(processing_layout, "Job", self._digital_twin_processing_job_value)
         self._add_status_row(processing_layout, "State", self._digital_twin_processing_state_value)
         self._add_status_row(processing_layout, "Stage", self._digital_twin_processing_stage_value)
         self._add_status_row(processing_layout, "Backend", self._digital_twin_processing_backend_value)
         self._add_status_row(processing_layout, "Output", self._digital_twin_processing_output_value)
         self._add_status_row(processing_layout, "Authority", self._digital_twin_processing_authority_value)
+        self._add_status_row(processing_layout, "Last build", self._digital_twin_processing_history_value)
         self._digital_twin_processing_authority_value.setToolTip(
             "Processing jobs cannot promote themselves to canonical geometry, metric-scale, measurement, QC, or certified-metrology authority."
         )
@@ -6795,6 +6893,8 @@ class ReconstructionPage(QWidget):
             controller.persistent_authority_snapshot,
             str(controller.persistent_authority_manifest or ""),
         )
+        if scene is not None and controller.persistent_scene_manifest is not None:
+            self._restore_digital_twin_workspace_state(controller.persistent_scene_manifest)
         self.set_checkpoint(controller.engine_checkpoint, str(controller.engine_checkpoint_manifest or ""))
         self._refresh_reconstruction_export_controls()
         self._telemetry_timer.start()
@@ -7130,6 +7230,261 @@ class ReconstructionPage(QWidget):
                 return candidate
         raise RuntimeError("Could not allocate a unique reconstruction export folder.")
 
+    def _capture_digital_twin_workspace_state(self) -> DigitalTwinWorkspaceState | None:
+        scene = self._persistent_scene
+        if scene is None:
+            return None
+        snapshot = self._digital_twin_processing_snapshot
+        terminal_snapshot = (
+            snapshot
+            if snapshot.lifecycle.is_terminal and snapshot.spec is not None
+            else None
+        )
+        return build_digital_twin_workspace_state(
+            scene,
+            estimated_metric_scale_hint=self._estimated_metric_scale_hint,
+            ruler_metric_record=self._ruler_metric_record,
+            selected_appearance_artifact_id=self._selected_appearance_artifact_id,
+            processing_history=self._digital_twin_processing_history,
+            processing_snapshot=terminal_snapshot,
+        )
+
+    def _persist_digital_twin_workspace_state(self, scene_manifest: Path) -> Path | None:
+        state = self._capture_digital_twin_workspace_state()
+        if state is None:
+            return None
+        manifest = write_digital_twin_workspace_state(state, scene_manifest.parent)
+        self._digital_twin_workspace_state = state
+        self._digital_twin_workspace_manifest = manifest
+        self._refresh_digital_twin_workspace_persistence_controls()
+        return manifest
+
+    def _restore_digital_twin_workspace_state(self, scene_manifest: Path) -> None:
+        scene = self._persistent_scene
+        if scene is None:
+            return
+        try:
+            state, manifest = read_optional_digital_twin_workspace_state(
+                scene_manifest,
+                expected_scene=scene,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            # Workspace state is explicitly non-authoritative. A damaged sidecar
+            # must never hide an otherwise valid canonical persistent scene.
+            self._digital_twin_workspace_state = None
+            self._digital_twin_workspace_manifest = None
+            self._digital_twin_processing_history = None
+            self._refresh_digital_twin_processing_history_presentation()
+            if hasattr(self, "_digital_twin_workspace_state_value"):
+                self._digital_twin_workspace_state_value.setText("Twin state rejected")
+                self._digital_twin_workspace_state_value.setToolTip(str(exc))
+                self._digital_twin_workspace_state_value.setProperty("statusKind", "warning")
+                self._refresh_style(self._digital_twin_workspace_state_value)
+            return
+        if state is None:
+            self._digital_twin_workspace_state = None
+            self._digital_twin_workspace_manifest = None
+            self._digital_twin_processing_history = None
+            self._refresh_digital_twin_processing_history_presentation()
+            if hasattr(self, "_digital_twin_workspace_state_value"):
+                self._digital_twin_workspace_state_value.setText("Legacy scene • no twin sidecar")
+                self._digital_twin_workspace_state_value.setToolTip(
+                    "The canonical scene loaded normally. No Phase 9.6F workspace sidecar was present."
+                )
+                self._digital_twin_workspace_state_value.setProperty("statusKind", "neutral")
+                self._refresh_style(self._digital_twin_workspace_state_value)
+            self._refresh_digital_twin_workspace_persistence_controls()
+            return
+        self._apply_digital_twin_workspace_state(state)
+        self._digital_twin_workspace_manifest = manifest
+        self._refresh_digital_twin_workspace_persistence_controls()
+
+    def _apply_digital_twin_workspace_state(self, state: DigitalTwinWorkspaceState) -> None:
+        scene = self._persistent_scene
+        if scene is None:
+            raise ValueError("A persistent canonical scene is required before restoring workspace state.")
+        state.validate_against_scene(scene)
+        self._digital_twin_workspace_state = state
+        self._digital_twin_processing_history = state.processing_history
+
+        if state.estimated_metric_scale_hint is None:
+            self.clear_estimated_metric_scale_hint()
+        else:
+            self.set_estimated_metric_scale_hint(state.estimated_metric_scale_hint)
+
+        selected = state.selected_appearance_artifact_id
+        if selected and hasattr(self, "_appearance_representation_combo"):
+            index = self._appearance_representation_combo.findData(selected)
+            if index >= 0:
+                self._selected_appearance_artifact_id = selected
+                self._appearance_representation_combo.blockSignals(True)
+                self._appearance_representation_combo.setCurrentIndex(index)
+                self._appearance_representation_combo.blockSignals(False)
+                self._refresh_appearance_representation_values()
+                self._refresh_gaussian_visualization_controls()
+                self._refresh_nerf_visualization_controls()
+                self._refresh_representation_switching_controls()
+
+        saved_ruler = state.ruler_metric_record
+        if saved_ruler is None:
+            self._interactive_measure_points_reconstruction = []
+            self._interactive_distance_estimate = None
+            self._ruler_metric_record = None
+            self._last_ruler_reference_distance_reconstruction_units = None
+            self._reconstruction_canvas.clear_interactive_measurement_overlay()
+            self._interactive_measure_hud.hide()
+        else:
+            points = [
+                np.asarray(saved_ruler.point_a_reconstruction, dtype=np.float64),
+                np.asarray(saved_ruler.point_b_reconstruction, dtype=np.float64),
+            ]
+            self._interactive_measure_points_reconstruction = points
+            self._reconstruction_canvas.set_interactive_measurement_overlay(
+                np.asarray(points, dtype=np.float64)
+            )
+            # Recompute the best *current* readout against today's persisted
+            # authority while carrying the saved original estimate as provenance.
+            # A later qualified scale may therefore supersede the visible value
+            # without erasing the original Phase 9.6E0 estimate.
+            restored = build_reconstruction_ruler_metric_record(
+                scene_id=saved_ruler.scene_id,
+                point_a_reconstruction=saved_ruler.point_a_reconstruction,
+                point_b_reconstruction=saved_ruler.point_b_reconstruction,
+                canonical_scene=self._canonical_scene_presentation,
+                estimated_scale_hint=self._estimated_metric_scale_hint,
+                previous=saved_ruler,
+            )
+            self._last_ruler_reference_distance_reconstruction_units = (
+                restored.current.distance_source_units
+            )
+            self._apply_ruler_metric_record(restored)
+            self._interactive_measure_hud.show()
+
+        self._refresh_estimated_metric_scale_presentation()
+        self._refresh_digital_twin_processing_history_presentation()
+        if hasattr(self, "_digital_twin_workspace_state_value"):
+            self._digital_twin_workspace_state_value.setText("Workspace state restored")
+            self._digital_twin_workspace_state_value.setToolTip(
+                f"{state.scene_id}\n"
+                f"Workspace fingerprint: {state.workspace_fingerprint_sha256}\n"
+                "Estimated-scale/ruler provenance + appearance selection + terminal build history restored.\n"
+                "No active build job was resumed and no authority was changed."
+            )
+            self._digital_twin_workspace_state_value.setProperty("statusKind", "ready")
+            self._refresh_style(self._digital_twin_workspace_state_value)
+
+    def _refresh_digital_twin_workspace_persistence_controls(self) -> None:
+        if not hasattr(self, "_digital_twin_state_export_button"):
+            return
+        controller = self._controller
+        scene_ready = bool(
+            controller is not None
+            and controller.persistent_scene is not None
+            and controller.persistent_scene_manifest is not None
+        )
+        busy = bool(
+            controller is None
+            or controller.is_shutdown
+            or controller.is_active
+            or self._digital_twin_processing_snapshot.is_active
+        )
+        self._digital_twin_state_export_button.setEnabled(scene_ready and not busy)
+        self._digital_twin_state_export_open_button.setEnabled(
+            bool(
+                self._last_digital_twin_state_export_dir
+                and self._last_digital_twin_state_export_dir.is_dir()
+            )
+        )
+        if self._persistent_scene is None:
+            self._digital_twin_workspace_state_value.setText("No Digital Twin workspace sidecar")
+            self._digital_twin_workspace_state_value.setToolTip(
+                "Load a persistent canonical scene before saving/restoring Phase 9.6F workspace state."
+            )
+            self._digital_twin_workspace_state_value.setProperty("statusKind", "neutral")
+            self._refresh_style(self._digital_twin_workspace_state_value)
+        elif self._digital_twin_workspace_manifest is not None:
+            self._digital_twin_workspace_state_value.setText("Workspace state persisted")
+            self._digital_twin_workspace_state_value.setToolTip(
+                str(self._digital_twin_workspace_manifest)
+            )
+            self._digital_twin_workspace_state_value.setProperty("statusKind", "ready")
+            self._refresh_style(self._digital_twin_workspace_state_value)
+
+    def _export_digital_twin_state_interaction(self) -> None:
+        controller = self._controller
+        if (
+            controller is None
+            or controller.is_shutdown
+            or controller.is_active
+            or self._digital_twin_processing_snapshot.is_active
+            or controller.persistent_scene is None
+            or controller.persistent_scene_manifest is None
+        ):
+            self._refresh_digital_twin_workspace_persistence_controls()
+            return
+        state = self._capture_digital_twin_workspace_state()
+        if state is None:
+            return
+        start_dir = (
+            self._last_digital_twin_state_export_dir.parent
+            if self._last_digital_twin_state_export_dir is not None
+            else controller.persistent_scene_manifest.parent
+        )
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select Digital Twin State Export Parent Folder",
+            str(start_dir),
+        )
+        if not selected:
+            return
+        parent = Path(selected).expanduser().resolve()
+        target = self._next_digital_twin_state_export_dir(parent, state.scene_id)
+        authority_manifest = controller.persistent_authority_manifest
+        try:
+            export_manifest = export_digital_twin_state_bundle(
+                scene_manifest_path=controller.persistent_scene_manifest,
+                workspace_state=state,
+                authority_manifest_path=authority_manifest,
+                output_dir=target,
+            )
+            verified = verify_digital_twin_state_bundle(export_manifest.parent)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._digital_twin_workspace_state_value.setText("State export failed")
+            self._digital_twin_workspace_state_value.setToolTip(str(exc))
+            self._digital_twin_workspace_state_value.setProperty("statusKind", "warning")
+            self._refresh_style(self._digital_twin_workspace_state_value)
+            return
+        self._last_digital_twin_state_export_dir = export_manifest.parent
+        self._refresh_digital_twin_workspace_persistence_controls()
+        self._digital_twin_workspace_state_value.setText("Twin state export complete")
+        self._digital_twin_workspace_state_value.setToolTip(
+            f"{export_manifest.parent}\n"
+            f"Referenced payloads: {verified.get('referenced_payload_count', 0)} • not embedded\n"
+            "State/audit export only • Product export remains the geometry/QC payload route."
+        )
+        self._digital_twin_workspace_state_value.setProperty("statusKind", "ready")
+        self._refresh_style(self._digital_twin_workspace_state_value)
+
+    def _open_digital_twin_state_export_interaction(self) -> None:
+        path = self._last_digital_twin_state_export_dir
+        if path is None or not path.is_dir():
+            self._digital_twin_state_export_open_button.setEnabled(False)
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    @staticmethod
+    def _next_digital_twin_state_export_dir(parent: Path, scene_id: str) -> Path:
+        root = Path(parent).expanduser().resolve()
+        short_scene = str(scene_id).strip().replace("prs-", "")[:8] or "scene"
+        base = root / f"digital_twin_state_{short_scene}"
+        if not base.exists():
+            return base
+        for index in range(2, 1000):
+            candidate = root / f"digital_twin_state_{short_scene}_{index:02d}"
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError("Could not allocate a unique Digital Twin state-export folder.")
+
     def _load_persistent_scene_interaction(self) -> None:
         controller = self._controller
         if controller is None:
@@ -7148,10 +7503,14 @@ class ReconstructionPage(QWidget):
         if not selected:
             return
         try:
+            selected_manifest = Path(selected).expanduser().resolve()
             controller.load_persistent_scene(
-                Path(selected).expanduser().resolve(),
+                selected_manifest,
                 verify_file_references=True,
             )
+            active_manifest = controller.persistent_scene_manifest
+            if active_manifest is not None:
+                self._restore_digital_twin_workspace_state(active_manifest)
             self._clear_warning_if_possible()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self.set_error(f"Could not load persistent reconstruction scene: {exc}")
@@ -7198,15 +7557,19 @@ class ReconstructionPage(QWidget):
                 # no calibration authority to add or remove. This keeps legacy
                 # callers/monkeypatches compatible while the controller continues
                 # to preserve any existing metric-only authority sidecar itself.
-                controller.save_persistent_scene(output_dir)
+                saved_manifest = controller.save_persistent_scene(output_dir)
             else:
                 # Passing None explicitly is intentional when a loaded scene had a
                 # persisted calibration that the user has since cleared: the new
                 # sidecar must remove that calibration instead of silently retaining it.
-                controller.save_persistent_scene(
+                saved_manifest = controller.save_persistent_scene(
                     output_dir,
                     camera_calibration_profile=self._selected_calibration_profile,
                 )
+            # Legacy tests/callers may monkeypatch the save seam without returning
+            # a manifest. Real controller saves always return the durable path.
+            if isinstance(saved_manifest, Path):
+                self._persist_digital_twin_workspace_state(saved_manifest.resolve())
             self._clear_warning_if_possible()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self.set_error(f"Could not save persistent reconstruction scene: {exc}")
@@ -7219,6 +7582,9 @@ class ReconstructionPage(QWidget):
             return
         try:
             controller.reload_persistent_scene()
+            active_manifest = controller.persistent_scene_manifest
+            if active_manifest is not None:
+                self._restore_digital_twin_workspace_state(active_manifest)
             self._clear_warning_if_possible()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self.set_error(f"Could not reload persistent reconstruction scene: {exc}")
@@ -8532,12 +8898,15 @@ class ReconstructionPage(QWidget):
             selected_object_id=selected_before,
         )
         if next_scene_id != previous_scene_id:
-            # E0 estimates are scene-bound and session-side only. A different
-            # scene must never inherit an approximate scale/reference. Same-scene
-            # reload keeps it until Phase 9.6F owns explicit persistence/restore.
+            # E0 estimates and the Phase 9.6F workspace companion are scene-bound.
+            # A different scene must never inherit approximate scale/ruler state,
+            # appearance selection, or terminal build history from another scene.
             self._estimated_metric_scale_hint = None
             self._ruler_metric_record = None
             self._last_ruler_reference_distance_reconstruction_units = None
+            self._digital_twin_workspace_state = None
+            self._digital_twin_workspace_manifest = None
+            self._digital_twin_processing_history = None
 
         self._hide_interactive_gaussian()
         self._hide_gaussian_preview()
@@ -8652,6 +9021,8 @@ class ReconstructionPage(QWidget):
         # 9.6C records the final scene-bind navigation policy only after the 9.3I
         # bind plan has either preserved the same-scene view or fitted the new scene.
         self._refresh_digital_twin_navigation_sync()
+        self._refresh_digital_twin_processing_history_presentation()
+        self._refresh_digital_twin_workspace_persistence_controls()
 
     def set_persistent_authority_snapshot(
         self,
