@@ -47,6 +47,7 @@ render frames, and releases the external worker on hide/switch/clear/shutdown.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 import tempfile
 from time import monotonic
@@ -204,6 +205,7 @@ from app.reconstruction_processing_jobs import (
     idle_digital_twin_processing_snapshot,
 )
 from app.reconstruction_processing_job_controller import DigitalTwinProcessingJobController
+from app.reconstruction_da3_full_scene import DA3_FULL_SCENE_PROTOCOL, build_full_scene_da3_job
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -264,6 +266,7 @@ from app.reconstruction_appearance_resources import (
 from app.reconstruction_controller import (
     ReconstructionSourceSelection,
     ReconstructionWorkflow,
+    default_reconstruction_output_root,
 )
 from app.reconstruction_session_model import (
     ReconstructionSessionIdentityStatus,
@@ -483,6 +486,9 @@ class ReconstructionPage(QWidget):
         )
         self._digital_twin_processing_controller.error_occurred.connect(
             self._on_digital_twin_processing_error
+        )
+        self._digital_twin_processing_controller.result_ready.connect(
+            self._on_digital_twin_processing_result_ready
         )
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
@@ -2654,6 +2660,10 @@ class ReconstructionPage(QWidget):
         changed = snapshot != self._digital_twin_processing_snapshot
         self._digital_twin_processing_snapshot = snapshot
         self._refresh_digital_twin_processing_presentation()
+        self._refresh_da3_full_scene_controls()
+        self._refresh_da3_canonical_controls()
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
         if changed:
             self.digital_twin_processing_changed.emit(snapshot)
 
@@ -2661,6 +2671,137 @@ class ReconstructionPage(QWidget):
         text = str(message).strip()
         if text and hasattr(self, "_digital_twin_processing_state_value"):
             self._digital_twin_processing_state_value.setToolTip(text)
+
+    def _start_da3_full_scene_build(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        if self._digital_twin_processing_snapshot.is_active:
+            self.set_error("A Digital Twin build job is already active.")
+            self._refresh_runtime_controls()
+            return
+        selection = controller.source_selection
+        if (
+            selection.workflow is not ReconstructionWorkflow.RECORDED_VIDEO
+            or not selection.ready
+            or selection.path is None
+        ):
+            self.set_error("Select a ready Recorded video before building Full-Scene DA3 geometry.")
+            self._refresh_da3_full_scene_controls()
+            return
+        if controller.is_active or self._digital_twin_processing_snapshot.is_active:
+            self.set_error("Stop the active reconstruction/build job before starting Full-Scene DA3.")
+            self._refresh_da3_full_scene_controls()
+            return
+        try:
+            # E2 performs only the minimum local resource guard needed to avoid
+            # launching DA3 under a resident neural appearance worker on the
+            # qualification RTX 2060. 9.6G later owns the generic coordinator.
+            if self._interactive_gaussian_visible:
+                self._hide_interactive_gaussian()
+            if self._gaussian_preview_visible:
+                self._hide_gaussian_preview()
+            if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
+                self._hide_interactive_nerf(blocking=True)
+            if self._nerf_preview_visible:
+                self._hide_nerf_preview()
+            spec, command = build_full_scene_da3_job(
+                video_path=selection.path,
+                output_root=default_reconstruction_output_root(),
+            )
+            self.start_digital_twin_processing_job(spec, command)
+            self._clear_warning_if_possible()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        self._refresh_da3_full_scene_controls()
+        self._refresh_da3_canonical_controls()
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
+
+    def _on_digital_twin_processing_result_ready(
+        self, snapshot: DigitalTwinProcessingSnapshot
+    ) -> None:
+        if not isinstance(snapshot, DigitalTwinProcessingSnapshot) or snapshot.spec is None:
+            return
+        if (
+            snapshot.spec.kind.value != "dense_geometry"
+            or snapshot.spec.expected_protocol != DA3_FULL_SCENE_PROTOCOL
+            or not snapshot.result_path
+        ):
+            return
+        try:
+            summary_path = Path(snapshot.result_path).expanduser().resolve()
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            if str(summary.get("job_id", "")).strip() != snapshot.spec.job_id:
+                raise ValueError("Full-scene DA3 result job identity does not match the completed build.")
+            if str(summary.get("phase", "")).strip() != "9.6E2" or not bool(summary.get("pass", False)):
+                raise ValueError("Completed dense-geometry result is not a valid Phase 9.6E2 result.")
+            if any(bool(summary.get(key, False)) for key in (
+                "canonical_geometry_authoritative",
+                "metric_scale_authoritative",
+                "measurement_authoritative",
+                "qc_authoritative",
+                "certified_metrology",
+            )):
+                raise ValueError("Full-scene DA3 result contains an unsafe authority claim.")
+            manifest = Path(str(summary.get("persistent_scene_manifest", ""))).expanduser().resolve()
+            manifest.relative_to(snapshot.spec.output_dir)
+            if self._controller is None:
+                raise RuntimeError("Reconstruction controller became unavailable before DA3 result admission.")
+            self._controller.load_persistent_scene(manifest, verify_file_references=True)
+            self._selected_dense_provider_id = "depth-anything-3-external"
+            self._refresh_dense_provider_controls()
+            self._da3_full_scene_value.setText(
+                f"Ready • {int(summary.get('selected_keyframes', 0))} keyframes • arbitrary scale"
+            )
+            self._da3_full_scene_value.setToolTip(
+                "Full-scene temporal coverage uses sequential overlapping DA3 windows. Loop closure and metric scale are not claimed."
+            )
+        except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.set_error(f"Full-scene DA3 result could not be admitted: {exc}")
+        finally:
+            self._refresh_da3_full_scene_controls()
+            self._refresh_da3_canonical_controls()
+            self._refresh_source_controls()
+            self._refresh_runtime_controls()
+
+    def _refresh_da3_full_scene_controls(self) -> None:
+        if not hasattr(self, "_da3_full_scene_build_button"):
+            return
+        controller = self._controller
+        snapshot = self._digital_twin_processing_snapshot
+        if controller is None:
+            self._da3_full_scene_build_button.setEnabled(False)
+            self._da3_full_scene_value.setText("Controller unavailable")
+            return
+        selection = controller.source_selection
+        ready_video = bool(
+            selection.ready
+            and selection.path is not None
+            and selection.workflow is ReconstructionWorkflow.RECORDED_VIDEO
+        )
+        can_start = bool(
+            not controller.is_shutdown
+            and ready_video
+            and not controller.is_active
+            and not snapshot.is_active
+        )
+        self._da3_full_scene_build_button.setEnabled(can_start)
+        if snapshot.spec is not None and snapshot.spec.kind.value == "dense_geometry":
+            if snapshot.is_active:
+                self._da3_full_scene_value.setText(
+                    f"{snapshot.stage_text} • {snapshot.progress_text}"
+                )
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.FAILED:
+                self._da3_full_scene_value.setText("Failed • previous canonical scene preserved")
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.CANCELLED:
+                self._da3_full_scene_value.setText("Cancelled • previous canonical scene preserved")
+            elif snapshot.lifecycle is DigitalTwinProcessingLifecycle.COMPLETED and not self._da3_full_scene_value.text().startswith("Ready •"):
+                self._da3_full_scene_value.setText("Completed • admitting persistent full-scene geometry")
+        elif ready_video:
+            self._da3_full_scene_value.setText("Ready • Full Scene • click Build Full Scene below")
+        else:
+            self._da3_full_scene_value.setText("Select a ready Recorded video for Full Scene")
 
     def _refresh_digital_twin_processing_presentation(self) -> None:
         if not hasattr(self, "_digital_twin_processing_job_value"):
@@ -2680,6 +2821,7 @@ class ReconstructionPage(QWidget):
             self._digital_twin_processing_output_value.setToolTip("")
         self._digital_twin_processing_authority_value.setText(snapshot.authority_text)
         self._digital_twin_processing_cancel_button.setEnabled(snapshot.can_cancel)
+        self._refresh_da3_full_scene_controls()
 
         progress = self._digital_twin_processing_progress
         if snapshot.lifecycle is DigitalTwinProcessingLifecycle.IDLE:
@@ -4695,6 +4837,25 @@ class ReconstructionPage(QWidget):
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
         )
         processing_layout.addLayout(processing_progress_row)
+
+        # Phase 9.6E2 exposes one deliberately simple full-scene DA3 action.
+        # The existing Advanced/Integrate DA3 path remains the qualified Quick
+        # workflow; this action is recorded-video only and runs through E1.
+        self._da3_full_scene_value = self._settings_value(
+            "Select a ready Recorded video for full-scene dense geometry"
+        )
+        self._add_status_row(processing_layout, "Dense geometry", self._da3_full_scene_value)
+        self._da3_full_scene_build_button = QPushButton("Build Full Scene")
+        self._da3_full_scene_build_button.setObjectName("reconstructionRuntimeAction")
+        self._da3_full_scene_build_button.setToolTip(
+            "Select quality-filtered keyframes across the complete recorded video and process them in bounded external DA3 windows. Scale remains arbitrary until separately qualified."
+        )
+        self._da3_full_scene_build_button.clicked.connect(self._start_da3_full_scene_build)
+        self._da3_full_scene_build_button.setMinimumWidth(0)
+        self._da3_full_scene_build_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+
         processing_actions = QHBoxLayout()
         processing_actions.setSpacing(6)
         self._digital_twin_processing_cancel_button = QPushButton("Cancel build")
@@ -4708,10 +4869,15 @@ class ReconstructionPage(QWidget):
         self._digital_twin_processing_cancel_button.setEnabled(False)
         self._digital_twin_processing_cancel_button.setMinimumWidth(0)
         self._digital_twin_processing_cancel_button.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        processing_actions.addStretch(1)
-        processing_actions.addWidget(self._digital_twin_processing_cancel_button)
+        # Keep both primary build actions visible at the qualified 1366×768
+        # workspace width. Horizontal Ignored policies plus an intervening
+        # stretch can legally collapse both buttons to zero width in the
+        # narrow settings sidebar, which makes users fall back to the unrelated
+        # top-level Offline Reconstruction Start action.
+        processing_actions.addWidget(self._da3_full_scene_build_button, 1)
+        processing_actions.addWidget(self._digital_twin_processing_cancel_button, 1)
         processing_layout.addLayout(processing_actions)
         layout.addWidget(self._digital_twin_processing_group)
         self._refresh_digital_twin_processing_presentation()
@@ -5927,6 +6093,7 @@ class ReconstructionPage(QWidget):
             and source_ready
             and not controller.is_active
             and not active
+            and not self._digital_twin_processing_snapshot.is_active
         )
         self._da3_integrate_button.setEnabled(can_start)
         self._da3_cancel_button.setEnabled(
@@ -5957,6 +6124,10 @@ class ReconstructionPage(QWidget):
 
     def _on_da3_integrate_clicked(self) -> None:
         if self._controller is None:
+            return
+        if self._digital_twin_processing_snapshot.is_active:
+            self.set_error("Cancel the active Digital Twin build before starting Quick DA3 integration.")
+            self._refresh_da3_canonical_controls()
             return
         try:
             self._controller.start_selected_da3_canonical()
@@ -7000,6 +7171,7 @@ class ReconstructionPage(QWidget):
                     )
                 )
         self._refresh_da3_canonical_controls()
+        self._refresh_da3_full_scene_controls()
         self._refresh_runtime_controls()
 
     def _select_live_source(self) -> None:
@@ -7051,6 +7223,10 @@ class ReconstructionPage(QWidget):
     def _start_runtime(self) -> None:
         controller = self._controller
         if controller is None or controller.is_shutdown:
+            return
+        if self._digital_twin_processing_snapshot.is_active:
+            self.set_error("Cancel the active Digital Twin build before starting reconstruction.")
+            self._refresh_runtime_controls()
             return
         selection = controller.source_selection
         if not selection.ready:
@@ -7851,7 +8027,12 @@ class ReconstructionPage(QWidget):
 
     def _refresh_source_controls(self) -> None:
         controller = self._controller
-        enabled = controller is not None and not controller.is_active and not controller.is_shutdown
+        enabled = bool(
+            controller is not None
+            and not controller.is_active
+            and not controller.is_shutdown
+            and not self._digital_twin_processing_snapshot.is_active
+        )
         for button in self._source_buttons.values():
             button.setEnabled(enabled)
 
@@ -7893,7 +8074,12 @@ class ReconstructionPage(QWidget):
             OfflineReconstructionRunState.RUNNING,
             OfflineReconstructionRunState.CANCELLING,
         }
-        busy = live_busy or offline_busy or controller.is_active
+        busy = (
+            live_busy
+            or offline_busy
+            or controller.is_active
+            or self._digital_twin_processing_snapshot.is_active
+        )
         if hasattr(self, "_calibration_manage_button"):
             calibration_mutable = not controller.is_shutdown and not busy
             self._calibration_manage_button.setEnabled(calibration_mutable)
