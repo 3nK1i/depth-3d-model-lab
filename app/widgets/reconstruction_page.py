@@ -185,6 +185,10 @@ from app.reconstruction_digital_twin_composition import (
     DigitalTwinSceneComposition,
     build_digital_twin_scene_composition,
 )
+from app.reconstruction_digital_twin_navigation import (
+    DigitalTwinNavigationSync,
+    build_digital_twin_navigation_sync,
+)
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -326,6 +330,7 @@ class ReconstructionPage(QWidget):
     appearance_resource_fallback_changed = pyqtSignal(object)
     digital_twin_workspace_changed = pyqtSignal(object)
     digital_twin_scene_composition_changed = pyqtSignal(object)
+    digital_twin_navigation_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -447,6 +452,7 @@ class ReconstructionPage(QWidget):
         self._appearance_fallback_reason = ""
         self._digital_twin_workspace_presentation: DigitalTwinWorkspacePresentation | None = None
         self._digital_twin_scene_composition: DigitalTwinSceneComposition | None = None
+        self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
@@ -924,16 +930,19 @@ class ReconstructionPage(QWidget):
         self._reconstruction_canvas.fit_scene()
         if self._interactive_nerf_visible:
             self._request_interactive_nerf_render()
+        self._refresh_digital_twin_navigation_sync()
 
     def _focus_reconstruction_camera(self) -> None:
         self._reconstruction_canvas.focus_current_camera()
         if self._interactive_nerf_visible:
             self._request_interactive_nerf_render()
+        self._refresh_digital_twin_navigation_sync()
 
     def _reset_reconstruction_view(self) -> None:
         self._reconstruction_canvas.reset_view()
         if self._interactive_nerf_visible:
             self._request_interactive_nerf_render()
+        self._refresh_digital_twin_navigation_sync()
 
     def _on_reconstruction_view_interaction_started(self) -> None:
         if not self._interactive_nerf_visible:
@@ -956,6 +965,10 @@ class ReconstructionPage(QWidget):
             if not self._nerf_display_settings.auto_refresh:
                 self._appearance_preview.show()
                 self._viewport_state.setText("Interactive Nerfacto • manual refresh")
+        # Phase 9.6C snapshots the settled shared viewport camera after navigation.
+        # Gaussian already shares this scene camera; NeRF requests are derived from
+        # it above. This update is presentation-only and creates no camera authority.
+        self._refresh_digital_twin_navigation_sync()
 
     def _reconstruction_interactive_measurement_available(self) -> bool:
         return bool(self._reconstruction_canvas.canonical_mesh_loaded)
@@ -2135,6 +2148,7 @@ class ReconstructionPage(QWidget):
                 self._digital_twin_composition_value.setToolTip(str(exc))
             if previous is not None:
                 self.digital_twin_scene_composition_changed.emit(None)
+            self._refresh_digital_twin_navigation_sync()
             return
 
         self._digital_twin_scene_composition = composition
@@ -2147,6 +2161,69 @@ class ReconstructionPage(QWidget):
             )
         if composition != previous:
             self.digital_twin_scene_composition_changed.emit(composition)
+        self._refresh_digital_twin_navigation_sync()
+
+    @property
+    def digital_twin_navigation_sync(self) -> DigitalTwinNavigationSync | None:
+        return self._digital_twin_navigation_sync
+
+    def _refresh_digital_twin_navigation_sync(self) -> None:
+        previous = self._digital_twin_navigation_sync
+        composition = self._digital_twin_scene_composition
+        canvas = getattr(self, "_reconstruction_canvas", None)
+        if composition is None:
+            self._digital_twin_navigation_sync = None
+            if hasattr(self, "_digital_twin_navigation_value"):
+                self._digital_twin_navigation_value.setText(
+                    "Navigation unavailable • canonical controls retained"
+                )
+                self._digital_twin_navigation_value.setToolTip(
+                    "Unified scene composition is unavailable. No appearance representation is granted "
+                    "a separate navigation or spatial authority."
+                )
+            if previous is not None:
+                self.digital_twin_navigation_changed.emit(None)
+            return
+
+        try:
+            camera_state_getter = (
+                getattr(canvas, "interactive_render_camera_state", None)
+                if canvas is not None
+                else None
+            )
+            camera_state = (
+                camera_state_getter()
+                if bool(composition.scene_id) and callable(camera_state_getter)
+                else None
+            )
+            sync = build_digital_twin_navigation_sync(
+                composition,
+                camera_state=camera_state,
+                gaussian_interactive=self.interactive_gaussian_visible,
+                nerf_interactive=self.interactive_nerf_visible,
+                gaussian_preview_visible=self.gaussian_preview_visible,
+                nerf_preview_visible=self.nerf_preview_visible,
+                view_preserved_on_same_scene_reload=bool(self._last_scene_view_preserved),
+            )
+        except (TypeError, ValueError) as exc:
+            self._digital_twin_navigation_sync = None
+            if hasattr(self, "_digital_twin_navigation_value"):
+                self._digital_twin_navigation_value.setText(
+                    "Navigation synchronization unavailable • canonical controls retained"
+                )
+                self._digital_twin_navigation_value.setToolTip(str(exc))
+            if previous is not None:
+                self.digital_twin_navigation_changed.emit(None)
+            return
+
+        self._digital_twin_navigation_sync = sync
+        if hasattr(self, "_digital_twin_navigation_value"):
+            self._digital_twin_navigation_value.setText(sync.navigation_text)
+            self._digital_twin_navigation_value.setToolTip(
+                sync.camera_text + "\n" + sync.scene_switch_text + "\n" + sync.authority_text
+            )
+        if sync != previous:
+            self.digital_twin_navigation_changed.emit(sync)
 
     def _refresh_digital_twin_workspace_presentation(self) -> None:
         canvas = getattr(self, "_reconstruction_canvas", None)
@@ -2172,6 +2249,7 @@ class ReconstructionPage(QWidget):
                 self._digital_twin_workspace_value.setToolTip(str(exc))
                 self._digital_twin_active_view_value.setText("Canonical geometry")
                 self._digital_twin_composition_value.setText("Composition rejected")
+                self._digital_twin_navigation_value.setText("Canonical navigation retained")
                 self._digital_twin_scale_value.setText("Not qualified")
                 self._digital_twin_authority_value.setText("Canonical authority preserved outside summary")
                 self._digital_twin_resource_value.setText("Neural appearance not promoted")
@@ -4090,6 +4168,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_workspace_value = self._settings_value("No persistent Digital Twin scene")
         self._digital_twin_active_view_value = self._settings_value("Canonical geometry")
         self._digital_twin_composition_value = self._settings_value("Waiting for persistent scene")
+        self._digital_twin_navigation_value = self._settings_value("Waiting for persistent scene")
         self._digital_twin_scale_value = self._settings_value("—")
         self._digital_twin_authority_value = self._settings_value("No canonical scene authority")
         self._digital_twin_resource_value = self._settings_value("No neural appearance resource required")
@@ -4099,6 +4178,7 @@ class ReconstructionPage(QWidget):
         self._add_status_row(workspace_layout, "Workspace", self._digital_twin_workspace_value)
         self._add_status_row(workspace_layout, "Active view", self._digital_twin_active_view_value)
         self._add_status_row(workspace_layout, "Composition", self._digital_twin_composition_value)
+        self._add_status_row(workspace_layout, "Navigation", self._digital_twin_navigation_value)
         self._add_status_row(workspace_layout, "Scale", self._digital_twin_scale_value)
         self._add_status_row(workspace_layout, "Authority", self._digital_twin_authority_value)
         self._add_status_row(workspace_layout, "Resources", self._digital_twin_resource_value)
@@ -7540,6 +7620,9 @@ class ReconstructionPage(QWidget):
             self._last_scene_view_preserved = False
             self._last_scene_selection_preserved = False
             self._refresh_scene_runtime_health()
+        # 9.6C records the final scene-bind navigation policy only after the 9.3I
+        # bind plan has either preserved the same-scene view or fitted the new scene.
+        self._refresh_digital_twin_navigation_sync()
 
     def set_persistent_authority_snapshot(
         self,
