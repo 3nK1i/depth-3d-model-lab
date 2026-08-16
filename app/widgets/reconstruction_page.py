@@ -191,6 +191,10 @@ from app.reconstruction_digital_twin_interaction import (
     DigitalTwinInteractionPresentation,
     build_digital_twin_interaction_presentation,
 )
+from app.reconstruction_digital_twin_resources import (
+    DigitalTwinResourceCoordination,
+    build_digital_twin_resource_coordination,
+)
 from app.reconstruction_estimated_metric_measurement import (
     EstimatedMetricScaleHint,
     ReconstructionRulerMetricRecord,
@@ -368,6 +372,7 @@ class ReconstructionPage(QWidget):
     estimated_metric_scale_changed = pyqtSignal(object)
     ruler_metric_record_changed = pyqtSignal(object)
     digital_twin_processing_changed = pyqtSignal(object)
+    digital_twin_resource_activity_changed = pyqtSignal(bool)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -495,6 +500,8 @@ class ReconstructionPage(QWidget):
         self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
         self._digital_twin_interaction_presentation: DigitalTwinInteractionPresentation | None = None
         self._digital_twin_processing_snapshot: DigitalTwinProcessingSnapshot = idle_digital_twin_processing_snapshot()
+        self._digital_twin_resource_coordination: DigitalTwinResourceCoordination | None = None
+        self._digital_twin_resource_activity_active = False
         # Phase 9.6F persists only scene-bound presentation state and terminal
         # build history. It never resumes a heavyweight job or changes scene authority.
         self._digital_twin_workspace_state: DigitalTwinWorkspaceState | None = None
@@ -2625,6 +2632,7 @@ class ReconstructionPage(QWidget):
                 )
             if previous is not None:
                 self.digital_twin_workspace_changed.emit(None)
+            self._refresh_digital_twin_resource_coordination()
             self._refresh_digital_twin_scene_composition()
             return
 
@@ -2645,11 +2653,99 @@ class ReconstructionPage(QWidget):
             self._digital_twin_safety_value.setText(presentation.safety_text)
         if changed:
             self.digital_twin_workspace_changed.emit(presentation)
+        self._refresh_digital_twin_resource_coordination()
         self._refresh_digital_twin_scene_composition()
 
     @property
     def digital_twin_processing_snapshot(self) -> DigitalTwinProcessingSnapshot:
         return self._digital_twin_processing_snapshot
+
+    @property
+    def digital_twin_resource_coordination(self) -> DigitalTwinResourceCoordination | None:
+        return self._digital_twin_resource_coordination
+
+    @property
+    def digital_twin_resource_active(self) -> bool:
+        """Whether Reconstruction owns dynamic resources beyond its controller.
+
+        MainWindow already observes ``ReconstructionController.is_active``.  G adds
+        the E1 build supervisor, isolated interactive NeRF process and bounded
+        interactive Gaussian residency to that application-wide ownership boundary.
+        Static previews intentionally do not count.
+        """
+
+        coordination = self._digital_twin_resource_coordination
+        if coordination is None:
+            coordination = self._refresh_digital_twin_resource_coordination()
+        return bool(coordination and coordination.page_resource_active)
+
+    def _refresh_digital_twin_resource_coordination(self) -> DigitalTwinResourceCoordination:
+        controller = self._controller
+        snapshot = self._digital_twin_processing_snapshot
+        coordination = build_digital_twin_resource_coordination(
+            processing_active=bool(snapshot.is_active or self._digital_twin_processing_controller.is_running),
+            reconstruction_active=bool(controller is not None and controller.is_active),
+            interactive_nerf_active=bool(
+                self._interactive_nerf_visible or self._nerf_worker_client.is_running
+            ),
+            interactive_gaussian_resident=bool(
+                self._interactive_gaussian_visible
+                or self._interactive_gaussian_scene is not None
+                or self._gaussian_display_buffers is not None
+            ),
+            static_preview_active=bool(self._gaussian_preview_visible or self._nerf_preview_visible),
+            build_label=(snapshot.job_text if snapshot.spec is not None else ""),
+        )
+        previous_active = bool(self._digital_twin_resource_activity_active)
+        self._digital_twin_resource_coordination = coordination
+        current_active = bool(coordination.page_resource_active)
+        self._digital_twin_resource_activity_active = current_active
+
+        if hasattr(self, "_digital_twin_processing_resource_value"):
+            self._digital_twin_processing_resource_value.setText(coordination.owner_text)
+            self._digital_twin_processing_resource_value.setToolTip(coordination.details_text)
+            self._digital_twin_processing_gpu_value.setText(coordination.startup_resources_text)
+            self._digital_twin_processing_gpu_value.setToolTip(
+                "Startup hardware snapshot only. Live per-process CUDA telemetry remains owned by the qualified external runtime diagnostics."
+            )
+        if hasattr(self, "_digital_twin_resource_value"):
+            self._digital_twin_resource_value.setText(coordination.owner_text)
+            self._digital_twin_resource_value.setToolTip(coordination.details_text)
+
+        if current_active != previous_active:
+            self.digital_twin_resource_activity_changed.emit(current_active)
+        return coordination
+
+    def _release_appearance_resources_for_heavy_handoff(self, purpose: str) -> None:
+        """Release dynamic appearance residency before a heavyweight handoff.
+
+        G centralizes the local E2/E3 guards.  The canonical scene remains loaded
+        and static preview artifacts remain available to re-open later.
+        """
+
+        if self._interactive_gaussian_visible or self._interactive_gaussian_scene is not None:
+            self._hide_interactive_gaussian()
+        if self._gaussian_preview_visible:
+            self._hide_gaussian_preview()
+        if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
+            self._hide_interactive_nerf(blocking=True)
+        if self._nerf_preview_visible:
+            self._hide_nerf_preview()
+        coordination = self._refresh_digital_twin_resource_coordination()
+        if self._nerf_worker_client.is_running or coordination.interactive_nerf_active:
+            label = str(purpose).strip() or "heavyweight operation"
+            raise RuntimeError(
+                f"Interactive NeRF resources did not release before starting {label}."
+            )
+        if coordination.interactive_gaussian_resident:
+            label = str(purpose).strip() or "heavyweight operation"
+            raise RuntimeError(
+                f"Interactive Gaussian resources did not release before starting {label}."
+            )
+
+    def _interactive_resource_admission_failure(self, label: str) -> str:
+        coordination = self._refresh_digital_twin_resource_coordination()
+        return coordination.interactive_admission_failure(label)
 
     def start_digital_twin_processing_job(
         self,
@@ -2672,6 +2768,13 @@ class ReconstructionPage(QWidget):
             raise ValueError(
                 "Digital Twin processing job scene_id does not match the active canonical scene."
             )
+        coordination = self._refresh_digital_twin_resource_coordination()
+        if coordination.reconstruction_active:
+            raise RuntimeError("Stop active Reconstruction before starting a Digital Twin build job.")
+        self._release_appearance_resources_for_heavy_handoff(spec.title)
+        coordination = self._refresh_digital_twin_resource_coordination()
+        if coordination.conflict or coordination.interactive_nerf_active:
+            raise RuntimeError(coordination.conflict_reason or "Digital Twin resources are not ready for build handoff.")
         return self._digital_twin_processing_controller.start(spec, command)
 
     def cancel_digital_twin_processing_job(self) -> bool:
@@ -2695,6 +2798,7 @@ class ReconstructionPage(QWidget):
                 pass
         self._refresh_digital_twin_processing_presentation()
         self._refresh_digital_twin_processing_history_presentation()
+        self._refresh_digital_twin_resource_coordination()
         self._refresh_digital_twin_workspace_persistence_controls()
         self._refresh_da3_full_scene_controls()
         self._refresh_nerf_build_controls()
@@ -2760,17 +2864,8 @@ class ReconstructionPage(QWidget):
             self._refresh_da3_full_scene_controls()
             return
         try:
-            # E2 performs only the minimum local resource guard needed to avoid
-            # launching DA3 under a resident neural appearance worker on the
-            # qualification RTX 2060. 9.6G later owns the generic coordinator.
-            if self._interactive_gaussian_visible:
-                self._hide_interactive_gaussian()
-            if self._gaussian_preview_visible:
-                self._hide_gaussian_preview()
-            if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
-                self._hide_interactive_nerf(blocking=True)
-            if self._nerf_preview_visible:
-                self._hide_nerf_preview()
+            # Phase 9.6G centralizes the prior E2 local handoff in
+            # start_digital_twin_processing_job().
             spec, command = build_full_scene_da3_job(
                 video_path=selection.path,
                 output_root=default_reconstruction_output_root(),
@@ -2803,16 +2898,8 @@ class ReconstructionPage(QWidget):
             return
         preset_key = str(self._nerf_build_profile_combo.currentData() or NERF_DEFAULT_BUILD_PRESET)
         try:
-            # E3 mirrors E2's minimum local guard on the RTX 2060. Phase 9.6G
-            # later owns generic resource coordination across all heavy runtimes.
-            if self._interactive_gaussian_visible:
-                self._hide_interactive_gaussian()
-            if self._gaussian_preview_visible:
-                self._hide_gaussian_preview()
-            if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
-                self._hide_interactive_nerf(blocking=True)
-            if self._nerf_preview_visible:
-                self._hide_nerf_preview()
+            # Phase 9.6G centralizes the prior E3 local handoff in
+            # start_digital_twin_processing_job().
             spec, command = build_nerf_training_job(
                 scene=scene,
                 scene_manifest=manifest,
@@ -4074,6 +4161,10 @@ class ReconstructionPage(QWidget):
         gaussian_selected = bool(
             selected is not None and selected.representation_kind == "gaussian_scene"
         )
+        resource_blocked = bool(
+            self._digital_twin_processing_snapshot.is_active
+            or (self._controller is not None and self._controller.is_active)
+        )
         if presentation is None:
             self._gaussian_provider_value.setText(values["provider"])
             self._gaussian_scene_value.setText(values["scene"])
@@ -4104,7 +4195,9 @@ class ReconstructionPage(QWidget):
             )
             self._gaussian_authority_value.setText(presentation.authority_text)
             self._gaussian_show_button.setEnabled(bool(presentation.ready and gaussian_selected))
-            self._gaussian_interactive_button.setEnabled(bool(gaussian_selected and self._persistent_scene is not None))
+            self._gaussian_interactive_button.setEnabled(
+                bool(gaussian_selected and self._persistent_scene is not None and not resource_blocked)
+            )
             self._gaussian_hide_button.setEnabled(bool(self.gaussian_preview_visible or self.interactive_gaussian_visible))
             if not gaussian_selected:
                 if self._interactive_gaussian_visible:
@@ -4125,7 +4218,7 @@ class ReconstructionPage(QWidget):
         ):
             control.setEnabled(controls_enabled)
         if hasattr(self, "_gaussian_scene_layer_toggle"):
-            self._gaussian_scene_layer_toggle.setEnabled(controls_enabled)
+            self._gaussian_scene_layer_toggle.setEnabled(bool(controls_enabled and not resource_blocked))
             self._set_gaussian_scene_layer_checked(self.interactive_gaussian_visible)
         self._refresh_gaussian_display_summary()
         if presentation != previous:
@@ -4184,6 +4277,15 @@ class ReconstructionPage(QWidget):
         self._refresh_representation_switching_controls()
 
     def _show_interactive_gaussian(self) -> None:
+        failure = self._interactive_resource_admission_failure("interactive Gaussian")
+        if failure:
+            self.set_error(failure)
+            if hasattr(self, "_gaussian_state_value"):
+                self._gaussian_state_value.setText(failure)
+                self._gaussian_state_value.setToolTip(
+                    "Phase 9.6G blocks dynamic appearance residency while Reconstruction or an external build owns resources."
+                )
+            return
         selected = self.selected_appearance_representation
         if (
             self._persistent_scene is None
@@ -4235,6 +4337,7 @@ class ReconstructionPage(QWidget):
         self._gaussian_interactive_button.setEnabled(False)
         self._gaussian_show_button.setEnabled(True)
         self._gaussian_hide_button.setEnabled(True)
+        self._refresh_digital_twin_resource_coordination()
         self._refresh_representation_switching_controls()
 
     def _hide_interactive_gaussian(self) -> None:
@@ -4259,6 +4362,7 @@ class ReconstructionPage(QWidget):
         self._set_gaussian_scene_layer_checked(False)
         self._refresh_gaussian_display_summary()
         self._refresh_gaussian_runtime_health()
+        self._refresh_digital_twin_resource_coordination()
         selected = self.selected_appearance_representation
         presentation = self._gaussian_visualization_presentation
         if hasattr(self, "_gaussian_interactive_button"):
@@ -4354,6 +4458,10 @@ class ReconstructionPage(QWidget):
         nerf_selected = bool(
             selected is not None and selected.representation_kind == "nerf_scene"
         )
+        resource_blocked = bool(
+            self._digital_twin_processing_snapshot.is_active
+            or (self._controller is not None and self._controller.is_active)
+        )
 
         if presentation is None:
             self._nerf_provider_value.setText(values["provider"])
@@ -4412,7 +4520,13 @@ class ReconstructionPage(QWidget):
                 )
             self._nerf_authority_value.setText(presentation.authority_text)
             self._nerf_interactive_button.setEnabled(
-                bool(interactive is not None and interactive.ready and nerf_selected and not self._interactive_nerf_visible)
+                bool(
+                    interactive is not None
+                    and interactive.ready
+                    and nerf_selected
+                    and not self._interactive_nerf_visible
+                    and not resource_blocked
+                )
             )
             self._nerf_show_button.setEnabled(
                 bool(presentation.ready and nerf_selected and not self._nerf_preview_visible)
@@ -4440,7 +4554,7 @@ class ReconstructionPage(QWidget):
             bool(controls_enabled and self._interactive_nerf_visible and self._nerf_worker_client.is_ready)
         )
         if hasattr(self, "_nerf_scene_layer_toggle"):
-            self._nerf_scene_layer_toggle.setEnabled(controls_enabled)
+            self._nerf_scene_layer_toggle.setEnabled(bool(controls_enabled and not resource_blocked))
             self._set_nerf_scene_layer_checked(self.interactive_nerf_visible)
         self._refresh_nerf_display_summary()
 
@@ -4499,6 +4613,15 @@ class ReconstructionPage(QWidget):
         self._refresh_representation_switching_controls()
 
     def _show_interactive_nerf(self) -> None:
+        failure = self._interactive_resource_admission_failure("interactive NeRF")
+        if failure:
+            self.set_error(failure)
+            if hasattr(self, "_nerf_state_value"):
+                self._nerf_state_value.setText(failure)
+                self._nerf_state_value.setToolTip(
+                    "Phase 9.6G permits only one heavyweight Reconstruction/NeRF/build owner at a time."
+                )
+            return
         presentation = self._interactive_nerf_presentation
         selected = self.selected_appearance_representation
         if (
@@ -4570,6 +4693,7 @@ class ReconstructionPage(QWidget):
             self._refresh_nerf_visualization_controls()
             self._refresh_representation_switching_controls()
             return
+        self._refresh_digital_twin_resource_coordination()
         self._refresh_nerf_visualization_controls()
         self._refresh_representation_switching_controls()
 
@@ -4686,6 +4810,7 @@ class ReconstructionPage(QWidget):
         if self._interactive_nerf_visible and hasattr(self, "_nerf_state_value"):
             self._refresh_nerf_visualization_controls()
         self._refresh_nerf_runtime_health()
+        self._refresh_digital_twin_resource_coordination()
 
     def _hide_nerf_preview(self) -> None:
         if not hasattr(self, "_appearance_preview"):
@@ -4718,6 +4843,7 @@ class ReconstructionPage(QWidget):
                 self._schedule_interactive_nerf_session_cleanup(session)
         self._refresh_viewport_state()
         self._refresh_nerf_runtime_health()
+        self._refresh_digital_twin_resource_coordination()
 
     def _hide_nerf_visualization(self, *, refresh: bool = True) -> None:
         if self._interactive_nerf_visible or self._nerf_worker_client.is_running:
@@ -5069,11 +5195,10 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._digital_twin_workspace_group)
         self._refresh_digital_twin_workspace_presentation()
 
-        # Phase 9.6E1 establishes one generic, single-active-job orchestration
-        # surface for future full-scene DA3 and NeRF build adapters. E1 itself
-        # intentionally exposes no Build buttons and launches no heavy backend.
-        # The heavy runtimes remain external to ``depth`` and canonical geometry
-        # remains available even if a future processing job fails or is cancelled.
+        # Phase 9.6E1 established the generic single-active-job surface; E2/E3
+        # populated it with DA3 and NeRF build actions. Phase 9.6G now adds the
+        # shared dynamic resource owner/GPU policy rows without moving heavy
+        # runtime imports into ``depth`` or changing canonical authority.
         self._digital_twin_processing_group = self._settings_group("BUILD & PROCESSING")
         self._digital_twin_processing_group.set_expanded(False)
         processing_layout = self._digital_twin_processing_group.content_layout
@@ -5087,6 +5212,10 @@ class ReconstructionPage(QWidget):
         self._digital_twin_processing_state_value = self._settings_value("Idle")
         self._digital_twin_processing_stage_value = self._settings_value("Waiting for build request")
         self._digital_twin_processing_backend_value = self._settings_value("External runtime not active")
+        self._digital_twin_processing_resource_value = self._settings_value(
+            "Available • no dynamic Digital Twin owner"
+        )
+        self._digital_twin_processing_gpu_value = self._settings_value("Startup resource snapshot unavailable")
         self._digital_twin_processing_output_value = self._settings_value("—")
         self._digital_twin_processing_authority_value = self._settings_value(
             "Canonical geometry remains authoritative"
@@ -5098,6 +5227,8 @@ class ReconstructionPage(QWidget):
         self._add_status_row(processing_layout, "State", self._digital_twin_processing_state_value)
         self._add_status_row(processing_layout, "Stage", self._digital_twin_processing_stage_value)
         self._add_status_row(processing_layout, "Backend", self._digital_twin_processing_backend_value)
+        self._add_status_row(processing_layout, "Resource owner", self._digital_twin_processing_resource_value)
+        self._add_status_row(processing_layout, "GPU snapshot", self._digital_twin_processing_gpu_value)
         self._add_status_row(processing_layout, "Output", self._digital_twin_processing_output_value)
         self._add_status_row(processing_layout, "Authority", self._digital_twin_processing_authority_value)
         self._add_status_row(processing_layout, "Last build", self._digital_twin_processing_history_value)
@@ -5193,6 +5324,7 @@ class ReconstructionPage(QWidget):
         processing_layout.addLayout(processing_actions)
         layout.addWidget(self._digital_twin_processing_group)
         self._refresh_digital_twin_processing_presentation()
+        self._refresh_digital_twin_resource_coordination()
         self._refresh_nerf_build_controls()
 
         # Phase 9.3A composes the existing persistent canonical-geometry contract
@@ -7862,8 +7994,9 @@ class ReconstructionPage(QWidget):
             self.set_error(selection.detail or "Select a ready reconstruction source first.")
             self._refresh_runtime_controls()
             return
-        self._prepare_runtime_presentation_for_start(selection.workflow)
         try:
+            self._release_appearance_resources_for_heavy_handoff("Reconstruction")
+            self._prepare_runtime_presentation_for_start(selection.workflow)
             if selection.workflow is ReconstructionWorkflow.LIVE_SOURCE:
                 prepared = self._prepare_live_camera_for_start()
                 if prepared is None:
@@ -7904,6 +8037,7 @@ class ReconstructionPage(QWidget):
         finally:
             self._refresh_source_controls()
             self._refresh_runtime_controls()
+            self._refresh_digital_twin_resource_coordination()
 
     @property
     def selected_camera_calibration_profile(self) -> CameraCalibrationProfile | None:
@@ -8836,6 +8970,7 @@ class ReconstructionPage(QWidget):
         self._refresh_viewport_state()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
+        self._refresh_digital_twin_resource_coordination()
 
     def set_offline_state(self, state: OfflineReconstructionRunState) -> None:
         self._offline_state = state
@@ -8868,6 +9003,7 @@ class ReconstructionPage(QWidget):
         self._refresh_source_controls()
         self._refresh_runtime_controls()
         self._refresh_reconstruction_export_controls()
+        self._refresh_digital_twin_resource_coordination()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
         self._scene_availability = availability

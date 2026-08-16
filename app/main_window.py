@@ -147,6 +147,12 @@ class MainWindow(QMainWindow):
         self._reconstruction_page.camera_calibration_profile_changed.connect(
             lambda _profile: self._refresh_inspection_context()
         )
+        # Phase 9.6G extends the existing H2 application resource boundary to
+        # E1 build jobs plus dynamic Gaussian/NeRF Reconstruction resources that
+        # intentionally live outside ReconstructionController.is_active.
+        self._reconstruction_page.digital_twin_resource_activity_changed.connect(
+            self._on_reconstruction_activity_changed
+        )
 
         self._benchmark_controller = BenchmarkController(self)
         self._benchmark_page.run_requested.connect(self._on_benchmark_run_requested)
@@ -428,13 +434,19 @@ class MainWindow(QMainWindow):
         Stable Video, inspection, or export. H2 makes that ownership reciprocal at
         the application entry points rather than relying only on navigation locking.
         Persistent scenes, static appearance previews, and prepared resume metadata
-        do not count as active resource owners.
+        do not count as active resource owners. Phase 9.6G additionally observes
+        active Digital Twin builds, interactive NeRF and interactive Gaussian residency.
         """
 
-        if not self._reconstruction_controller.is_active:
-            return ""
         label = str(job_label).strip() or "this application job"
-        return f"Reconstruction is active; stop it before starting {label}."
+        if self._reconstruction_controller.is_active:
+            return f"Reconstruction is active; stop it before starting {label}."
+        if self._reconstruction_page.digital_twin_resource_active:
+            return (
+                "Reconstruction Digital Twin resources are active; release/cancel them "
+                f"before starting {label}."
+            )
+        return ""
 
     def _reconstruction_live_start_guard(self) -> str | None:
         """Live SLAM may share capture/inference but not another long-running mode job."""
@@ -477,6 +489,7 @@ class MainWindow(QMainWindow):
 
         locked = (
             self._reconstruction_controller.is_active
+            or self._reconstruction_page.digital_twin_resource_active
             or self._benchmark_controller.is_running
             or self._snapshot_controller.is_running
             or self._stable_video_controller.is_active
