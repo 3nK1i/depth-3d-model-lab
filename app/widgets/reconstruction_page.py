@@ -196,6 +196,14 @@ from app.reconstruction_estimated_metric_measurement import (
     build_reconstruction_ruler_metric_record,
     estimated_scale_from_ruler_reference,
 )
+from app.reconstruction_processing_jobs import (
+    DigitalTwinProcessingCommand,
+    DigitalTwinProcessingJobSpec,
+    DigitalTwinProcessingLifecycle,
+    DigitalTwinProcessingSnapshot,
+    idle_digital_twin_processing_snapshot,
+)
+from app.reconstruction_processing_job_controller import DigitalTwinProcessingJobController
 from app.reconstruction_gaussian_visualization import (
     GaussianVisualizationPresentation,
     build_gaussian_visualization_presentation,
@@ -341,6 +349,7 @@ class ReconstructionPage(QWidget):
     digital_twin_interaction_changed = pyqtSignal(object)
     estimated_metric_scale_changed = pyqtSignal(object)
     ruler_metric_record_changed = pyqtSignal(object)
+    digital_twin_processing_changed = pyqtSignal(object)
     canonical_scene_presentation_changed = pyqtSignal(object)
     canonical_camera_presentation_changed = pyqtSignal(object)
     canonical_inspection_overlay_changed = pyqtSignal(object)
@@ -467,6 +476,14 @@ class ReconstructionPage(QWidget):
         self._digital_twin_scene_composition: DigitalTwinSceneComposition | None = None
         self._digital_twin_navigation_sync: DigitalTwinNavigationSync | None = None
         self._digital_twin_interaction_presentation: DigitalTwinInteractionPresentation | None = None
+        self._digital_twin_processing_snapshot: DigitalTwinProcessingSnapshot = idle_digital_twin_processing_snapshot()
+        self._digital_twin_processing_controller = DigitalTwinProcessingJobController(self)
+        self._digital_twin_processing_controller.snapshot_changed.connect(
+            self._on_digital_twin_processing_snapshot_changed
+        )
+        self._digital_twin_processing_controller.error_occurred.connect(
+            self._on_digital_twin_processing_error
+        )
         self._reconstruction_session_model: ReconstructionSessionModel | None = None
         self._scene_interaction_presentation: ReconstructionSceneInteractionPresentation | None = None
         self._checkpoint_resume_presentation: ReconstructionCheckpointResumePresentation | None = None
@@ -2600,6 +2617,112 @@ class ReconstructionPage(QWidget):
         self._refresh_digital_twin_scene_composition()
 
     @property
+    def digital_twin_processing_snapshot(self) -> DigitalTwinProcessingSnapshot:
+        return self._digital_twin_processing_snapshot
+
+    def start_digital_twin_processing_job(
+        self,
+        spec: DigitalTwinProcessingJobSpec,
+        command: DigitalTwinProcessingCommand,
+    ) -> str:
+        """Start one future E2/E3 build job through the generic E1 supervisor.
+
+        E1 intentionally exposes this adapter seam without wiring any current
+        product button to it.  Heavy DA3/Nerfstudio imports remain outside the
+        ``depth`` process and a second heavyweight build cannot overlap.
+        """
+
+        if not isinstance(spec, DigitalTwinProcessingJobSpec):
+            raise TypeError("spec must be DigitalTwinProcessingJobSpec.")
+        if not isinstance(command, DigitalTwinProcessingCommand):
+            raise TypeError("command must be DigitalTwinProcessingCommand.")
+        active_scene_id = str(getattr(self._persistent_scene, "scene_id", "")).strip()
+        if spec.scene_id and active_scene_id and spec.scene_id != active_scene_id:
+            raise ValueError(
+                "Digital Twin processing job scene_id does not match the active canonical scene."
+            )
+        return self._digital_twin_processing_controller.start(spec, command)
+
+    def cancel_digital_twin_processing_job(self) -> bool:
+        return self._digital_twin_processing_controller.cancel()
+
+    def _on_digital_twin_processing_snapshot_changed(
+        self, snapshot: DigitalTwinProcessingSnapshot
+    ) -> None:
+        if not isinstance(snapshot, DigitalTwinProcessingSnapshot):
+            return
+        changed = snapshot != self._digital_twin_processing_snapshot
+        self._digital_twin_processing_snapshot = snapshot
+        self._refresh_digital_twin_processing_presentation()
+        if changed:
+            self.digital_twin_processing_changed.emit(snapshot)
+
+    def _on_digital_twin_processing_error(self, message: str) -> None:
+        text = str(message).strip()
+        if text and hasattr(self, "_digital_twin_processing_state_value"):
+            self._digital_twin_processing_state_value.setToolTip(text)
+
+    def _refresh_digital_twin_processing_presentation(self) -> None:
+        if not hasattr(self, "_digital_twin_processing_job_value"):
+            return
+        snapshot = self._digital_twin_processing_snapshot
+        self._digital_twin_processing_job_value.setText(snapshot.job_text)
+        self._digital_twin_processing_state_value.setText(snapshot.lifecycle_text)
+        self._digital_twin_processing_stage_value.setText(snapshot.stage_text)
+        self._digital_twin_processing_stage_value.setToolTip(snapshot.message or snapshot.error)
+        self._digital_twin_processing_backend_value.setText(snapshot.backend_text)
+        self._digital_twin_processing_output_value.setText(snapshot.output_text)
+        if snapshot.spec is not None:
+            self._digital_twin_processing_output_value.setToolTip(
+                snapshot.result_path or str(snapshot.spec.output_dir)
+            )
+        else:
+            self._digital_twin_processing_output_value.setToolTip("")
+        self._digital_twin_processing_authority_value.setText(snapshot.authority_text)
+        self._digital_twin_processing_cancel_button.setEnabled(snapshot.can_cancel)
+
+        progress = self._digital_twin_processing_progress
+        if snapshot.lifecycle is DigitalTwinProcessingLifecycle.IDLE:
+            progress.setRange(0, 100)
+            progress.setValue(0)
+            progress.setFormat("Idle")
+        elif snapshot.progress_fraction is None and snapshot.lifecycle.is_active:
+            progress.setRange(0, 0)
+            progress.setFormat("Active")
+        else:
+            progress.setRange(0, 100)
+            value = (
+                round(snapshot.progress_fraction * 100.0)
+                if snapshot.progress_fraction is not None
+                else (100 if snapshot.lifecycle is DigitalTwinProcessingLifecycle.COMPLETED else 0)
+            )
+            progress.setValue(max(0, min(100, int(value))))
+            progress.setFormat(snapshot.progress_text)
+        progress.setProperty(
+            "statusKind",
+            "error"
+            if snapshot.lifecycle is DigitalTwinProcessingLifecycle.FAILED
+            else "warning"
+            if snapshot.lifecycle in {
+                DigitalTwinProcessingLifecycle.CANCELLING,
+                DigitalTwinProcessingLifecycle.CANCELLED,
+            }
+            else "ready"
+            if snapshot.lifecycle is DigitalTwinProcessingLifecycle.COMPLETED
+            else "running"
+            if snapshot.lifecycle.is_active
+            else "neutral",
+        )
+        self._refresh_style(progress)
+        elapsed = float(snapshot.elapsed_seconds)
+        if snapshot.lifecycle is DigitalTwinProcessingLifecycle.IDLE:
+            self._digital_twin_processing_elapsed_value.setText("—")
+        else:
+            minutes = int(elapsed) // 60
+            seconds = int(elapsed) % 60
+            self._digital_twin_processing_elapsed_value.setText(f"{minutes:02d}:{seconds:02d}")
+
+    @property
     def canonical_scene_presentation(self) -> CanonicalScenePresentation | None:
         return self._canonical_scene_presentation
 
@@ -4523,6 +4646,75 @@ class ReconstructionPage(QWidget):
         )
         layout.addWidget(self._digital_twin_workspace_group)
         self._refresh_digital_twin_workspace_presentation()
+
+        # Phase 9.6E1 establishes one generic, single-active-job orchestration
+        # surface for future full-scene DA3 and NeRF build adapters. E1 itself
+        # intentionally exposes no Build buttons and launches no heavy backend.
+        # The heavy runtimes remain external to ``depth`` and canonical geometry
+        # remains available even if a future processing job fails or is cancelled.
+        self._digital_twin_processing_group = self._settings_group("BUILD & PROCESSING")
+        self._digital_twin_processing_group.set_expanded(False)
+        processing_layout = self._digital_twin_processing_group.content_layout
+        processing_hint = QLabel(
+            "One isolated build job at a time • external runtimes only • canonical workspace stays authoritative."
+        )
+        processing_hint.setObjectName("reconstructionSettingsHint")
+        processing_hint.setWordWrap(True)
+        processing_layout.addWidget(processing_hint)
+        self._digital_twin_processing_job_value = self._settings_value("No Digital Twin build job")
+        self._digital_twin_processing_state_value = self._settings_value("Idle")
+        self._digital_twin_processing_stage_value = self._settings_value("Waiting for build request")
+        self._digital_twin_processing_backend_value = self._settings_value("External runtime not active")
+        self._digital_twin_processing_output_value = self._settings_value("—")
+        self._digital_twin_processing_authority_value = self._settings_value(
+            "Canonical geometry remains authoritative"
+        )
+        self._add_status_row(processing_layout, "Job", self._digital_twin_processing_job_value)
+        self._add_status_row(processing_layout, "State", self._digital_twin_processing_state_value)
+        self._add_status_row(processing_layout, "Stage", self._digital_twin_processing_stage_value)
+        self._add_status_row(processing_layout, "Backend", self._digital_twin_processing_backend_value)
+        self._add_status_row(processing_layout, "Output", self._digital_twin_processing_output_value)
+        self._add_status_row(processing_layout, "Authority", self._digital_twin_processing_authority_value)
+        self._digital_twin_processing_authority_value.setToolTip(
+            "Processing jobs cannot promote themselves to canonical geometry, metric-scale, measurement, QC, or certified-metrology authority."
+        )
+        processing_progress_row = QHBoxLayout()
+        processing_progress_row.setSpacing(8)
+        self._digital_twin_processing_progress = QProgressBar()
+        self._digital_twin_processing_progress.setObjectName("reconstructionDigitalTwinProcessingProgress")
+        self._digital_twin_processing_progress.setRange(0, 100)
+        self._digital_twin_processing_progress.setValue(0)
+        self._digital_twin_processing_progress.setFormat("Idle")
+        self._digital_twin_processing_progress.setTextVisible(True)
+        processing_progress_row.addWidget(self._digital_twin_processing_progress, 1)
+        self._digital_twin_processing_elapsed_value = QLabel("—")
+        self._digital_twin_processing_elapsed_value.setObjectName("reconstructionRuntimeElapsed")
+        processing_progress_row.addWidget(
+            self._digital_twin_processing_elapsed_value,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        processing_layout.addLayout(processing_progress_row)
+        processing_actions = QHBoxLayout()
+        processing_actions.setSpacing(6)
+        self._digital_twin_processing_cancel_button = QPushButton("Cancel build")
+        self._digital_twin_processing_cancel_button.setObjectName("reconstructionRuntimeAction")
+        self._digital_twin_processing_cancel_button.setToolTip(
+            "Cancel the active isolated build job with bounded SIGTERM → SIGKILL cleanup. Canonical scene state is not discarded."
+        )
+        self._digital_twin_processing_cancel_button.clicked.connect(
+            self.cancel_digital_twin_processing_job
+        )
+        self._digital_twin_processing_cancel_button.setEnabled(False)
+        self._digital_twin_processing_cancel_button.setMinimumWidth(0)
+        self._digital_twin_processing_cancel_button.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        processing_actions.addStretch(1)
+        processing_actions.addWidget(self._digital_twin_processing_cancel_button)
+        processing_layout.addLayout(processing_actions)
+        layout.addWidget(self._digital_twin_processing_group)
+        self._refresh_digital_twin_processing_presentation()
 
         # Phase 9.3A composes the existing persistent canonical-geometry contract
         # and Phase 9.1H authority sidecar into one passive scene summary.  It
@@ -8076,6 +8268,8 @@ class ReconstructionPage(QWidget):
         if self._viewport_shutdown:
             return
         self._viewport_shutdown = True
+        if hasattr(self, "_digital_twin_processing_controller"):
+            self._digital_twin_processing_controller.shutdown()
         self._visual_pose_timer.stop()
         if hasattr(self, "_gaussian_display_update_timer"):
             self._gaussian_display_update_timer.stop()
