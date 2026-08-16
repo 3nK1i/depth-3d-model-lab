@@ -41,6 +41,46 @@ def emit(
     print(EVENT_PREFIX + json.dumps(payload, sort_keys=True, allow_nan=False), flush=True)
 
 
+class _MappingProgressTracker:
+    """Keep multi-model PyCOLMAP mapping callbacks globally monotonic.
+
+    ``incremental_mapping(multiple_models=True)`` may seed more than one sparse
+    model.  PyCOLMAP invokes ``initial_image_pair_callback`` for every seed, so
+    treating every seed as the same 0.68 progress event can move application
+    progress backwards after an earlier model has already registered images.
+    Only the first seed advances progress; later seeds are status-only.
+    """
+
+    def __init__(self, image_count: int) -> None:
+        count = int(image_count)
+        if count < 1:
+            raise ValueError("Mapping progress requires at least one image.")
+        self.image_count = count
+        self.registered_callbacks = 0
+        self.initial_pair_callbacks = 0
+        self.last_progress = 0.64
+
+    def initial_pair(self) -> tuple[str, float | None, str]:
+        self.initial_pair_callbacks += 1
+        if self.initial_pair_callbacks == 1:
+            self.last_progress = max(self.last_progress, 0.68)
+            return "progress", self.last_progress, "Initial image pair registered."
+        return (
+            "status",
+            None,
+            "Additional sparse-model initial image pair registered.",
+        )
+
+    def next_image(self) -> float:
+        self.registered_callbacks += 1
+        candidate = min(
+            0.92,
+            0.68 + 0.24 * self.registered_callbacks / max(1, self.image_count),
+        )
+        self.last_progress = max(self.last_progress, candidate)
+        return self.last_progress
+
+
 def load_object(path: Path) -> dict:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -351,21 +391,28 @@ def run(request: dict) -> dict:
     mapping.ba_use_gpu = bool(configuration.get("bundle_adjustment_gpu", False))
     mapping.ba_gpu_index = "0" if mapping.ba_use_gpu else "-1"
 
-    registered_callbacks = 0
+    mapping_progress = _MappingProgressTracker(len(image_names))
 
     def initial_callback() -> None:
-        emit("progress", "mapping", "Initial image pair registered.", 0.68)
+        event_type, fraction, message = mapping_progress.initial_pair()
+        emit(
+            event_type,
+            "mapping",
+            message,
+            fraction,
+            initial_pair_callbacks=mapping_progress.initial_pair_callbacks,
+            registered_callbacks=mapping_progress.registered_callbacks,
+        )
 
     def next_image_callback() -> None:
-        nonlocal registered_callbacks
-        registered_callbacks += 1
-        fraction = min(0.92, 0.68 + 0.24 * registered_callbacks / max(1, len(image_names)))
+        fraction = mapping_progress.next_image()
         emit(
             "progress",
             "mapping",
             "Registered another image in the sparse reconstruction.",
             fraction,
-            registered_callbacks=registered_callbacks,
+            registered_callbacks=mapping_progress.registered_callbacks,
+            initial_pair_callbacks=mapping_progress.initial_pair_callbacks,
         )
 
     emit("progress", "mapping", "Starting incremental mapping and bundle adjustment.", 0.64)
