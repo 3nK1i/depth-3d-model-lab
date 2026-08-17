@@ -11,6 +11,7 @@ from app.measurement_inspection_controller import MeasurementInspectionControlle
 from app.widgets.inspection_page import InspectionPage
 from core.capture.base_source import SourceStatus
 from core.capture.camera_source import CameraSource
+from core.capture.video_source import VideoSource
 from core.reconstruction.calibration_management import create_manual_camera_calibration_profile
 from core.reconstruction.calibration_profile import CameraCalibrationValidationState
 
@@ -124,3 +125,13 @@ def test_1g_current_application_source_context_does_not_require_reconstruction_w
     assert window._reconstruction_controller.current_application_source_label() == "USB camera 2"
     assert size.width == 1280
     assert size.height == 720
+
+
+def test_1g_video_source_label_accepts_string_path_for_calibration_context(window) -> None:
+    source = VideoSource("/tmp/kitti_seq00_first1500_left_color_ffv1.mkv")
+    window._controller._active_source = source
+
+    assert (
+        window._reconstruction_controller.current_application_source_label()
+        == "kitti_seq00_first1500_left_color_ffv1.mkv"
+    )

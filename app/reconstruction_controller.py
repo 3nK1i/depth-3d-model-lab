@@ -680,7 +680,7 @@ class ReconstructionController(QObject):
         if isinstance(source, RtspSource):
             return "RTSP stream"
         if isinstance(source, VideoSource):
-            return source.path.name
+            return Path(source.path).name
         if isinstance(source, ImageSource):
             return "Static image source"
         return "No source selected"
