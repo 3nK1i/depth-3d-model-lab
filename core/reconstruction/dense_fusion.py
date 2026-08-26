@@ -170,6 +170,140 @@ def explicit_depth_scale_alignment(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class DenseDepthAlignmentFit:
+    """Scale-only alignment plus robust-fit diagnostics.
+
+    ``alignment`` remains the authoritative conversion consumed by dense fusion.
+    The remaining fields expose the exact correspondence/inlier accounting used
+    to produce it so higher-level SfM bridges do not need to duplicate or parse
+    the robust estimator.
+    """
+
+    alignment: DenseDepthAlignment
+    input_correspondences: int
+    valid_correspondences: int
+    inlier_correspondences: int
+    robust_relative_residual_limit: float
+    median_relative_residual: float
+    p90_relative_residual: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.alignment, DenseDepthAlignment):
+            raise TypeError("alignment must be DenseDepthAlignment.")
+        for name in (
+            "input_correspondences",
+            "valid_correspondences",
+            "inlier_correspondences",
+        ):
+            object.__setattr__(
+                self, name, require_nonnegative_int(getattr(self, name), field_name=name)
+            )
+        if self.valid_correspondences > self.input_correspondences:
+            raise ReconstructionValidationError(
+                "valid_correspondences cannot exceed input_correspondences."
+            )
+        if self.inlier_correspondences > self.valid_correspondences:
+            raise ReconstructionValidationError(
+                "inlier_correspondences cannot exceed valid_correspondences."
+            )
+        for name in (
+            "robust_relative_residual_limit",
+            "median_relative_residual",
+            "p90_relative_residual",
+        ):
+            value = float(getattr(self, name))
+            if not isfinite(value) or value < 0.0:
+                raise ReconstructionValidationError(f"{name} must be finite and non-negative.")
+            object.__setattr__(self, name, value)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "alignment": self.alignment.as_dict(),
+            "input_correspondences": self.input_correspondences,
+            "valid_correspondences": self.valid_correspondences,
+            "inlier_correspondences": self.inlier_correspondences,
+            "robust_relative_residual_limit": self.robust_relative_residual_limit,
+            "median_relative_residual": self.median_relative_residual,
+            "p90_relative_residual": self.p90_relative_residual,
+        }
+
+
+def fit_depth_alignment_from_correspondences(
+    depth_values_source_units: object,
+    camera_z_reconstruction_units: object,
+    *,
+    provenance: str,
+    minimum_correspondences: int = 8,
+    maximum_relative_residual: float = 0.35,
+) -> DenseDepthAlignmentFit:
+    """Robustly fit one multiplicative depth-to-reconstruction scale with diagnostics."""
+
+    if isinstance(minimum_correspondences, bool) or int(minimum_correspondences) < 3:
+        raise ReconstructionValidationError("minimum_correspondences must be at least 3.")
+    maximum_relative_residual = float(maximum_relative_residual)
+    if not isfinite(maximum_relative_residual) or not 0.0 < maximum_relative_residual < 1.0:
+        raise ReconstructionValidationError(
+            "maximum_relative_residual must be finite and in (0, 1)."
+        )
+    source = np.asarray(depth_values_source_units, dtype=np.float64).reshape(-1)
+    target = np.asarray(camera_z_reconstruction_units, dtype=np.float64).reshape(-1)
+    if source.shape != target.shape:
+        raise ReconstructionValidationError("Depth/reference correspondence arrays must match.")
+    input_count = int(source.size)
+    valid = np.isfinite(source) & np.isfinite(target) & (source > 0.0) & (target > 0.0)
+    source = source[valid]
+    target = target[valid]
+    valid_count = int(source.size)
+    if source.size < int(minimum_correspondences):
+        raise ReconstructionValidationError(
+            "Insufficient valid sparse/depth correspondences for scale alignment."
+        )
+    ratios = target / source
+    initial = float(np.median(ratios))
+    residual = np.abs(target - source * initial) / np.maximum(target, 1e-12)
+    median_residual = float(np.median(residual))
+    mad_residual = float(np.median(np.abs(residual - median_residual)))
+    robust_limit = min(
+        maximum_relative_residual,
+        max(0.03, median_residual + 3.5 * 1.4826 * mad_residual),
+    )
+    inliers = residual <= robust_limit
+    inlier_count = int(np.count_nonzero(inliers))
+    if inlier_count < int(minimum_correspondences):
+        raise ReconstructionValidationError(
+            "Sparse/depth scale alignment rejected too many correspondences."
+        )
+    factor = float(np.median(target[inliers] / source[inliers]))
+    relative_residual = np.abs(target[inliers] - source[inliers] * factor) / np.maximum(
+        target[inliers], 1e-12
+    )
+    median_final_residual = float(np.median(relative_residual))
+    uncertainty = float(np.quantile(relative_residual, 0.90))
+    if uncertainty > maximum_relative_residual:
+        raise ReconstructionValidationError(
+            "Sparse/depth scale alignment residual exceeds the accepted bound."
+        )
+    alignment = DenseDepthAlignment(
+        mode=DenseDepthAlignmentMode.SPARSE_CORRESPONDENCE_SCALE,
+        scale_to_reconstruction_units=factor,
+        relative_scale_uncertainty=min(uncertainty, 0.999999),
+        provenance=(
+            f"{require_nonempty(provenance, field_name='provenance')};"
+            f"inliers={inlier_count}/{source.size}"
+        ),
+    )
+    return DenseDepthAlignmentFit(
+        alignment=alignment,
+        input_correspondences=input_count,
+        valid_correspondences=valid_count,
+        inlier_correspondences=inlier_count,
+        robust_relative_residual_limit=robust_limit,
+        median_relative_residual=median_final_residual,
+        p90_relative_residual=uncertainty,
+    )
+
+
 def estimate_depth_alignment_from_correspondences(
     depth_values_source_units: object,
     camera_z_reconstruction_units: object,
@@ -185,56 +319,13 @@ def estimate_depth_alignment_from_correspondences(
     is deliberately scale-only; no offset is allowed for projective depth.
     """
 
-    if isinstance(minimum_correspondences, bool) or int(minimum_correspondences) < 3:
-        raise ReconstructionValidationError("minimum_correspondences must be at least 3.")
-    maximum_relative_residual = float(maximum_relative_residual)
-    if not isfinite(maximum_relative_residual) or not 0.0 < maximum_relative_residual < 1.0:
-        raise ReconstructionValidationError(
-            "maximum_relative_residual must be finite and in (0, 1)."
-        )
-    source = np.asarray(depth_values_source_units, dtype=np.float64).reshape(-1)
-    target = np.asarray(camera_z_reconstruction_units, dtype=np.float64).reshape(-1)
-    if source.shape != target.shape:
-        raise ReconstructionValidationError("Depth/reference correspondence arrays must match.")
-    valid = np.isfinite(source) & np.isfinite(target) & (source > 0.0) & (target > 0.0)
-    source = source[valid]
-    target = target[valid]
-    if source.size < int(minimum_correspondences):
-        raise ReconstructionValidationError(
-            "Insufficient valid sparse/depth correspondences for scale alignment."
-        )
-    ratios = target / source
-    initial = float(np.median(ratios))
-    residual = np.abs(target - source * initial) / np.maximum(target, 1e-12)
-    median_residual = float(np.median(residual))
-    mad_residual = float(np.median(np.abs(residual - median_residual)))
-    robust_limit = min(
-        maximum_relative_residual,
-        max(0.03, median_residual + 3.5 * 1.4826 * mad_residual),
-    )
-    inliers = residual <= robust_limit
-    if int(np.count_nonzero(inliers)) < int(minimum_correspondences):
-        raise ReconstructionValidationError(
-            "Sparse/depth scale alignment rejected too many correspondences."
-        )
-    factor = float(np.median(target[inliers] / source[inliers]))
-    relative_residual = np.abs(target[inliers] - source[inliers] * factor) / np.maximum(
-        target[inliers], 1e-12
-    )
-    uncertainty = float(np.quantile(relative_residual, 0.90))
-    if uncertainty > maximum_relative_residual:
-        raise ReconstructionValidationError(
-            "Sparse/depth scale alignment residual exceeds the accepted bound."
-        )
-    return DenseDepthAlignment(
-        mode=DenseDepthAlignmentMode.SPARSE_CORRESPONDENCE_SCALE,
-        scale_to_reconstruction_units=factor,
-        relative_scale_uncertainty=min(uncertainty, 0.999999),
-        provenance=(
-            f"{require_nonempty(provenance, field_name='provenance')};"
-            f"inliers={int(np.count_nonzero(inliers))}/{source.size}"
-        ),
-    )
+    return fit_depth_alignment_from_correspondences(
+        depth_values_source_units,
+        camera_z_reconstruction_units,
+        provenance=provenance,
+        minimum_correspondences=minimum_correspondences,
+        maximum_relative_residual=maximum_relative_residual,
+    ).alignment
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +509,80 @@ class DenseFusionFrame:
             valid_mask=valid_mask,
             pose_layer=pose.layer.value,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DenseFrameProjection:
+    """One already-aligned RGB-D frame projected into reconstruction coordinates.
+
+    This is deliberately pre-fusion evidence. It carries no voxel merging,
+    multi-view support, persistence, metric-scale qualification, or metrology
+    claim. The point coordinates use the same ``T_reconstruction_from_camera``
+    convention consumed by :class:`DenseVoxelFusion`.
+    """
+
+    points_reconstruction: np.ndarray
+    colors_rgb: np.ndarray
+    confidences: np.ndarray
+    sampled_pixels: int
+    valid_depth_samples: int
+
+    def __post_init__(self) -> None:
+        points = np.asarray(self.points_reconstruction, dtype=np.float64)
+        colors = np.asarray(self.colors_rgb, dtype=np.uint8)
+        confidence = np.asarray(self.confidences, dtype=np.float32)
+        if points.ndim != 2 or points.shape[1:] != (3,) or not np.isfinite(points).all():
+            raise ReconstructionValidationError(
+                "points_reconstruction must be a finite Nx3 array."
+            )
+        count = int(points.shape[0])
+        if colors.shape != (count, 3):
+            raise ReconstructionValidationError("colors_rgb must have shape Nx3.")
+        if confidence.shape != (count,) or (
+            count
+            and (
+                not np.isfinite(confidence).all()
+                or np.any(confidence < 0.0)
+                or np.any(confidence > 1.0)
+            )
+        ):
+            raise ReconstructionValidationError(
+                "confidences must contain one finite [0,1] value per point."
+            )
+        sampled = require_nonnegative_int(self.sampled_pixels, field_name="sampled_pixels")
+        valid = require_nonnegative_int(
+            self.valid_depth_samples, field_name="valid_depth_samples"
+        )
+        if valid != count or valid > sampled:
+            raise ReconstructionValidationError(
+                "valid_depth_samples must equal the point count and not exceed sampled_pixels."
+            )
+        object.__setattr__(
+            self, "points_reconstruction", _readonly_array(points, dtype=np.float64)
+        )
+        object.__setattr__(self, "colors_rgb", _readonly_array(colors, dtype=np.uint8))
+        object.__setattr__(
+            self, "confidences", _readonly_array(confidence, dtype=np.float32)
+        )
+        object.__setattr__(self, "sampled_pixels", sampled)
+        object.__setattr__(self, "valid_depth_samples", valid)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "point_count": int(self.points_reconstruction.shape[0]),
+            "sampled_pixels": self.sampled_pixels,
+            "valid_depth_samples": self.valid_depth_samples,
+            "bounds_min_reconstruction": (
+                self.points_reconstruction.min(axis=0).tolist()
+                if self.points_reconstruction.size
+                else None
+            ),
+            "bounds_max_reconstruction": (
+                self.points_reconstruction.max(axis=0).tolist()
+                if self.points_reconstruction.size
+                else None
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -817,12 +982,60 @@ def fuse_dense_frames(
     return fusion.finalize()
 
 
-def _frame_points_in_reconstruction(
+def project_dense_frame_to_reconstruction(
     frame: DenseFusionFrame,
     camera: ReconstructionCamera,
-    policy: DenseFusionPolicy,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    stride = policy.pixel_stride
+    *,
+    pixel_stride: int = 1,
+    minimum_confidence: float = 0.0,
+    minimum_depth_reconstruction_units: float | None = None,
+    maximum_depth_reconstruction_units: float | None = None,
+) -> DenseFrameProjection:
+    """Back-project one aligned RGB-D frame into the canonical reconstruction frame.
+
+    This public primitive intentionally stops before voxel/multi-view fusion.
+    It is suitable for validating one frame, then reused by fusion through the
+    same numerical path. ``depth_alignment`` on ``frame`` remains the only
+    source of depth-to-reconstruction scale; this function never infers metric
+    scale.
+    """
+
+    if not isinstance(frame, DenseFusionFrame):
+        raise TypeError("frame must be DenseFusionFrame.")
+    if not isinstance(camera, ReconstructionCamera):
+        raise TypeError("camera must be ReconstructionCamera.")
+    if isinstance(pixel_stride, bool) or int(pixel_stride) <= 0:
+        raise ReconstructionValidationError("pixel_stride must be a positive integer.")
+    stride = int(pixel_stride)
+    confidence_threshold = float(minimum_confidence)
+    if not isfinite(confidence_threshold) or not 0.0 <= confidence_threshold <= 1.0:
+        raise ReconstructionValidationError("minimum_confidence must be finite in [0,1].")
+
+    minimum_depth = minimum_depth_reconstruction_units
+    if minimum_depth is not None:
+        minimum_depth = float(minimum_depth)
+        if not isfinite(minimum_depth) or minimum_depth <= 0.0:
+            raise ReconstructionValidationError(
+                "minimum_depth_reconstruction_units must be finite and positive."
+            )
+    maximum_depth = maximum_depth_reconstruction_units
+    if maximum_depth is not None:
+        maximum_depth = float(maximum_depth)
+        if not isfinite(maximum_depth) or maximum_depth <= 0.0:
+            raise ReconstructionValidationError(
+                "maximum_depth_reconstruction_units must be finite and positive."
+            )
+    if minimum_depth is not None and maximum_depth is not None and minimum_depth > maximum_depth:
+        raise ReconstructionValidationError(
+            "minimum_depth_reconstruction_units cannot exceed maximum_depth_reconstruction_units."
+        )
+
+    expected_shape = (camera.image_size.height, camera.image_size.width)
+    if frame.depth.shape != expected_shape:
+        raise ReconstructionValidationError(
+            "Dense frame dimensions must match the projection camera image size."
+        )
+
     depth = frame.depth[::stride, ::stride].astype(np.float64, copy=False)
     rgb = frame.rgb[::stride, ::stride]
     height, width = depth.shape
@@ -836,21 +1049,26 @@ def _frame_points_in_reconstruction(
         valid &= frame.valid_mask[::stride, ::stride]
     if frame.confidence is not None:
         confidence_grid = frame.confidence[::stride, ::stride].astype(np.float64, copy=False)
-        valid &= np.isfinite(confidence_grid) & (confidence_grid >= policy.minimum_confidence)
+        valid &= np.isfinite(confidence_grid) & (confidence_grid >= confidence_threshold)
     else:
         confidence_grid = np.ones_like(depth, dtype=np.float64)
-        if policy.minimum_confidence > 0.0:
+        if confidence_threshold > 0.0:
             # Unknown confidence is neutral rather than silently treated as a high-confidence claim.
-            confidence_grid.fill(policy.minimum_confidence)
+            confidence_grid.fill(confidence_threshold)
 
     aligned_depth = depth * frame.depth_alignment.scale_to_reconstruction_units
-    if policy.minimum_depth_reconstruction_units is not None:
-        valid &= aligned_depth >= policy.minimum_depth_reconstruction_units
-    if policy.maximum_depth_reconstruction_units is not None:
-        valid &= aligned_depth <= policy.maximum_depth_reconstruction_units
+    if minimum_depth is not None:
+        valid &= aligned_depth >= minimum_depth
+    if maximum_depth is not None:
+        valid &= aligned_depth <= maximum_depth
     if not np.any(valid):
-        empty3 = np.empty((0, 3), dtype=np.float64)
-        return empty3, np.empty((0, 3), dtype=np.uint8), np.empty((0,), dtype=np.float32), sampled_count
+        return DenseFrameProjection(
+            points_reconstruction=np.empty((0, 3), dtype=np.float64),
+            colors_rgb=np.empty((0, 3), dtype=np.uint8),
+            confidences=np.empty((0,), dtype=np.float32),
+            sampled_pixels=sampled_count,
+            valid_depth_samples=0,
+        )
 
     u = grid_u[valid]
     v = grid_v[valid]
@@ -865,11 +1083,38 @@ def _frame_points_in_reconstruction(
     colors = rgb[valid]
     confidences = np.clip(confidence_grid[valid], 0.0, 1.0).astype(np.float32)
     finite_points = np.isfinite(points_reconstruction).all(axis=1)
+    points_reconstruction = np.ascontiguousarray(
+        points_reconstruction[finite_points], dtype=np.float64
+    )
+    colors = np.ascontiguousarray(colors[finite_points], dtype=np.uint8)
+    confidences = np.ascontiguousarray(confidences[finite_points], dtype=np.float32)
+    return DenseFrameProjection(
+        points_reconstruction=points_reconstruction,
+        colors_rgb=colors,
+        confidences=confidences,
+        sampled_pixels=sampled_count,
+        valid_depth_samples=int(points_reconstruction.shape[0]),
+    )
+
+
+def _frame_points_in_reconstruction(
+    frame: DenseFusionFrame,
+    camera: ReconstructionCamera,
+    policy: DenseFusionPolicy,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    projection = project_dense_frame_to_reconstruction(
+        frame,
+        camera,
+        pixel_stride=policy.pixel_stride,
+        minimum_confidence=policy.minimum_confidence,
+        minimum_depth_reconstruction_units=policy.minimum_depth_reconstruction_units,
+        maximum_depth_reconstruction_units=policy.maximum_depth_reconstruction_units,
+    )
     return (
-        np.ascontiguousarray(points_reconstruction[finite_points], dtype=np.float64),
-        np.ascontiguousarray(colors[finite_points], dtype=np.uint8),
-        np.ascontiguousarray(confidences[finite_points], dtype=np.float32),
-        sampled_count,
+        projection.points_reconstruction,
+        projection.colors_rgb,
+        projection.confidences,
+        projection.sampled_pixels,
     )
 
 

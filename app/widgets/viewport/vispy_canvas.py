@@ -398,6 +398,7 @@ class ReconstructionCanvas(QObject):
     MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
     MAX_CANONICAL_CAMERA_FRUSTUMS = 192
     MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
+    MAX_DENSE_RGB_DISPLAY_POINTS = 250_000
     MAX_SEMANTIC_OBJECT_DISPLAY = 256
     MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
     CANONICAL_INSPECTION_OVERLAY_FONT_SIZE = 14.0
@@ -432,6 +433,10 @@ class ReconstructionCanvas(QObject):
         # Phase 9.3F layer switches are presentation-only session preferences.
         # They never unload evidence or change reconstruction/measurement authority.
         self._canonical_mesh_layer_visible = True
+        # Phase H adds persisted Dense RGB Points as a first-class canonical
+        # presentation layer. Visibility is presentation-only and never changes
+        # the Phase-G geometry/scale/measurement authority contract.
+        self._dense_rgb_points_layer_visible = True
         self._canonical_camera_frustums_layer_visible = True
         self._canonical_camera_trajectory_layer_visible = True
         self._semantic_support_layer_visible = True
@@ -532,6 +537,23 @@ class ReconstructionCanvas(QObject):
         # canonical authority remains with PersistentReconstructionScene.
         self._canonical_mesh = scene.visuals.Mesh(parent=self._view.scene, shading="smooth")
         self._canonical_mesh.visible = False
+        # Phase H renders the integrity-verified Phase-G Dense RGB Points in the
+        # same Reconstruction SceneCanvas. The visual is bounded and presentation-
+        # only; the persistent G bundle remains the canonical evidence source.
+        self._dense_rgb_points = scene.visuals.Markers(parent=self._view.scene)
+        self._dense_rgb_points.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._dense_rgb_points.antialias = 0.5
+        self._dense_rgb_points.visible = False
+        self._dense_rgb_loaded = False
+        self._dense_rgb_scene_id = ""
+        self._dense_rgb_representation = ""
+        self._dense_rgb_source_path = ""
+        self._dense_rgb_total_count = 0
+        self._dense_rgb_display_count = 0
+        self._dense_rgb_bounds_min = None
+        self._dense_rgb_bounds_max = None
+        self._dense_rgb_fit_bounds_min = None
+        self._dense_rgb_fit_bounds_max = None
         # Phase 9.4E renders persisted Gaussian appearance as bounded VisPy
         # point splats. The visual is presentation-only; canonical mesh arrays
         # remain loaded and authoritative for all picking/measurement.
@@ -1123,6 +1145,108 @@ class ReconstructionCanvas(QObject):
             self._offline_sparse_envelope_visible
             and self._offline_sparse_envelope_available
             and self._offline_visualization_loaded
+        )
+        self._canvas.update()
+
+    def set_dense_rgb_points(
+        self,
+        points_reconstruction: np.ndarray,
+        colors_rgb: np.ndarray,
+        *,
+        scene_id: str,
+        representation: str,
+        source_path: str,
+    ) -> None:
+        """Display verified persistent Dense RGB Points in the canonical viewer.
+
+        The input stays in arbitrary-gauge reconstruction coordinates. This
+        method performs only the existing presentation axis conversion and a
+        deterministic display budget; it never estimates scale or starts a
+        reconstruction backend.
+        """
+        from app.reconstruction_visualization import sparse_landmarks_to_viewer
+
+        points = np.asarray(points_reconstruction, dtype=np.float64)
+        colors = np.asarray(colors_rgb, dtype=np.uint8)
+        if points.ndim != 2 or points.shape[1:] != (3,) or points.shape[0] < 1:
+            raise ValueError("Dense RGB points must be a non-empty (N, 3) array.")
+        if colors.shape != points.shape:
+            raise ValueError("Dense RGB colors must align with points as (N, 3).")
+        if not np.isfinite(points).all():
+            raise ValueError("Dense RGB points must be finite.")
+        scene_key = str(scene_id).strip()
+        rep = str(representation).strip().lower()
+        source = str(source_path).strip()
+        if not scene_key or not source or rep not in {"extended", "core"}:
+            raise ValueError("Dense RGB scene identity, representation and source path are required.")
+
+        viewer_all = np.ascontiguousarray(sparse_landmarks_to_viewer(points), dtype=np.float32)
+        total = int(viewer_all.shape[0])
+        if total > self.MAX_DENSE_RGB_DISPLAY_POINTS:
+            rng = np.random.default_rng(0)
+            indices = np.sort(
+                rng.choice(total, size=self.MAX_DENSE_RGB_DISPLAY_POINTS, replace=False)
+            )
+            viewer = np.ascontiguousarray(viewer_all[indices])
+            display_colors = np.ascontiguousarray(colors[indices])
+        else:
+            viewer = viewer_all
+            display_colors = np.ascontiguousarray(colors)
+        color_float = np.ascontiguousarray(display_colors.astype(np.float32) / 255.0)
+        self._dense_rgb_points.set_data(
+            pos=viewer,
+            face_color=color_float,
+            size=DEFAULT_POINT_SIZE,
+            edge_width=0.0,
+        )
+        self._dense_rgb_loaded = True
+        self._dense_rgb_points.visible = bool(self._dense_rgb_points_layer_visible)
+        self._dense_rgb_scene_id = scene_key
+        self._dense_rgb_representation = rep
+        self._dense_rgb_source_path = source
+        self._dense_rgb_total_count = total
+        self._dense_rgb_display_count = int(viewer.shape[0])
+        self._dense_rgb_bounds_min = viewer_all.min(axis=0).astype(np.float32)
+        self._dense_rgb_bounds_max = viewer_all.max(axis=0).astype(np.float32)
+        from app.reconstruction_dense_rgb_ui import robust_dense_rgb_fit_bounds
+
+        fit_lower, fit_upper = robust_dense_rgb_fit_bounds(viewer_all)
+        self._dense_rgb_fit_bounds_min = np.asarray(fit_lower, dtype=np.float32)
+        self._dense_rgb_fit_bounds_max = np.asarray(fit_upper, dtype=np.float32)
+        self._refresh_world_axis_scale()
+        self._canvas.update()
+
+    def clear_dense_rgb_points(self, *, update_canvas: bool = True) -> None:
+        self._dense_rgb_points.visible = False
+        if self._dense_rgb_loaded:
+            # Detach/recreate the marker node to release GL buffers at a real
+            # persistent-scene unload boundary, mirroring Gaussian lifecycle
+            # hardening while keeping ordinary representation switches bounded.
+            self._dense_rgb_points.parent = None
+            self._dense_rgb_points = scene.visuals.Markers(parent=self._view.scene)
+            self._dense_rgb_points.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+            self._dense_rgb_points.antialias = 0.5
+            self._dense_rgb_points.visible = False
+        else:
+            self._dense_rgb_points.set_data(pos=np.zeros((0, 3), dtype=np.float32))
+        self._dense_rgb_loaded = False
+        self._dense_rgb_scene_id = ""
+        self._dense_rgb_representation = ""
+        self._dense_rgb_source_path = ""
+        self._dense_rgb_total_count = 0
+        self._dense_rgb_display_count = 0
+        self._dense_rgb_bounds_min = None
+        self._dense_rgb_bounds_max = None
+        self._dense_rgb_fit_bounds_min = None
+        self._dense_rgb_fit_bounds_max = None
+        self._refresh_world_axis_scale()
+        if update_canvas:
+            self._canvas.update()
+
+    def set_dense_rgb_points_visible(self, visible: bool) -> None:
+        self._dense_rgb_points_layer_visible = bool(visible)
+        self._dense_rgb_points.visible = bool(
+            self._dense_rgb_loaded and self._dense_rgb_points_layer_visible
         )
         self._canvas.update()
 
@@ -2204,6 +2328,19 @@ class ReconstructionCanvas(QObject):
         if self._canonical_camera_positions.size:
             groups.append(np.asarray(self._canonical_camera_positions, dtype=np.float64))
         if (
+            self._dense_rgb_loaded
+            and self._dense_rgb_bounds_min is not None
+            and self._dense_rgb_bounds_max is not None
+        ):
+            lower = np.asarray(self._dense_rgb_bounds_min, dtype=np.float64)
+            upper = np.asarray(self._dense_rgb_bounds_max, dtype=np.float64)
+            groups.append(
+                np.asarray(
+                    [[x, y, z] for x in (lower[0], upper[0]) for y in (lower[1], upper[1]) for z in (lower[2], upper[2])],
+                    dtype=np.float64,
+                )
+            )
+        if (
             self._canonical_mesh_loaded
             and self._canonical_mesh_bounds_min is not None
             and self._canonical_mesh_bounds_max is not None
@@ -2303,6 +2440,41 @@ class ReconstructionCanvas(QObject):
         ):
             visual.visible = self._axes_visible
 
+    def fit_dense_rgb_points(self) -> None:
+        """Fit only the loaded Dense RGB representation using robust bounds.
+
+        Sparse landmarks, cameras and a small extreme-point tail are ignored for
+        framing only. The actual Dense RGB cloud is never cropped or modified,
+        and the current azimuth/elevation/FOV are preserved.
+        """
+
+        if not self._dense_rgb_loaded:
+            return
+        lower = self._dense_rgb_fit_bounds_min
+        upper = self._dense_rgb_fit_bounds_max
+        if lower is None or upper is None:
+            lower = self._dense_rgb_bounds_min
+            upper = self._dense_rgb_bounds_max
+        if lower is None or upper is None:
+            return
+        lower64 = np.asarray(lower, dtype=np.float64)
+        upper64 = np.asarray(upper, dtype=np.float64)
+        if (
+            lower64.shape != (3,)
+            or upper64.shape != (3,)
+            or not np.isfinite(lower64).all()
+            or not np.isfinite(upper64).all()
+        ):
+            return
+        center = (lower64 + upper64) * 0.5
+        span = np.maximum(upper64 - lower64, 0.0)
+        diagonal = float(np.linalg.norm(span))
+        radius = max(diagonal * 0.5, 0.5)
+        self._camera.center = tuple(float(v) for v in center)
+        # ~1.3x robust diagonal: safe perspective framing with a modest margin.
+        self._camera.distance = max(radius * 2.6, 1.5)
+        self._camera.view_changed()
+
     def fit_scene(self) -> None:
         groups: list[np.ndarray] = []
         if self._trajectory_positions:
@@ -2313,6 +2485,19 @@ class ReconstructionCanvas(QObject):
             groups.append(np.asarray(self._keyframe_positions, dtype=np.float64))
         if self._canonical_camera_positions.size:
             groups.append(np.asarray(self._canonical_camera_positions, dtype=np.float64))
+        if (
+            self._dense_rgb_loaded
+            and self._dense_rgb_bounds_min is not None
+            and self._dense_rgb_bounds_max is not None
+        ):
+            lower = np.asarray(self._dense_rgb_bounds_min, dtype=np.float64)
+            upper = np.asarray(self._dense_rgb_bounds_max, dtype=np.float64)
+            groups.append(
+                np.asarray(
+                    [[x, y, z] for x in (lower[0], upper[0]) for y in (lower[1], upper[1]) for z in (lower[2], upper[2])],
+                    dtype=np.float64,
+                )
+            )
         if (
             self._canonical_mesh_loaded
             and self._canonical_mesh_bounds_min is not None
@@ -2667,6 +2852,47 @@ class ReconstructionCanvas(QObject):
         return bool(self._canonical_inspection_overlay_layer_visible)
 
     @property
+    def dense_rgb_points_loaded(self) -> bool:
+        return bool(self._dense_rgb_loaded)
+
+    @property
+    def dense_rgb_points_visible(self) -> bool:
+        return bool(self._dense_rgb_loaded and self._dense_rgb_points.visible)
+
+    @property
+    def dense_rgb_points_layer_visible(self) -> bool:
+        return bool(self._dense_rgb_points_layer_visible)
+
+    @property
+    def dense_rgb_scene_id(self) -> str:
+        return self._dense_rgb_scene_id
+
+    @property
+    def dense_rgb_representation(self) -> str:
+        return self._dense_rgb_representation
+
+    @property
+    def dense_rgb_source_path(self) -> str:
+        return self._dense_rgb_source_path
+
+    @property
+    def dense_rgb_total_count(self) -> int:
+        return int(self._dense_rgb_total_count)
+
+    @property
+    def dense_rgb_display_count(self) -> int:
+        return int(self._dense_rgb_display_count)
+
+    @property
+    def dense_rgb_bounds(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if self._dense_rgb_bounds_min is None or self._dense_rgb_bounds_max is None:
+            return None
+        return (
+            np.asarray(self._dense_rgb_bounds_min, dtype=np.float32).copy(),
+            np.asarray(self._dense_rgb_bounds_max, dtype=np.float32).copy(),
+        )
+
+    @property
     def canonical_mesh_loaded(self) -> bool:
         return bool(self._canonical_mesh_loaded)
 
@@ -2906,5 +3132,6 @@ class ReconstructionCanvas(QObject):
         self._closed = True
         self.clear_canonical_camera_trajectory(update_canvas=False)
         self.clear_canonical_semantic_objects(update_canvas=False)
+        self.clear_dense_rgb_points(update_canvas=False)
         self.clear_canonical_mesh(update_canvas=False)
         self._canvas.close()

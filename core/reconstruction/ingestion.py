@@ -42,7 +42,12 @@ from core.reconstruction.quality import (
     FrameQualityPolicy,
     analyze_frame_quality,
 )
-from core.reconstruction.sampling import FrameSampler, FrameSamplingPolicy
+from core.reconstruction.sampling import (
+    FrameSampler,
+    FrameSamplingPlan,
+    FrameSamplingPolicy,
+    build_frame_sampling_plan,
+)
 from core.reconstruction.session import ReconstructionSession
 from core.reconstruction.sources import (
     DecodedFrameCandidate,
@@ -122,6 +127,7 @@ class ReconstructionIngestionResult:
     keyframe_images: tuple[CachedKeyframeImage, ...]
     cache_policy: IngestionCachePolicy
     cache_stats: FrameCacheStats
+    sampling_plan: FrameSamplingPlan
     elapsed_ns: int
 
     def __post_init__(self) -> None:
@@ -143,6 +149,8 @@ class ReconstructionIngestionResult:
             raise TypeError("cache_policy must be an IngestionCachePolicy.")
         if not isinstance(self.cache_stats, FrameCacheStats):
             raise TypeError("cache_stats must be FrameCacheStats.")
+        if not isinstance(self.sampling_plan, FrameSamplingPlan):
+            raise TypeError("sampling_plan must be a FrameSamplingPlan.")
         if isinstance(self.elapsed_ns, bool) or int(self.elapsed_ns) < 0:
             raise ReconstructionValidationError("elapsed_ns must be non-negative.")
         frame_ids = [record.frame.frame_id for record in records]
@@ -201,6 +209,7 @@ class ReconstructionIngestionResult:
             "keyframes": [item.as_dict() for item in self.keyframes],
             "cache_policy": self.cache_policy.as_dict(),
             "cache_stats": self.cache_stats.as_dict(),
+            "sampling_plan": self.sampling_plan.as_dict(),
         }
 
     def apply_to_session(self, session: ReconstructionSession) -> None:
@@ -362,7 +371,12 @@ class ReconstructionIngestionPipeline:
             quality_policy=self.quality_policy,
             duplicate_history=self.duplicate_history,
         )
-        sampler = FrameSampler(self.sampling_policy)
+        sampling_plan = build_frame_sampling_plan(
+            self.sampling_policy,
+            estimated_total_frames=self.source.estimated_total_frames,
+            expected_frame_rate_hz=self.source.metadata.expected_frame_rate_hz,
+        )
+        sampler = FrameSampler(self.sampling_policy, plan=sampling_plan)
         selector = KeyframeSelector(self.keyframe_policy)
         cache = BoundedFrameCache(self.cache_policy)
         records: list[FrameIngestionRecord] = []
@@ -461,6 +475,8 @@ class ReconstructionIngestionPipeline:
                     "read_issues": len(issues),
                     "sampled_frames": sampler.selected_count,
                     "keyframes": len(selector.keyframes),
+                    "sampling_plan_mode": sampling_plan.mode.value,
+                    "full_span_cap_active": sampling_plan.full_span_cap_active,
                 },
             )
 
@@ -477,5 +493,6 @@ class ReconstructionIngestionPipeline:
             keyframe_images=keyframe_images,
             cache_policy=self.cache_policy,
             cache_stats=cache.stats,
+            sampling_plan=sampling_plan,
             elapsed_ns=monotonic_ns() - start_ns,
         )

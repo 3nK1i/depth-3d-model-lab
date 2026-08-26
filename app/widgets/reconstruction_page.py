@@ -128,6 +128,11 @@ from app.reconstruction_canonical_inspection_overlays import (
     CanonicalObjectInspectionOverlayPresentation,
     build_canonical_object_inspection_overlay,
 )
+from app.reconstruction_dense_rgb_ui import (
+    DenseRgbUiLoadResult,
+    DenseRgbUiPresentation,
+    load_dense_rgb_ui_representation,
+)
 from app.measurement_canonical_registration_presentation import (
     MeasurementCanonicalRegistrationPresentation,
 )
@@ -344,6 +349,7 @@ from core.reconstruction import (
     load_live_camera_calibration,
     verify_reconstruction_export_bundle,
 )
+from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.calibration_application import apply_camera_calibration_profile
 from core.reconstruction.calibration_management import CameraCalibrationProfileStore
 from core.reconstruction.calibration_profile import (
@@ -378,6 +384,7 @@ class ReconstructionPage(QWidget):
     canonical_inspection_overlay_changed = pyqtSignal(object)
     canonical_measurement_registration_changed = pyqtSignal(object)
     dense_provider_presentation_changed = pyqtSignal(object)
+    dense_rgb_presentation_changed = pyqtSignal(object)
     failure_recovery_changed = pyqtSignal(object)
     reconstruction_session_model_changed = pyqtSignal(object)
     viewport_fullscreen_requested = pyqtSignal()
@@ -430,6 +437,16 @@ class ReconstructionPage(QWidget):
         self._canonical_measurement_registration_presentation: MeasurementCanonicalRegistrationPresentation | None = None
         self._dense_provider_presentation: DenseProviderPresentation | None = None
         self._selected_dense_provider_id = ""
+        # Phase H consumes only the integrity-verified, self-contained Phase-G
+        # Dense RGB bundle. It is intentionally independent from the older
+        # PersistentReconstructionScene contract so Dense RGB Points can become
+        # a first-class canonical representation without fabricating mesh or
+        # semantic artifacts that belong to later phases.
+        self._dense_rgb_ui_load: DenseRgbUiLoadResult | None = None
+        self._dense_rgb_presentation: DenseRgbUiPresentation | None = None
+        self._dense_rgb_manifest_path: Path | None = None
+        self._dense_rgb_representation = "extended"
+        self._dense_rgb_last_error = ""
         self._scene_runtime_health: ReconstructionSceneRuntimeHealth | None = None
         self._scene_bind_count = 0
         self._same_scene_reload_count = 0
@@ -3235,6 +3252,206 @@ class ReconstructionPage(QWidget):
             self.canonical_scene_presentation_changed.emit(presentation)
 
     @property
+    def dense_rgb_presentation(self) -> DenseRgbUiPresentation | None:
+        return self._dense_rgb_presentation
+
+    @property
+    def dense_rgb_manifest_path(self) -> Path | None:
+        return self._dense_rgb_manifest_path
+
+    @property
+    def dense_rgb_representation(self) -> str:
+        return self._dense_rgb_representation
+
+    def _refresh_dense_rgb_presentation_controls(self) -> None:
+        if not hasattr(self, "_dense_rgb_scene_value"):
+            return
+        presentation = self._dense_rgb_presentation
+        loaded = bool(presentation is not None and self._reconstruction_canvas.dense_rgb_points_loaded)
+        self._dense_rgb_representation_combo.setEnabled(loaded)
+        self._dense_rgb_fit_button.setEnabled(loaded)
+        self._dense_rgb_unload_button.setEnabled(loaded)
+        if not loaded:
+            self._dense_rgb_scene_value.setText("No persistent Dense RGB scene")
+            self._dense_rgb_scene_value.setToolTip(self._dense_rgb_last_error)
+            self._dense_rgb_points_value.setText("—")
+            self._dense_rgb_views_value.setText("—")
+            self._dense_rgb_support_value.setText("—")
+            self._dense_rgb_voxel_value.setText("—")
+            self._dense_rgb_quality_value.setText("—")
+            self._dense_rgb_scale_value.setText("Arbitrary SfM gauge • metric scale NOT claimed")
+            self._dense_rgb_authority_value.setText("No Dense RGB canonical geometry loaded")
+            self._dense_rgb_state_value.setText(
+                "Persistent Dense RGB load rejected" if self._dense_rgb_last_error else "Waiting for persistent G bundle"
+            )
+            self._dense_rgb_state_value.setToolTip(self._dense_rgb_last_error)
+            return
+
+        self._dense_rgb_scene_value.setText(presentation.scene_text)
+        self._dense_rgb_scene_value.setToolTip(
+            f"Fingerprint: {presentation.scene_fingerprint_sha256}\nManifest: {presentation.manifest_path}"
+        )
+        desired = self._dense_rgb_representation_combo.findData(presentation.representation)
+        if desired >= 0 and desired != self._dense_rgb_representation_combo.currentIndex():
+            self._dense_rgb_representation_combo.blockSignals(True)
+            self._dense_rgb_representation_combo.setCurrentIndex(desired)
+            self._dense_rgb_representation_combo.blockSignals(False)
+        self._dense_rgb_points_value.setText(presentation.points_text)
+        self._dense_rgb_views_value.setText(presentation.views_text)
+        self._dense_rgb_support_value.setText(presentation.support_text)
+        self._dense_rgb_voxel_value.setText(presentation.voxel_text)
+        self._dense_rgb_quality_value.setText(presentation.quality_text)
+        self._dense_rgb_scale_value.setText(presentation.scale_text)
+        self._dense_rgb_authority_value.setText(presentation.authority_text)
+        self._dense_rgb_state_value.setText(presentation.state_text)
+        self._dense_rgb_state_value.setToolTip(
+            "Phase H loads only the verified Phase-G bundle. DA3/PyCOLMAP are not started; "
+            "metric scale, measurement authority and surface mesh remain unpromoted."
+        )
+
+    def _apply_dense_rgb_ui_load(
+        self,
+        load_result: DenseRgbUiLoadResult,
+        *,
+        fit_scene: bool,
+    ) -> None:
+        if not isinstance(load_result, DenseRgbUiLoadResult):
+            raise TypeError("load_result must be DenseRgbUiLoadResult.")
+        geometry = load_result.geometry
+        presentation = load_result.presentation
+        # The G manifest was integrity-verified before this call. The viewport
+        # receives only canonical XYZ/RGB arrays and performs its existing
+        # presentation-only reconstruction→viewer axis conversion.
+        self._reconstruction_canvas.set_dense_rgb_points(
+            geometry.points_reconstruction,
+            geometry.colors_rgb,
+            scene_id=presentation.scene_id,
+            representation=presentation.representation,
+            source_path=str(load_result.manifest_path),
+        )
+        self._dense_rgb_ui_load = load_result
+        self._dense_rgb_presentation = presentation
+        self._dense_rgb_manifest_path = load_result.manifest_path
+        self._dense_rgb_representation = presentation.representation
+        self._dense_rgb_last_error = ""
+        self._viewport_placeholder.setVisible(False)
+        self._refresh_dense_rgb_presentation_controls()
+        self._refresh_scene_layer_controls()
+        self._refresh_viewport_state()
+        if fit_scene:
+            fit_dense = getattr(
+                self._reconstruction_canvas,
+                "fit_dense_rgb_points",
+                self._reconstruction_canvas.fit_scene,
+            )
+            fit_dense()
+            self._visualizer_fitted_once = True
+        self.dense_rgb_presentation_changed.emit(presentation)
+
+    def set_persistent_dense_rgb_scene(
+        self,
+        path: str | Path,
+        *,
+        representation: str = "extended",
+        fit_scene: bool = True,
+    ) -> bool:
+        """Load one integrity-verified Phase-G Dense RGB bundle into the UI.
+
+        The new scene is fully verified and restored before the current Dense RGB
+        presentation is touched. A failed new load therefore preserves any
+        previously working Dense RGB scene instead of leaving the viewport empty.
+        """
+
+        try:
+            load_result = load_dense_rgb_ui_representation(
+                path,
+                representation=representation,
+            )
+        except (OSError, ValueError, TypeError, ReconstructionValidationError) as exc:
+            self._dense_rgb_last_error = str(exc)
+            if self._dense_rgb_presentation is None:
+                self._refresh_dense_rgb_presentation_controls()
+            raise ReconstructionValidationError(
+                f"Persistent Dense RGB scene rejected: {exc}"
+            ) from exc
+        self._apply_dense_rgb_ui_load(load_result, fit_scene=bool(fit_scene))
+        return True
+
+    def _load_dense_rgb_scene_interaction(self) -> None:
+        start_dir = ""
+        if self._dense_rgb_manifest_path is not None:
+            start_dir = str(self._dense_rgb_manifest_path.parent)
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Load Persistent Dense RGB Scene",
+            start_dir,
+        )
+        if not selected:
+            return
+        try:
+            self.set_persistent_dense_rgb_scene(
+                selected,
+                representation=self._dense_rgb_representation or "extended",
+                fit_scene=True,
+            )
+        except ReconstructionValidationError as exc:
+            QMessageBox.critical(
+                self,
+                "Dense RGB Scene Rejected",
+                str(exc),
+            )
+
+    def _on_dense_rgb_representation_changed(self, index: int) -> None:
+        if self._dense_rgb_manifest_path is None or self._dense_rgb_presentation is None:
+            return
+        representation = self._dense_rgb_representation_combo.itemData(int(index))
+        if representation not in {"extended", "core"}:
+            return
+        if representation == self._dense_rgb_representation:
+            return
+        try:
+            # Representation changes replace only the marker payload and preserve
+            # orbit/pan/zoom. A user can press Fit explicitly when desired.
+            self.set_persistent_dense_rgb_scene(
+                self._dense_rgb_manifest_path,
+                representation=str(representation),
+                fit_scene=False,
+            )
+        except ReconstructionValidationError as exc:
+            # Restore the combo selection to the last verified representation.
+            current = self._dense_rgb_representation_combo.findData(self._dense_rgb_representation)
+            if current >= 0:
+                self._dense_rgb_representation_combo.blockSignals(True)
+                self._dense_rgb_representation_combo.setCurrentIndex(current)
+                self._dense_rgb_representation_combo.blockSignals(False)
+            QMessageBox.critical(self, "Dense RGB Representation Rejected", str(exc))
+
+    def _fit_dense_rgb_scene(self) -> None:
+        if not self._reconstruction_canvas.dense_rgb_points_loaded:
+            return
+        fit_dense = getattr(
+            self._reconstruction_canvas,
+            "fit_dense_rgb_points",
+            self._reconstruction_canvas.fit_scene,
+        )
+        fit_dense()
+        self._visualizer_fitted_once = True
+        self._refresh_viewport_state()
+
+    def clear_persistent_dense_rgb_scene(self) -> None:
+        if hasattr(self, "_reconstruction_canvas"):
+            self._reconstruction_canvas.clear_dense_rgb_points()
+        self._dense_rgb_ui_load = None
+        self._dense_rgb_presentation = None
+        self._dense_rgb_manifest_path = None
+        self._dense_rgb_representation = "extended"
+        self._dense_rgb_last_error = ""
+        self._refresh_dense_rgb_presentation_controls()
+        self._refresh_scene_layer_controls()
+        self._refresh_viewport_state()
+        self.dense_rgb_presentation_changed.emit(None)
+
+    @property
     def canonical_viewer_mesh(self) -> CanonicalViewerMesh | None:
         return self._canonical_viewer_mesh
 
@@ -5359,6 +5576,117 @@ class ReconstructionPage(QWidget):
         layout.addWidget(self._canonical_scene_group)
         self._refresh_canonical_scene_presentation()
 
+        # Phase H makes the Phase-G persistent Dense RGB Points bundle a
+        # first-class canonical representation in the existing professional
+        # Reconstruction workspace. This is UI integration only: the verified
+        # bundle remains the source of truth, no DA3/PyCOLMAP backend is started,
+        # metric/measurement authority stays unpromoted, and no mesh is created.
+        self._dense_rgb_group = self._settings_group("DENSE RGB POINTS")
+        dense_rgb_layout = self._dense_rgb_group.content_layout
+        dense_rgb_hint = QLabel(
+            "Persistent canonical geometry • verified G bundle • Extended/Core visibility only."
+        )
+        dense_rgb_hint.setObjectName("reconstructionSettingsHint")
+        dense_rgb_hint.setWordWrap(True)
+        dense_rgb_hint.setMinimumWidth(0)
+        dense_rgb_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        dense_rgb_layout.addWidget(dense_rgb_hint)
+        self._dense_rgb_scene_value = self._settings_value("No persistent Dense RGB scene")
+        self._dense_rgb_points_value = self._settings_value("—")
+        self._dense_rgb_views_value = self._settings_value("—")
+        self._dense_rgb_support_value = self._settings_value("—")
+        self._dense_rgb_voxel_value = self._settings_value("—")
+        self._dense_rgb_quality_value = self._settings_value("—")
+        self._dense_rgb_scale_value = self._settings_value("Arbitrary SfM gauge • metric scale NOT claimed")
+        self._dense_rgb_authority_value = self._settings_value(
+            "No Dense RGB canonical geometry loaded"
+        )
+        self._dense_rgb_state_value = self._settings_value("Waiting for persistent G bundle")
+        self._add_status_row(dense_rgb_layout, "Scene", self._dense_rgb_scene_value)
+
+        representation_row = QHBoxLayout()
+        representation_row.setSpacing(8)
+        representation_label = QLabel("Representation")
+        representation_label.setObjectName("reconstructionRowLabel")
+        representation_label.setMinimumWidth(0)
+        representation_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        representation_row.addWidget(representation_label, 0, Qt.AlignmentFlag.AlignTop)
+        self._dense_rgb_representation_combo = QComboBox()
+        self._dense_rgb_representation_combo.setObjectName("reconstructionDenseRgbRepresentationCombo")
+        self._dense_rgb_representation_combo.setAccessibleName("Dense RGB representation")
+        self._dense_rgb_representation_combo.setToolTip(
+            "Switch between the persisted Extended primary cloud and the stricter Core cloud. "
+            "Switching changes only presentation; persistent authority and scale state are unchanged."
+        )
+        self._dense_rgb_representation_combo.addItem("Extended (primary)", "extended")
+        self._dense_rgb_representation_combo.addItem("Core (high confidence)", "core")
+        # Preserve the long-standing 1366px sidebar contract: combo contents
+        # must never establish a horizontal minimum wider than the scroll viewport.
+        self._dense_rgb_representation_combo.setMinimumWidth(0)
+        self._dense_rgb_representation_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self._dense_rgb_representation_combo.setEnabled(False)
+        self._dense_rgb_representation_combo.currentIndexChanged.connect(
+            self._on_dense_rgb_representation_changed
+        )
+        representation_row.addWidget(self._dense_rgb_representation_combo, 1, Qt.AlignmentFlag.AlignTop)
+        dense_rgb_layout.addLayout(representation_row)
+
+        self._add_status_row(dense_rgb_layout, "Points", self._dense_rgb_points_value)
+        self._add_status_row(dense_rgb_layout, "Views", self._dense_rgb_views_value)
+        self._add_status_row(dense_rgb_layout, "Support", self._dense_rgb_support_value)
+        self._add_status_row(dense_rgb_layout, "Voxel", self._dense_rgb_voxel_value)
+        self._add_status_row(dense_rgb_layout, "Quality", self._dense_rgb_quality_value)
+        self._add_status_row(dense_rgb_layout, "Scale", self._dense_rgb_scale_value)
+        self._add_status_row(dense_rgb_layout, "Authority", self._dense_rgb_authority_value)
+        self._add_status_row(dense_rgb_layout, "State", self._dense_rgb_state_value)
+
+        # Keep the primary load action fully readable at the supported 1366px
+        # workspace width.  A three-button single row forced Qt to elide the
+        # long "Load Dense Scene" label after the horizontal-overflow fix.
+        # Using a compact two-row action stack preserves the zero-horizontal-
+        # scroll contract without shrinking text or renaming the user action.
+        dense_rgb_actions = QVBoxLayout()
+        dense_rgb_actions.setSpacing(6)
+        self._dense_rgb_load_button = QPushButton("Load Dense Scene")
+        self._dense_rgb_load_button.setObjectName("reconstructionDenseRgbLoadButton")
+        self._dense_rgb_load_button.setToolTip(
+            "Load and integrity-verify a self-contained Phase-G persistent Dense RGB scene bundle. "
+            "Loading does not run reconstruction backends."
+        )
+        self._dense_rgb_load_button.clicked.connect(self._load_dense_rgb_scene_interaction)
+        self._dense_rgb_fit_button = QPushButton("Fit")
+        self._dense_rgb_fit_button.setObjectName("reconstructionDenseRgbFitButton")
+        self._dense_rgb_fit_button.setToolTip("Fit the existing Reconstruction viewport to the loaded Dense RGB geometry.")
+        self._dense_rgb_fit_button.clicked.connect(self._fit_dense_rgb_scene)
+        self._dense_rgb_unload_button = QPushButton("Unload")
+        self._dense_rgb_unload_button.setObjectName("reconstructionDenseRgbUnloadButton")
+        self._dense_rgb_unload_button.setToolTip(
+            "Unload only the Dense RGB presentation layer. The persistent G bundle on disk and all authority metadata remain unchanged."
+        )
+        self._dense_rgb_unload_button.clicked.connect(self.clear_persistent_dense_rgb_scene)
+
+        for button in (
+            self._dense_rgb_load_button,
+            self._dense_rgb_fit_button,
+            self._dense_rgb_unload_button,
+        ):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+        # Primary action receives the whole available sidebar width.  Secondary
+        # viewport actions remain side by side below it.
+        dense_rgb_actions.addWidget(self._dense_rgb_load_button)
+        dense_rgb_secondary_actions = QHBoxLayout()
+        dense_rgb_secondary_actions.setSpacing(6)
+        dense_rgb_secondary_actions.addWidget(self._dense_rgb_fit_button, 1)
+        dense_rgb_secondary_actions.addWidget(self._dense_rgb_unload_button, 1)
+        dense_rgb_actions.addLayout(dense_rgb_secondary_actions)
+        dense_rgb_layout.addLayout(dense_rgb_actions)
+        layout.addWidget(self._dense_rgb_group)
+        self._refresh_dense_rgb_presentation_controls()
+
         # Phase 9.6E0 keeps estimated ruler scale explicitly separate from the
         # canonical scene's metric authority. One approximate physical ruler
         # reference may provide a useful metre estimate with explicit uncertainty,
@@ -5426,6 +5754,38 @@ class ReconstructionPage(QWidget):
             "Show or hide the already-materialized authoritative canonical surface. Hiding it never unloads or demotes the canonical artifact.",
             callback=self._reconstruction_canvas.set_canonical_mesh_visible,
         )
+        # Phase H adds Dense RGB visibility without extending the legacy
+        # _scene_layer_toggles registry. Phase 9.3F consumers treat that mapping
+        # as a stable compatibility contract with an exact key set, so H owns a
+        # dedicated toggle while presenting it in the same SCENE LAYERS group.
+        dense_rgb_layer_row = QHBoxLayout()
+        dense_rgb_layer_row.setSpacing(8)
+        dense_rgb_layer_label = QLabel("Dense RGB points")
+        dense_rgb_layer_label.setObjectName("reconstructionRowLabel")
+        dense_rgb_layer_label.setMinimumWidth(0)
+        dense_rgb_layer_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        dense_rgb_layer_label.setToolTip(
+            "Show or hide the integrity-verified persistent Dense RGB Points layer. "
+            "Visibility never changes the Phase-G canonical authority, arbitrary-scale state, or measurement qualification."
+        )
+        dense_rgb_layer_row.addWidget(dense_rgb_layer_label, 1)
+        self._dense_rgb_scene_layer_toggle = ToggleSwitch(checked=True, width=32, height=18)
+        self._dense_rgb_scene_layer_toggle.setObjectName("reconstructionDenseRgbSceneLayerToggle")
+        self._dense_rgb_scene_layer_toggle.setAccessibleName("Dense RGB points scene layer")
+        self._dense_rgb_scene_layer_toggle.setToolTip(dense_rgb_layer_label.toolTip())
+        self._dense_rgb_scene_layer_toggle.setEnabled(False)
+        self._dense_rgb_scene_layer_toggle.toggled.connect(
+            self._reconstruction_canvas.set_dense_rgb_points_visible
+        )
+        self._dense_rgb_scene_layer_toggle.toggled.connect(
+            lambda _checked: self._refresh_digital_twin_scene_composition()
+        )
+        dense_rgb_layer_row.addWidget(
+            self._dense_rgb_scene_layer_toggle,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        layer_layout.addLayout(dense_rgb_layer_row)
         gaussian_layer_row = QHBoxLayout()
         gaussian_layer_row.setSpacing(8)
         gaussian_layer_label = QLabel("Gaussian appearance")
@@ -6808,6 +7168,14 @@ class ReconstructionPage(QWidget):
             if toggle is not None:
                 toggle.setEnabled(state)
 
+        dense_toggle = getattr(self, "_dense_rgb_scene_layer_toggle", None)
+        if dense_toggle is not None:
+            dense_toggle.setEnabled(canvas.dense_rgb_points_loaded)
+            if canvas.dense_rgb_points_loaded:
+                dense_toggle.blockSignals(True)
+                dense_toggle.setChecked(canvas.dense_rgb_points_visible)
+                dense_toggle.blockSignals(False)
+
         # Existing live/offline context controls remain usable before a
         # persistent canonical scene is loaded.  Their toolbar buttons remain
         # the compatibility source of truth and are mirrored bidirectionally.
@@ -6915,7 +7283,9 @@ class ReconstructionPage(QWidget):
             self._digital_twin_workspace_group,
             self._digital_twin_processing_group,
             self._canonical_scene_group,
+            # Preserve the Phase 9.6E4 primary-stack compatibility contract.
             self._estimated_ruler_scale_group,
+            self._dense_rgb_group,
         )
         for group in primary_groups:
             layout.removeWidget(group)
@@ -6927,6 +7297,7 @@ class ReconstructionPage(QWidget):
         self._digital_twin_workspace_group.content_layout.setSpacing(5)
         self._digital_twin_processing_group.content_layout.setSpacing(5)
         self._canonical_scene_group.content_layout.setSpacing(5)
+        self._dense_rgb_group.content_layout.setSpacing(5)
 
     @staticmethod
     def _settings_group(title_text: str) -> ReconstructionSettingsDisclosureGroup:
@@ -8714,6 +9085,14 @@ class ReconstructionPage(QWidget):
             return
         if self.gaussian_preview_visible:
             self._viewport_state.setText("Gaussian Splatting preview • appearance only")
+            return
+        if self._reconstruction_canvas.dense_rgb_points_loaded:
+            representation = self._reconstruction_canvas.dense_rgb_representation
+            label = "Extended" if representation == "extended" else "Core"
+            if self._reconstruction_canvas.canonical_camera_loaded:
+                self._viewport_state.setText(f"Canonical Dense RGB Points • {label} + cameras")
+            else:
+                self._viewport_state.setText(f"Canonical Dense RGB Points • {label}")
             return
         if (
             self._reconstruction_canvas.canonical_mesh_loaded

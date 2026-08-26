@@ -166,6 +166,7 @@ def _install_fake_vispy_canvas() -> None:
         MAX_OFFLINE_CAMERA_PATH_POINTS = 1_024
         MAX_CANONICAL_CAMERA_FRUSTUMS = 192
         MAX_CANONICAL_CAMERA_TRAJECTORY_POINTS = 4_096
+        MAX_DENSE_RGB_DISPLAY_POINTS = 250_000
         MAX_SEMANTIC_OBJECT_DISPLAY = 256
         MAX_CANONICAL_SEMANTIC_LABEL_DISPLAY = 64
         CANONICAL_INSPECTION_OVERLAY_FONT_SIZE = 14.0
@@ -177,6 +178,7 @@ def _install_fake_vispy_canvas() -> None:
             self._grid_visible = True
             self._axes_visible = True
             self._canonical_mesh_layer_visible = True
+            self._dense_rgb_points_layer_visible = True
             self._canonical_camera_frustums_layer_visible = True
             self._canonical_camera_trajectory_layer_visible = True
             self._semantic_support_layer_visible = True
@@ -214,6 +216,17 @@ def _install_fake_vispy_canvas() -> None:
             self._canonical_mesh_colors = np.zeros((0, 4), dtype=np.float32)
             self._canonical_mesh_bounds_min = None
             self._canonical_mesh_bounds_max = None
+            self._dense_rgb_loaded = False
+            self._dense_rgb_visible = False
+            self._dense_rgb_scene_id = ""
+            self._dense_rgb_representation = ""
+            self._dense_rgb_source_path = ""
+            self._dense_rgb_points_reconstruction = np.zeros((0, 3), dtype=np.float64)
+            self._dense_rgb_colors_rgb = np.zeros((0, 3), dtype=np.uint8)
+            self._dense_rgb_total_count = 0
+            self._dense_rgb_display_count = 0
+            self._dense_rgb_bounds_min = None
+            self._dense_rgb_bounds_max = None
             self._interactive_measurement_points = np.zeros((0, 3), dtype=np.float64)
             self._interactive_gaussian_loaded = False
             self._interactive_gaussian_positions = np.zeros((0, 3), dtype=np.float32)
@@ -460,6 +473,47 @@ def _install_fake_vispy_canvas() -> None:
 
         def set_offline_sparse_envelope_visible(self, visible: bool) -> None:
             self._offline_sparse_envelope_visible_requested = bool(visible)
+
+        def set_dense_rgb_points(
+            self, points_reconstruction, colors_rgb, *, scene_id: str, representation: str, source_path: str
+        ) -> None:
+            points = np.asarray(points_reconstruction, dtype=np.float64)
+            colors = np.asarray(colors_rgb, dtype=np.uint8)
+            if points.ndim != 2 or points.shape[1:] != (3,) or points.shape[0] < 1:
+                raise ValueError("Dense RGB points must be non-empty (N, 3).")
+            if colors.shape != points.shape:
+                raise ValueError("Dense RGB colors must align with points.")
+            rep = str(representation).strip().lower()
+            if rep not in {"extended", "core"}:
+                raise ValueError("Dense RGB representation must be extended/core.")
+            self._dense_rgb_points_reconstruction = points.copy()
+            self._dense_rgb_colors_rgb = colors.copy()
+            self._dense_rgb_scene_id = str(scene_id)
+            self._dense_rgb_representation = rep
+            self._dense_rgb_source_path = str(source_path)
+            self._dense_rgb_total_count = int(points.shape[0])
+            self._dense_rgb_display_count = min(int(points.shape[0]), self.MAX_DENSE_RGB_DISPLAY_POINTS)
+            self._dense_rgb_bounds_min = points.min(axis=0).copy()
+            self._dense_rgb_bounds_max = points.max(axis=0).copy()
+            self._dense_rgb_loaded = True
+            self._dense_rgb_visible = bool(self._dense_rgb_points_layer_visible)
+
+        def clear_dense_rgb_points(self, *, update_canvas: bool = True) -> None:
+            self._dense_rgb_loaded = False
+            self._dense_rgb_visible = False
+            self._dense_rgb_scene_id = ""
+            self._dense_rgb_representation = ""
+            self._dense_rgb_source_path = ""
+            self._dense_rgb_points_reconstruction = np.zeros((0, 3), dtype=np.float64)
+            self._dense_rgb_colors_rgb = np.zeros((0, 3), dtype=np.uint8)
+            self._dense_rgb_total_count = 0
+            self._dense_rgb_display_count = 0
+            self._dense_rgb_bounds_min = None
+            self._dense_rgb_bounds_max = None
+
+        def set_dense_rgb_points_visible(self, visible: bool) -> None:
+            self._dense_rgb_points_layer_visible = bool(visible)
+            self._dense_rgb_visible = bool(self._dense_rgb_loaded and self._dense_rgb_points_layer_visible)
 
         def set_canonical_mesh(
             self,
@@ -1152,6 +1206,44 @@ def _install_fake_vispy_canvas() -> None:
             return bool(self._canonical_inspection_overlay_layer_visible)
 
         @property
+        def dense_rgb_points_loaded(self) -> bool:
+            return bool(self._dense_rgb_loaded)
+
+        @property
+        def dense_rgb_points_visible(self) -> bool:
+            return bool(self._dense_rgb_loaded and self._dense_rgb_visible)
+
+        @property
+        def dense_rgb_points_layer_visible(self) -> bool:
+            return bool(self._dense_rgb_points_layer_visible)
+
+        @property
+        def dense_rgb_scene_id(self) -> str:
+            return self._dense_rgb_scene_id
+
+        @property
+        def dense_rgb_representation(self) -> str:
+            return self._dense_rgb_representation
+
+        @property
+        def dense_rgb_source_path(self) -> str:
+            return self._dense_rgb_source_path
+
+        @property
+        def dense_rgb_total_count(self) -> int:
+            return int(self._dense_rgb_total_count)
+
+        @property
+        def dense_rgb_display_count(self) -> int:
+            return int(self._dense_rgb_display_count)
+
+        @property
+        def dense_rgb_bounds(self):
+            if self._dense_rgb_bounds_min is None or self._dense_rgb_bounds_max is None:
+                return None
+            return self._dense_rgb_bounds_min.copy(), self._dense_rgb_bounds_max.copy()
+
+        @property
         def canonical_mesh_loaded(self) -> bool:
             return bool(self._canonical_mesh_loaded)
 
@@ -1377,6 +1469,7 @@ def _install_fake_vispy_canvas() -> None:
         def close(self) -> None:
             self.clear_canonical_camera_trajectory(update_canvas=False)
             self.clear_canonical_semantic_objects(update_canvas=False)
+            self.clear_dense_rgb_points(update_canvas=False)
             self.clear_canonical_mesh(update_canvas=False)
             self.closed = True
             self._native.close()

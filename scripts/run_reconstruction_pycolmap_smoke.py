@@ -179,6 +179,27 @@ def main() -> int:
             "Use a sharper, better exposed, overlapping sequence."
         )
 
+    sampled_records = [record for record in ingestion.records if record.sampled]
+    sampled_indices = [record.frame.sequence_index for record in sampled_records]
+    sampled_timestamps = [record.frame.timestamp_ns for record in sampled_records]
+    estimated_total = ingestion.sampling_plan.estimated_total_frames
+    source_index_denominator = max(1, int(estimated_total or 1) - 1)
+    actual_sampling = {
+        "sampled_frame_count": len(sampled_records),
+        "first_source_sequence_index": sampled_indices[0] if sampled_indices else None,
+        "last_source_sequence_index": sampled_indices[-1] if sampled_indices else None,
+        "source_sequence_span_fraction": (
+            (sampled_indices[-1] - sampled_indices[0]) / source_index_denominator
+            if len(sampled_indices) >= 2 and estimated_total is not None and estimated_total > 1
+            else None
+        ),
+        "sampled_timestamp_span_seconds": (
+            (sampled_timestamps[-1] - sampled_timestamps[0]) / 1_000_000_000.0
+            if len(sampled_timestamps) >= 2
+            else 0.0
+        ),
+    }
+
     workspace = materialize_sfm_workspace(
         ingestion,
         output_dir / "workspace",
@@ -275,6 +296,8 @@ def main() -> int:
         "first_attempt_cancelled": first_attempt_cancelled,
         "source": ingestion.source.as_dict(),
         "ingestion_summary": ingestion.as_dict()["summary"],
+        "sampling_plan": ingestion.sampling_plan.as_dict(),
+        "sampling_execution": actual_sampling,
         "external_pycolmap_probe": None if probe is None else probe.as_dict(),
         "registration_ratio": registration_ratio,
         "quality_assessment": quality,
@@ -312,6 +335,8 @@ def main() -> int:
         "resolved_configuration": metadata.get("resolved_configuration", {}),
         "pycolmap_version": metadata.get("pycolmap_version"),
         "external_cuda_devices": metadata.get("external_cuda_devices"),
+        "sampling_plan": ingestion.sampling_plan.as_dict(),
+        "sampling_execution": actual_sampling,
     }
     summary_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
@@ -359,6 +384,13 @@ def main() -> int:
         f"matching={metadata.get('matching_strategy')} "
         f"resume_from_stage={metadata.get('resume_from_stage')} "
         f"resume_exercised={resume_exercised}"
+    )
+    print(
+        f"sampling={ingestion.sampling_plan.mode.value} "
+        f"requested_fps={ingestion.sampling_plan.requested_target_fps_hz} "
+        f"effective_fps={ingestion.sampling_plan.effective_target_fps_hz} "
+        f"sampled={actual_sampling['sampled_frame_count']} "
+        f"source_span_fraction={actual_sampling['source_sequence_span_fraction']}"
     )
     print("real_sfm_executed=True")
     print(f"workspace={workspace.workspace_root}")
