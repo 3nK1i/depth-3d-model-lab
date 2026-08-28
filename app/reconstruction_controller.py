@@ -750,7 +750,7 @@ class ReconstructionController(QObject):
         sfm_python: str | Path | None = None,
         output_root: str | Path | None = None,
         profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
-        max_keyframes: int = 80,
+        max_keyframes: int | None = None,
         session_id: str | None = None,
     ) -> str:
         """Start the selected image-sequence/video workflow in an isolated worker."""

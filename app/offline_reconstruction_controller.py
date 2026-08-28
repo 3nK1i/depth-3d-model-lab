@@ -52,7 +52,7 @@ class OfflineReconstructionConfiguration:
     sfm_python: Path
     profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT
     matching: SfmMatchingStrategy = SfmMatchingStrategy.SEQUENTIAL
-    max_keyframes: int = 80
+    max_keyframes: int | None = None
     maximum_image_size: int | None = None
     sequential_overlap: int | None = None
     video_target_fps: float = 2.0
@@ -105,8 +105,9 @@ class OfflineReconstructionConfiguration:
             raise TypeError("profile must be ReconstructionQualityProfile.")
         if not isinstance(self.matching, SfmMatchingStrategy):
             raise TypeError("matching must be SfmMatchingStrategy.")
-        if isinstance(self.max_keyframes, bool) or int(self.max_keyframes) < 3:
-            raise ReconstructionValidationError("max_keyframes must be at least 3.")
+        if self.max_keyframes is not None:
+            if isinstance(self.max_keyframes, bool) or int(self.max_keyframes) < 3:
+                raise ReconstructionValidationError("max_keyframes must be at least 3 when provided.")
         if self.maximum_image_size is not None and (
             isinstance(self.maximum_image_size, bool) or int(self.maximum_image_size) <= 0
         ):
@@ -130,7 +131,7 @@ class OfflineReconstructionConfiguration:
         object.__setattr__(self, "inputs", normalized)
         object.__setattr__(self, "output_dir", output_dir)
         object.__setattr__(self, "sfm_python", sfm_python)
-        object.__setattr__(self, "max_keyframes", int(self.max_keyframes))
+        object.__setattr__(self, "max_keyframes", None if self.max_keyframes is None else int(self.max_keyframes))
         object.__setattr__(
             self,
             "maximum_image_size",
@@ -172,8 +173,6 @@ def build_offline_reconstruction_command(
         configuration.profile.value,
         "--matching",
         configuration.matching.value,
-        "--max-keyframes",
-        str(configuration.max_keyframes),
         "--video-target-fps",
         str(configuration.video_target_fps),
         "--image-sequence-fps",
@@ -181,6 +180,8 @@ def build_offline_reconstruction_command(
         "--timeout-minutes",
         str(configuration.timeout_minutes),
     ]
+    if configuration.max_keyframes is not None:
+        arguments.extend(["--max-keyframes", str(configuration.max_keyframes)])
     if configuration.source_kind is OfflineReconstructionSourceKind.IMAGE_DIRECTORY:
         arguments.extend(["--images-dir", str(configuration.inputs[0])])
     elif configuration.source_kind is OfflineReconstructionSourceKind.RECORDED_VIDEO:

@@ -23,15 +23,20 @@ class KeyframeSelectionPolicy:
     forced_spacing_ns: int = 1_500_000_000
     minimum_visual_change: float = 0.055
     minimum_quality_score: float = 0.12
-    maximum_keyframes: int = 250
+    maximum_keyframes: int | None = None
     comparison_size: int = 64
 
     def __post_init__(self) -> None:
-        for field_name in ("minimum_spacing_ns", "forced_spacing_ns", "maximum_keyframes", "comparison_size"):
+        for field_name in ("minimum_spacing_ns", "forced_spacing_ns", "comparison_size"):
             value = getattr(self, field_name)
             if isinstance(value, bool) or int(value) <= 0:
                 raise ReconstructionValidationError(f"{field_name} must be a positive integer.")
             object.__setattr__(self, field_name, int(value))
+        maximum = self.maximum_keyframes
+        if maximum is not None:
+            if isinstance(maximum, bool) or int(maximum) <= 0:
+                raise ReconstructionValidationError("maximum_keyframes must be a positive integer when provided.")
+            object.__setattr__(self, "maximum_keyframes", int(maximum))
         if self.forced_spacing_ns < self.minimum_spacing_ns:
             raise ReconstructionValidationError(
                 "forced_spacing_ns must be greater than or equal to minimum_spacing_ns."
@@ -82,7 +87,7 @@ class KeyframeSelector:
             return None
         if quality.quality_score < self.policy.minimum_quality_score:
             return None
-        if len(self._keyframes) >= self.policy.maximum_keyframes:
+        if self.policy.maximum_keyframes is not None and len(self._keyframes) >= self.policy.maximum_keyframes:
             return None
 
         if self._last_frame is None:

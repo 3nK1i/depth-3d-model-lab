@@ -121,10 +121,12 @@ def validate_dense_sparse(pycolmap, input_sparse: Path, dense_sparse: Path, imag
     dense = pycolmap.Reconstruction(dense_sparse)
     source_names = {str(source.image(int(image_id)).name): int(image_id) for image_id in source.reg_image_ids()}
     dense_names = {str(dense.image(int(image_id)).name): int(image_id) for image_id in dense.reg_image_ids()}
-    names_exact = set(source_names) == set(dense_names) == set(image_names)
+    selected_names = set(image_names)
+    names_exact = set(dense_names) == selected_names and selected_names.issubset(source_names)
     poses_preserved = names_exact
     if names_exact:
-        for name, source_id in source_names.items():
+        for name in image_names:
+            source_id = source_names[name]
             dense_id = dense_names[name]
             if not np.allclose(
                 matrix44_from_image(source.image(source_id)),
@@ -142,9 +144,13 @@ def validate_dense_sparse(pycolmap, input_sparse: Path, dense_sparse: Path, imag
         int(pid): np.asarray(dense.point3D(int(pid)).xyz, dtype=np.float64)
         for pid in dense.point3D_ids()
     }
-    point_ids_preserved = set(source_points) == set(dense_points)
+    # Adaptive F2 may intentionally undistort only a selected registered-view
+    # subset from the full authoritative sparse model.  The dense sparse copy
+    # may therefore retain a subset of source points, but it must never invent
+    # point IDs or alter coordinates.
+    point_ids_preserved = set(dense_points).issubset(source_points)
     point_positions_preserved = point_ids_preserved and all(
-        np.array_equal(source_points[pid], dense_points[pid]) for pid in source_points
+        np.array_equal(source_points[pid], dense_points[pid]) for pid in dense_points
     )
     checks = {
         "registered_view_count": int(dense.num_reg_images()) == len(image_names),

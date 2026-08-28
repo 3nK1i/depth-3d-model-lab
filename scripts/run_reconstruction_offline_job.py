@@ -45,6 +45,13 @@ from core.reconstruction import (
     SfmScaleStatus,
     materialize_sfm_workspace,
 )
+from core.hardware.gpu_info import detect_hardware
+from core.reconstruction.adaptive_production_planning import build_adaptive_pre_sfm_frame_plan
+from core.reconstruction.adaptive_view_selection import (
+    AdaptiveSelectionResourceSnapshot,
+    provider_view_selection_requirements,
+)
+from core.reconstruction.dense_provider_architecture import dense_provider_implementation_contracts
 from core.reconstruction.errors import ReconstructionValidationError
 
 PROTOCOL = "eia.reconstruction.offline.v1"
@@ -172,7 +179,7 @@ def _parse_args() -> argparse.Namespace:
         choices=[item.value for item in SfmMatchingStrategy],
         default=SfmMatchingStrategy.SEQUENTIAL.value,
     )
-    parser.add_argument("--max-keyframes", type=int, default=80)
+    parser.add_argument("--max-keyframes", type=int, default=None)
     parser.add_argument("--maximum-image-size", type=int, default=None)
     parser.add_argument("--sequential-overlap", type=int, default=None)
     parser.add_argument("--video-target-fps", type=float, default=2.0)
@@ -181,8 +188,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--timeout-minutes", type=float, default=60.0)
     args = parser.parse_args()
-    if args.max_keyframes < 3:
-        parser.error("--max-keyframes must be at least 3")
+    if args.max_keyframes is not None and args.max_keyframes < 3:
+        parser.error("--max-keyframes must be at least 3 when provided")
     if args.maximum_image_size is not None and args.maximum_image_size <= 0:
         parser.error("--maximum-image-size must be positive")
     if args.sequential_overlap is not None and args.sequential_overlap <= 0:
@@ -194,36 +201,83 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
-def _build_source(args: argparse.Namespace):
+def _available_ram_bytes() -> int | None:
+    try:
+        import psutil  # type: ignore
+
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        pass
+    try:
+        pages = int(os.sysconf("SC_AVPHYS_PAGES"))
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        if pages > 0 and page_size > 0:
+            return pages * page_size
+    except (AttributeError, OSError, ValueError):
+        pass
+    return None
+
+
+def _adaptive_resources(*, cpu_only: bool) -> AdaptiveSelectionResourceSnapshot:
+    hardware = detect_hardware(0)
+    return AdaptiveSelectionResourceSnapshot(
+        gpu_name=hardware.name,
+        total_vram_bytes=hardware.total_memory_bytes,
+        free_vram_bytes=hardware.free_memory_bytes,
+        available_ram_bytes=_available_ram_bytes(),
+        cuda_ready=bool(hardware.cuda_ready and not cpu_only),
+    )
+
+
+def _build_source(args: argparse.Namespace, resources: AdaptiveSelectionResourceSnapshot):
     if args.images_dir is not None:
         source = ImageSequenceReader.from_directory(
             args.images_dir,
             recursive=bool(args.recursive),
             frame_rate_hz=float(args.image_sequence_fps),
         )
-        sampling = FrameSamplingPolicy(
-            mode=FrameSamplingMode.EVERY_FRAME,
-            maximum_sampled_frames=int(args.max_keyframes),
-        )
-        return source, sampling, "image_directory"
-    if args.images:
+        source_kind = "image_directory"
+    elif args.images:
         source = ImageSequenceReader.from_paths(
             args.images,
             frame_rate_hz=float(args.image_sequence_fps),
             preserve_order=True,
         )
+        source_kind = "image_paths"
+    else:
+        source = RecordedVideoReader(args.video)
+        source_kind = "recorded_video"
+
+    pre_plan = build_adaptive_pre_sfm_frame_plan(
+        source_kind=source_kind,
+        estimated_total_frames=source.estimated_total_frames,
+        expected_frame_rate_hz=source.metadata.expected_frame_rate_hz,
+        resources=resources,
+        engineer_max_keyframes_override=args.max_keyframes,
+    )
+    target = pre_plan.target_sampled_frames
+    total = source.estimated_total_frames
+    reduced_known_source = target is not None and total is not None and target < total
+    if source_kind == "recorded_video":
+        sampling = FrameSamplingPolicy(
+            mode=FrameSamplingMode.TARGET_FPS,
+            target_fps_hz=float(args.video_target_fps),
+            maximum_sampled_frames=target,
+        )
+    elif reduced_known_source:
+        # TARGET_FPS + a finite cap activates the existing deterministic
+        # first/last-preserving full-span sampler rather than a prefix cut.
+        sampling = FrameSamplingPolicy(
+            mode=FrameSamplingMode.TARGET_FPS,
+            target_fps_hz=float(args.image_sequence_fps),
+            maximum_sampled_frames=target,
+        )
+    else:
         sampling = FrameSamplingPolicy(
             mode=FrameSamplingMode.EVERY_FRAME,
-            maximum_sampled_frames=int(args.max_keyframes),
+            maximum_sampled_frames=None,
         )
-        return source, sampling, "image_paths"
-    source = RecordedVideoReader(args.video)
-    sampling = FrameSamplingPolicy(
-        mode=FrameSamplingMode.TARGET_FPS,
-        target_fps_hz=float(args.video_target_fps),
-        maximum_sampled_frames=int(args.max_keyframes),
-    )
-    return source, sampling, "recorded_video"
+    return source, sampling, source_kind, pre_plan
 
 
 def _write_result(output_dir: Path, payload: dict[str, Any]) -> None:
@@ -267,8 +321,20 @@ def main() -> int:
     source_kind = ""
     try:
         _emit("status", stage="source", message="Validating offline reconstruction source.")
-        source, sampling_policy, source_kind = _build_source(args)
+        resources = _adaptive_resources(cpu_only=bool(args.cpu))
+        source, sampling_policy, source_kind, pre_sfm_plan = _build_source(args, resources)
         profile = ReconstructionQualityProfile(args.profile)
+        pre_sfm_path = output_dir / "adaptive_pre_sfm_plan.json"
+        pre_sfm_path.write_text(
+            json.dumps(pre_sfm_plan.as_dict(), indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        _emit(
+            "status",
+            stage="source_planning",
+            message="Adaptive pre-SfM frame plan resolved.",
+            adaptive_pre_sfm_plan=pre_sfm_plan.as_dict(),
+        )
         events = ReconstructionEventRecorder(args.session_id)
         _emit("progress", stage="source_ingestion", message="Offline ingestion started.", progress_fraction=0.0)
         ingestion = ReconstructionIngestionPipeline(
@@ -280,12 +346,12 @@ def main() -> int:
                 forced_spacing_ns=1,
                 minimum_visual_change=0.0,
                 minimum_quality_score=0.0,
-                maximum_keyframes=int(args.max_keyframes),
+                maximum_keyframes=pre_sfm_plan.target_sampled_frames,
             ),
             quality_policy=FrameQualityPolicy(),
             cache_policy=IngestionCachePolicy(
                 maximum_cpu_bytes=512 * _MIB,
-                maximum_frames=min(8, int(args.max_keyframes)),
+                maximum_frames=8,
                 gpu_staging_bytes=0,
             ),
         ).run(control=control, events=events)
@@ -356,6 +422,34 @@ def main() -> int:
             json.dumps(sfm_payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
             encoding="utf-8",
         )
+        adaptive_dense_readiness = {
+            "schema_version": 1,
+            "phase": "I4.3F2",
+            "status": "ready",
+            "registered_view_count": sfm_result.statistics.registered_keyframes,
+            "provider_selected": False,
+            "auto_policy_implemented": False,
+            "provider_execution_started": False,
+            "permanent_global_view_cap": None,
+            "resources": resources.as_dict(),
+            "provider_requirements": [
+                provider_view_selection_requirements(item.implementation).as_dict()
+                for item in dense_provider_implementation_contracts()
+            ],
+            "authority": {
+                "camera_pose_authority_owner": "pycolmap_sfm",
+                "authoritative_sfm_modified": False,
+                "metric_scale_claimed": False,
+                "measurement_authoritative": False,
+                "certified_metrology": False,
+                "surface_mesh_generated": False,
+            },
+        }
+        adaptive_dense_path = output_dir / "adaptive_dense_selection_ready.json"
+        adaptive_dense_path.write_text(
+            json.dumps(adaptive_dense_readiness, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
         sparse_ply = output_dir / "sparse_reconstruction.ply"
         _write_sparse_ply(sfm_result, sparse_ply)
         offline_visualization = output_dir / "offline_visualization.json"
@@ -381,6 +475,7 @@ def main() -> int:
             "source_kind": source_kind,
             "source": ingestion.source.as_dict(),
             "ingestion_summary": ingestion.as_dict()["summary"],
+            "adaptive_pre_sfm_plan": pre_sfm_plan.as_dict(),
             "sfm_summary": {
                 "backend_id": sfm_result.backend_id,
                 "backend_version": sfm_result.backend_version,
@@ -396,6 +491,8 @@ def main() -> int:
             },
             "artifacts": {
                 "ingestion_result_json": str(ingestion_path.resolve()),
+                "adaptive_pre_sfm_plan_json": str(pre_sfm_path.resolve()),
+                "adaptive_dense_selection_ready_json": str(adaptive_dense_path.resolve()),
                 "sfm_result_json": str(sfm_result_path.resolve()),
                 "sparse_reconstruction_ply": str(sparse_ply.resolve()),
                 "offline_visualization_json": str(offline_visualization.resolve()),
@@ -410,6 +507,8 @@ def main() -> int:
             "camera_pose_available": True,
             "canonical_geometry_authoritative": False,
             "canonical_geometry_deferred_to": "subsequent integrated offline stages",
+            "adaptive_dense_provider_wiring_ready": True,
+            "permanent_global_view_cap": None,
             "persistent_scene_ready": False,
             "persistent_scene_checkpoint_bridge_deferred_to": "8.8A4",
             "certified_metrology": False,
