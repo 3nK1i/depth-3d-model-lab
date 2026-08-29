@@ -193,7 +193,11 @@ class FakeRollingDepthWorkerRunner:
         w = int(payload["expected_width"])
         if self.output_shape is not None:
             h, w = self.output_shape
-        depth = np.full((n, h, w), (2.0 - self.shift) / self.scale, dtype=np.float32)
+        # Fake the provider-native RollingDepth polarity.  The production
+        # adapter canonicalizes this sign once before the generic SfM affine
+        # fit, so ``scale``/``shift`` below continue to describe the expected
+        # canonical sequence-to-SfM mapping.
+        depth = np.full((n, h, w), -(2.0 - self.shift) / self.scale, dtype=np.float32)
         if self.output_shape is None:
             image_index = {item["keyframe_id"]: i for i, item in enumerate(sequence)}
             camera_by_keyframe = {item.keyframe_id: item for item in self.sfm_result.cameras}
@@ -204,7 +208,7 @@ class FakeRollingDepthWorkerRunner:
                         continue
                     camera = camera_by_keyframe[obs.keyframe_id]
                     z = float((np.linalg.inv(camera.T_reconstruction_from_camera) @ p_r)[2])
-                    source = (z - self.shift) / self.scale
+                    source = -((z - self.shift) / self.scale)
                     x, y = obs.feature_xy
                     x0 = max(0, min(w - 1, int(np.floor(x))))
                     y0 = max(0, min(h - 1, int(np.floor(y))))

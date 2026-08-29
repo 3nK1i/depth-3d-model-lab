@@ -58,6 +58,22 @@ def _as_positive_int(value: Any, *, name: str) -> int:
     return result
 
 
+def _try_enable_xformers(pipe: Any) -> bool:
+    """Enable optional xFormers attention when a usable operator is available.
+
+    RollingDepth can execute with the standard attention path.  An installed
+    xFormers package may still be unusable for the active Torch/CUDA/GPU build;
+    its operator probe raises ``NotImplementedError`` in that case.  Treat that
+    exactly like an unavailable optional acceleration path rather than failing
+    the isolated provider worker.
+    """
+    try:
+        pipe.enable_xformers_memory_efficient_attention()
+    except (ImportError, ModuleNotFoundError, NotImplementedError):
+        return False
+    return True
+
+
 def run(input_manifest: Path, output_dir: Path) -> Path:
     payload = _read_manifest(input_manifest)
     repo = Path(str(payload["rolling_depth_repository"])).expanduser().resolve()
@@ -100,12 +116,7 @@ def run(input_manifest: Path, output_dir: Path) -> Path:
     device = torch.device(device_text)
 
     pipe = RollingDepthPipeline.from_pretrained(str(checkpoint), torch_dtype=dtype)
-    xformers_enabled = False
-    try:
-        pipe.enable_xformers_memory_efficient_attention()
-        xformers_enabled = True
-    except (ImportError, ModuleNotFoundError):
-        xformers_enabled = False
+    xformers_enabled = _try_enable_xformers(pipe)
     pipe = pipe.to(device)
 
     seed = int(config.get("seed", 42))

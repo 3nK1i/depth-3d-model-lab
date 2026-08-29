@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import importlib.util
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import core.reconstruction.rolling_depth_dense_provider as rolling_depth_module
 from core.reconstruction.dense_provider_architecture import (
     DenseProviderFamily,
     DenseProviderImplementation,
@@ -15,9 +17,16 @@ from core.reconstruction.dense_provider_architecture import (
 )
 from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.rolling_depth_dense_provider import (
+    I43D2_CANONICAL_DEPTH_POLARITY,
+    I43D2_NATIVE_DEPTH_POLARITY,
+    I43D2_NATIVE_DEPTH_SEMANTICS,
+    I43D2_NATIVE_TO_CANONICAL_MULTIPLIER,
     I43D2_PROVIDER_ID,
+    ExternalRollingDepthWorkerRunner,
     RollingDepthEnvironmentProbe,
     RollingDepthProductionProviderAdapter,
+    RollingDepthSequenceAlignmentEvidence,
+    canonicalize_rolling_depth_native_sequence,
     fit_rolling_depth_sequence_to_sfm,
     rolling_depth_dense_provider_descriptor,
     validate_i4_3d2_binding,
@@ -110,6 +119,31 @@ def test_i43d2_environment_revision_contract_is_strict(tmp_path: Path) -> None:
         replace(env, source_revision="short")
 
 
+def test_i43d2_native_polarity_canonicalization_is_explicit_and_non_mutating() -> None:
+    native = np.asarray(
+        [
+            [[-1.0, -0.25], [0.5, 1.0]],
+            [[-0.8, -0.1], [0.4, 0.9]],
+        ],
+        dtype=np.float32,
+    )
+    before = native.copy()
+
+    canonical, evidence = canonicalize_rolling_depth_native_sequence(
+        native,
+        native_depth_semantics=I43D2_NATIVE_DEPTH_SEMANTICS,
+    )
+
+    assert np.array_equal(native, before)
+    assert np.array_equal(canonical, -before)
+    assert canonical is not native
+    assert evidence.native_depth_polarity == I43D2_NATIVE_DEPTH_POLARITY
+    assert evidence.canonical_depth_polarity == I43D2_CANONICAL_DEPTH_POLARITY
+    assert evidence.multiplier == I43D2_NATIVE_TO_CANONICAL_MULTIPLIER == -1.0
+    assert evidence.sequence_order_changed is False
+    assert evidence.physical_metric_scale_claimed is False
+
+
 def test_i43d2_global_affine_fit_recovers_single_sequence_mapping(tmp_path: Path) -> None:
     context, _ = make_rolling_context(tmp_path, view_count=3)
     runner = FakeRollingDepthWorkerRunner(context.sfm_result, scale=1.6, shift=0.35)
@@ -132,6 +166,115 @@ def test_i43d2_global_affine_fit_recovers_single_sequence_mapping(tmp_path: Path
     assert alignment["shift_to_reconstruction"] == pytest.approx(0.35, abs=5e-3)
     assert alignment["alignment_scope"] == "one_global_affine_for_entire_temporal_sequence"
     assert alignment["physical_metric_scale_claimed"] is False
+    canonicalization = summary["depth_canonicalization"]
+    assert canonicalization["native_depth_polarity"] == I43D2_NATIVE_DEPTH_POLARITY
+    assert canonicalization["canonical_depth_polarity"] == I43D2_CANONICAL_DEPTH_POLARITY
+    assert canonicalization["transform"] == "provider_native_polarity_sign_flip"
+    assert canonicalization["multiplier"] == -1.0
+    assert canonicalization["sequence_order_changed"] is False
+    assert canonicalization["physical_metric_scale_claimed"] is False
+    assert summary["temporal_sequence"]["canonicalization_preserves_sequence_order"] is True
+
+
+def test_i43d2_generic_fitter_rejects_native_polarity_but_accepts_provider_canonicalization(tmp_path: Path) -> None:
+    context, env = make_rolling_context(tmp_path, view_count=3)
+    runner = FakeRollingDepthWorkerRunner(context.sfm_result, scale=1.6, shift=0.35)
+    adapter = RollingDepthProductionProviderAdapter(
+        context=context,
+        environment=env,
+        runner=runner,
+        sequence_builder=FakeRollingDepthSequenceBuilder(),
+    )
+    request, decision = explicit_rolling_selection(3)
+    adapter.execute(request, decision)
+
+    raw_npz = context.output_dir / "provider" / "worker_output" / "rolling_depth_evidence.npz"
+    with np.load(raw_npz, allow_pickle=False) as archive:
+        native = np.asarray(archive["depth"], dtype=np.float32)
+    native_before = native.copy()
+
+    registered = {item.keyframe_id for item in context.sfm_result.cameras}
+    ordered_images = tuple(
+        sorted(
+            (item for item in context.sfm_result.workspace.images if item.keyframe_id in registered),
+            key=lambda item: (item.source_sequence_index, item.timestamp_ns, item.order),
+        )
+    )
+    native_fit = fit_rolling_depth_sequence_to_sfm(
+        context.sfm_result,
+        ordered_images=ordered_images,
+        depth_stack=native,
+    )
+    assert native_fit.accepted is False
+    assert native_fit.scale_to_reconstruction is not None
+    assert native_fit.scale_to_reconstruction < 0.0
+    assert native_fit.message == "sequence_affine_fit_requires_positive_depth_scale"
+
+    canonical, evidence = canonicalize_rolling_depth_native_sequence(
+        native,
+        native_depth_semantics=I43D2_NATIVE_DEPTH_SEMANTICS,
+    )
+    canonical_fit = fit_rolling_depth_sequence_to_sfm(
+        context.sfm_result,
+        ordered_images=ordered_images,
+        depth_stack=canonical,
+    )
+    assert canonical_fit.accepted is True
+    assert canonical_fit.scale_to_reconstruction == pytest.approx(1.6, rel=2e-3)
+    assert canonical_fit.shift_to_reconstruction == pytest.approx(0.35, abs=5e-3)
+    assert np.array_equal(native, native_before)
+    assert evidence.multiplier == -1.0
+    assert evidence.sequence_order_changed is False
+    assert evidence.physical_metric_scale_claimed is False
+
+
+def test_i43d2_quality_alignment_rejection_is_terminal_failed_evidence_not_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, env = make_rolling_context(tmp_path, view_count=3)
+    runner = FakeRollingDepthWorkerRunner(context.sfm_result)
+    rejected = RollingDepthSequenceAlignmentEvidence(
+        accepted=False,
+        scale_to_reconstruction=11.5,
+        shift_to_reconstruction=-3.7,
+        initial_correspondences=1397,
+        retained_correspondences=492,
+        contributing_views=3,
+        median_relative_residual=0.206,
+        p90_relative_residual=0.385,
+        robust_inlier_threshold=0.35,
+        view_correspondence_counts=(("kf000", 450), ("kf001", 470), ("kf002", 477)),
+        message="sequence_affine_residual_exceeds_limit",
+    )
+    monkeypatch.setattr(
+        rolling_depth_module,
+        "fit_rolling_depth_sequence_to_sfm",
+        lambda *args, **kwargs: rejected,
+    )
+    adapter = RollingDepthProductionProviderAdapter(
+        context=context,
+        environment=env,
+        runner=runner,
+        sequence_builder=FakeRollingDepthSequenceBuilder(),
+    )
+    request, decision = explicit_rolling_selection(3)
+
+    result = adapter.execute(request, decision)
+
+    assert result.status is DenseProviderRunStatus.FAILED
+    assert result.failure_reason == "global_sequence_alignment_rejected:sequence_affine_residual_exceeds_limit"
+    assert result.canonical_geometry_ref == ""
+    assert result.canonical_geometry_authoritative is False
+    summary_path = context.output_dir / "i4_3d2_rolling_depth_execution_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "rejected"
+    assert summary["pass"] is False
+    assert summary["alignment"]["accepted"] is False
+    assert summary["alignment"]["message"] == "sequence_affine_residual_exceeds_limit"
+    assert summary["fusion"]["performed"] is False
+    assert summary["integrity"]["authoritative_sfm_unchanged"] is True
+    assert summary["integrity"]["registered_images_unchanged"] is True
+    assert not (context.output_dir / "canonical_rolling_depth_fused.npz").exists()
 
 
 def test_i43d2_execute_uses_all_views_and_preserves_authoritative_frame(tmp_path: Path) -> None:
@@ -320,3 +463,102 @@ def test_i43d2_setup_normalizes_upstream_pyav_name_without_user_site_leakage() -
     assert 'probe_path.write_text(json.dumps(payload, sort_keys=True) + "\\n", encoding="utf-8")' in script
     assert 'PROBE_JSON="$(cat "$PROBE_FILE")"' in script
     assert 'PROBE_JSON="$(PYTHONNOUSERSITE=1' not in script
+
+
+def test_i43d2_worker_falls_back_when_installed_xformers_has_no_usable_operator() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    worker_path = project_root / "scripts" / "reconstruction_rolling_depth_provider_worker.py"
+    spec = importlib.util.spec_from_file_location("i43d2_rolling_depth_worker_xformers_probe", worker_path)
+    assert spec is not None and spec.loader is not None
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+
+    class UnusableXformersPipeline:
+        def enable_xformers_memory_efficient_attention(self) -> None:
+            raise NotImplementedError("No operator found for memory_efficient_attention_forward")
+
+    class WorkingXformersPipeline:
+        def enable_xformers_memory_efficient_attention(self) -> None:
+            return None
+
+    assert worker._try_enable_xformers(UnusableXformersPipeline()) is False
+    assert worker._try_enable_xformers(WorkingXformersPipeline()) is True
+
+
+def test_i43d2_external_worker_runner_leaves_output_directory_creation_to_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "input_manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    repository_root = tmp_path / "rolling_repo"
+    repository_root.mkdir()
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text("# synthetic worker\n", encoding="utf-8")
+    python_executable = tmp_path / "python"
+    output_dir = tmp_path / "worker_output"
+
+    def fake_subprocess_run(command, *, cwd, text, capture_output, check):
+        assert command[-2:] == ["--output-dir", str(output_dir.resolve())]
+        assert cwd == str(repository_root.resolve())
+        assert text is True
+        assert capture_output is True
+        assert check is False
+        assert not output_dir.exists()
+
+        output_dir.mkdir(parents=True, exist_ok=False)
+        depth_path = output_dir / "rolling_depth_evidence.npz"
+        np.savez_compressed(depth_path, depth=np.ones((2, 3, 4), dtype=np.float32))
+        (output_dir / "rolling_depth_result_manifest.json").write_text(
+            json.dumps({"depth_npz_path": str(depth_path.resolve()), "status": "pass"}) + "\n",
+            encoding="utf-8",
+        )
+
+        class Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr(
+        "core.reconstruction.rolling_depth_dense_provider.subprocess.run",
+        fake_subprocess_run,
+    )
+
+    runner = ExternalRollingDepthWorkerRunner(
+        python_executable=python_executable,
+        worker_script=worker_script,
+        repository_root=repository_root,
+    )
+    result = runner.run(manifest_path, output_dir)
+
+    assert output_dir.is_dir()
+    assert result.manifest_path == (output_dir / "rolling_depth_result_manifest.json").resolve()
+    assert result.depth.shape == (2, 3, 4)
+
+
+def test_i43d2_external_worker_runner_refuses_preexisting_output_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "input_manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    repository_root = tmp_path / "rolling_repo"
+    repository_root.mkdir()
+    output_dir = tmp_path / "worker_output"
+    output_dir.mkdir()
+
+    def forbidden_subprocess_run(*args, **kwargs):
+        raise AssertionError("subprocess must not start when worker output already exists")
+
+    monkeypatch.setattr(
+        "core.reconstruction.rolling_depth_dense_provider.subprocess.run",
+        forbidden_subprocess_run,
+    )
+
+    runner = ExternalRollingDepthWorkerRunner(
+        python_executable=tmp_path / "python",
+        worker_script=tmp_path / "worker.py",
+        repository_root=repository_root,
+    )
+    with pytest.raises(ReconstructionValidationError, match="must not exist before worker start"):
+        runner.run(manifest_path, output_dir)

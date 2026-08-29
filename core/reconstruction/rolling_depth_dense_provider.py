@@ -4,13 +4,20 @@ RollingDepth is bound as a temporal-depth provider behind the I4.3A dense
 provider contract.  The official RollingDepth runtime stays isolated in its own
 Python environment and source checkout.  It consumes the complete ordered
 sequence, performs its native multi-dilation snippet inference/co-alignment,
-and returns one temporally co-aligned relative-depth map per registered view.
+and returns one temporally co-aligned provider-native relative-depth map per
+registered view.
+
+RollingDepth's native ``depth_pred`` polarity decreases as canonical camera
+depth increases.  I4.3D2 therefore performs one explicit provider-specific
+sign canonicalization before the generic SfM alignment layer::
+
+    depth_canonical = -1 * depth_rolling_native
 
 The provider does *not* fit each frame independently.  One robust affine mapping
 is estimated for the whole RollingDepth sequence from sparse observations in the
 authoritative PyCOLMAP SfM reconstruction::
 
-    z_sfm ~= sequence_scale * depth_rolling + sequence_shift
+    z_sfm ~= sequence_scale * depth_canonical + sequence_shift
 
 That single mapping is then applied to every frame before canonical projection
 with bundle-adjusted PyCOLMAP poses.  The mapping only places RollingDepth depth
@@ -68,9 +75,13 @@ from core.reconstruction.sfm_dense_projection import reconstruction_camera_from_
 
 I43D2_SCHEMA_VERSION = 1
 I43D2_PHASE = "I4.3D2"
-I43D2_ADAPTER_VERSION = "i4.3d2-v1"
+I43D2_ADAPTER_VERSION = "i4.3d2-v2"
 I43D2_PROVIDER_ID = "rolling-depth-temporal"
 I43D2_RUNTIME_LOCK_NAME = ".eia_rolling_depth_runtime_lock.json"
+I43D2_NATIVE_DEPTH_SEMANTICS = "temporally_coaligned_relative_depth"
+I43D2_NATIVE_DEPTH_POLARITY = "decreasing_with_canonical_camera_depth"
+I43D2_CANONICAL_DEPTH_POLARITY = "increasing_with_canonical_camera_depth"
+I43D2_NATIVE_TO_CANONICAL_MULTIPLIER = -1.0
 I43D2_DEFAULT_CHECKPOINT_RELATIVE = "checkpoint/rollingdepth-v1-0"
 I43D2_DEFAULT_VOXEL_SCENE_FRACTION = 0.004
 I43D2_DEFAULT_MINIMUM_SEQUENCE_CORRESPONDENCES = 24
@@ -237,6 +248,70 @@ class RollingDepthSequenceAlignmentEvidence:
             "alignment_scope": "one_global_affine_for_entire_temporal_sequence",
             "physical_metric_scale_claimed": False,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RollingDepthDepthCanonicalizationEvidence:
+    native_depth_semantics: str
+    native_depth_polarity: str
+    canonical_depth_semantics: str
+    canonical_depth_polarity: str
+    transform: str
+    multiplier: float
+    sequence_order_changed: bool
+    physical_metric_scale_claimed: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "native_depth_semantics": self.native_depth_semantics,
+            "native_depth_polarity": self.native_depth_polarity,
+            "canonical_depth_semantics": self.canonical_depth_semantics,
+            "canonical_depth_polarity": self.canonical_depth_polarity,
+            "transform": self.transform,
+            "multiplier": self.multiplier,
+            "sequence_order_changed": self.sequence_order_changed,
+            "physical_metric_scale_claimed": self.physical_metric_scale_claimed,
+        }
+
+
+def canonicalize_rolling_depth_native_sequence(
+    depth_stack: np.ndarray,
+    *,
+    native_depth_semantics: str,
+) -> tuple[np.ndarray, RollingDepthDepthCanonicalizationEvidence]:
+    """Convert provider-native RollingDepth polarity to canonical depth polarity.
+
+    This is a deterministic provider-boundary semantic transform only.  It
+    preserves frame order, pixel correspondence, temporal co-alignment, and
+    arbitrary affine gauge.  It does not establish physical metric scale.
+    """
+
+    if str(native_depth_semantics) != I43D2_NATIVE_DEPTH_SEMANTICS:
+        raise ReconstructionValidationError(
+            "I4.3D2 worker depth semantics drifted from temporally co-aligned relative depth."
+        )
+    native = np.asarray(depth_stack, dtype=np.float32)
+    if native.ndim != 3:
+        raise ReconstructionValidationError("I4.3D2 RollingDepth canonicalization requires NxHxW native depth.")
+    if not np.isfinite(native).all():
+        raise ReconstructionValidationError("I4.3D2 RollingDepth native depth must be finite before canonicalization.")
+    if float(np.ptp(native)) <= 1e-9:
+        raise ReconstructionValidationError(
+            "I4.3D2 RollingDepth native sequence has no usable relative-depth dynamic range."
+        )
+
+    canonical = np.ascontiguousarray(I43D2_NATIVE_TO_CANONICAL_MULTIPLIER * native, dtype=np.float32)
+    evidence = RollingDepthDepthCanonicalizationEvidence(
+        native_depth_semantics=I43D2_NATIVE_DEPTH_SEMANTICS,
+        native_depth_polarity=I43D2_NATIVE_DEPTH_POLARITY,
+        canonical_depth_semantics=I43D2_NATIVE_DEPTH_SEMANTICS,
+        canonical_depth_polarity=I43D2_CANONICAL_DEPTH_POLARITY,
+        transform="provider_native_polarity_sign_flip",
+        multiplier=I43D2_NATIVE_TO_CANONICAL_MULTIPLIER,
+        sequence_order_changed=False,
+        physical_metric_scale_claimed=False,
+    )
+    return canonical, evidence
 
 
 def fit_rolling_depth_sequence_to_sfm(
@@ -691,6 +766,11 @@ def rolling_depth_dense_provider_descriptor(probe: RollingDepthEnvironmentProbe)
         metadata={
             "phase": I43D2_PHASE,
             "native_output": "depth_evidence",
+            "native_depth_semantics": I43D2_NATIVE_DEPTH_SEMANTICS,
+            "native_depth_polarity": I43D2_NATIVE_DEPTH_POLARITY,
+            "canonical_depth_polarity": I43D2_CANONICAL_DEPTH_POLARITY,
+            "native_to_canonical_transform": "provider_native_polarity_sign_flip",
+            "native_to_canonical_multiplier": I43D2_NATIVE_TO_CANONICAL_MULTIPLIER,
             "frame_binding": "align_to_authoritative_sfm",
             "temporal_mode": "multi_dilation_snippet_coalignment",
             "stateful_sequence": True,
@@ -822,7 +902,11 @@ class ExternalRollingDepthWorkerRunner:
         self.repository_root = Path(repository_root).expanduser().resolve()
 
     def run(self, manifest_path: Path, output_dir: Path) -> RollingDepthWorkerResult:
-        output_dir.mkdir(parents=True, exist_ok=False)
+        output_dir = Path(output_dir).expanduser().resolve()
+        if output_dir.exists():
+            raise ReconstructionValidationError(
+                "I4.3D2 isolated RollingDepth worker output directory must not exist before worker start."
+            )
         completed = subprocess.run(
             [str(self.python_executable), str(self.worker_script), "--input-manifest", str(manifest_path), "--output-dir", str(output_dir)],
             cwd=str(self.repository_root), text=True, capture_output=True, check=False,
@@ -989,20 +1073,29 @@ class RollingDepthProductionProviderAdapter:
         images_before = {item.keyframe_id: item.staged_sha256 for item in images}
         self._publish(stage=DenseProviderProgressStage.PROVIDER_EXECUTION, detail="isolated_rolling_depth_sequence_inference", progress=0.10, processed=0, total=total_views)
         worker = self._runner.run(input_manifest, provider_dir / "worker_output")
-        depth_stack = np.asarray(worker.depth, dtype=np.float32)
-        if depth_stack.ndim != 3 or depth_stack.shape != (total_views, expected_hw[0], expected_hw[1]):
+        native_depth_stack = np.asarray(worker.depth, dtype=np.float32)
+        if native_depth_stack.ndim != 3 or native_depth_stack.shape != (total_views, expected_hw[0], expected_hw[1]):
             raise ReconstructionValidationError("I4.3D2 RollingDepth evidence must be NxHxW on the authoritative SfM pixel grid.")
-        if not np.isfinite(depth_stack).all():
+        if not np.isfinite(native_depth_stack).all():
             raise ReconstructionValidationError("I4.3D2 RollingDepth depth evidence must be finite.")
-        if float(np.ptp(depth_stack)) <= 1e-9:
+        if float(np.ptp(native_depth_stack)) <= 1e-9:
             raise ReconstructionValidationError("I4.3D2 RollingDepth sequence has no usable relative-depth dynamic range.")
         if str(worker.metadata.get("source_revision", "")) != self.environment.source_revision:
             raise ReconstructionValidationError("I4.3D2 RollingDepth worker source revision does not match the probed runtime.")
-        if str(worker.metadata.get("depth_semantics", "")) != "temporally_coaligned_relative_depth":
-            raise ReconstructionValidationError("I4.3D2 worker depth semantics drifted from temporally co-aligned relative depth.")
+        native_depth_semantics = str(worker.metadata.get("depth_semantics", ""))
         if bool(worker.metadata.get("per_frame_alignment", True)):
             raise ReconstructionValidationError("I4.3D2 refuses worker-side per-frame alignment.")
-        self._publish(stage=DenseProviderProgressStage.PROVIDER_EXECUTION, detail="rolling_depth_coaligned_sequence_ready", progress=0.38, processed=total_views, total=total_views)
+        depth_stack, canonicalization = canonicalize_rolling_depth_native_sequence(
+            native_depth_stack,
+            native_depth_semantics=native_depth_semantics,
+        )
+        self._publish(
+            stage=DenseProviderProgressStage.PROVIDER_EXECUTION,
+            detail="rolling_depth_native_sequence_canonicalized",
+            progress=0.38,
+            processed=total_views,
+            total=total_views,
+        )
 
         alignment = fit_rolling_depth_sequence_to_sfm(
             context.sfm_result,
@@ -1013,7 +1106,102 @@ class RollingDepthProductionProviderAdapter:
             maximum_relative_residual=context.config.maximum_relative_residual,
         )
         if not alignment.accepted or alignment.scale_to_reconstruction is None or alignment.shift_to_reconstruction is None:
-            raise ReconstructionValidationError(f"I4.3D2 global sequence/SfM affine alignment rejected: {alignment.message}")
+            authority_after = _sfm_authority_digest(context.sfm_result)
+            images_after = {item.keyframe_id: _sha256_file(path) for item, path in zip(images, paths, strict=True)}
+            if authority_after != authority_before:
+                raise ReconstructionValidationError(
+                    "I4.3D2 authoritative SfM cameras/landmarks changed during rejected RollingDepth execution."
+                )
+            if images_after != images_before:
+                raise ReconstructionValidationError(
+                    "I4.3D2 registered staged images changed during rejected RollingDepth execution."
+                )
+
+            failure_reason = f"global_sequence_alignment_rejected:{alignment.message}"
+            self._publish(
+                stage=DenseProviderProgressStage.FINALIZATION,
+                detail="rolling_depth_sequence_alignment_rejected",
+                progress=1.0,
+                processed=total_views,
+                total=total_views,
+            )
+            result = DenseProviderExecutionResult(
+                provider_id=self.descriptor.provider_id,
+                implementation=DenseProviderImplementation.ROLLING_DEPTH,
+                status=DenseProviderRunStatus.FAILED,
+                source_view_count=total_views,
+                selected_view_count=total_views,
+                adaptive_view_selection=False,
+                view_selection_reason="all_registered_authoritative_sfm_views_in_temporal_order",
+                permanent_global_view_cap=None,
+                canonical_geometry_ref="",
+                canonical_frame_id="",
+                native_artifact_refs=(str(prepared.video_path), str(worker.manifest_path), str(worker.depth_npz_path)),
+                degradation_reasons=(),
+                failure_reason=failure_reason,
+                progress_event_count=self._progress_event_count,
+                final_preview_revision=0,
+                canonical_geometry_authoritative=False,
+                single_authoritative_sfm_frame_preserved=True,
+                camera_pose_authority_owner=I43A_AUTHORITATIVE_FRAME_OWNER,
+                metric_scale_claimed=False,
+                measurement_authoritative=False,
+                certified_metrology=False,
+                surface_mesh_generated=False,
+                production_filter_policy_changed=False,
+                provider_promotion_performed=False,
+            )
+            summary = {
+                "schema_version": I43D2_SCHEMA_VERSION,
+                "phase": I43D2_PHASE,
+                "status": "rejected",
+                "pass": False,
+                "provider": self.descriptor.as_dict(),
+                "selection_request": request.as_dict(),
+                "selection_decision": decision.as_dict(),
+                "execution_result": result.as_dict(),
+                "config": context.config.as_dict(),
+                "runtime": self.environment.as_dict(),
+                "prepared_video": prepared.as_dict(),
+                "worker": dict(worker.metadata),
+                "depth_canonicalization": canonicalization.as_dict(),
+                "temporal_sequence": {
+                    "ordered_keyframe_ids": [item.keyframe_id for item in images],
+                    "ordered_source_sequence_indices": [item.source_sequence_index for item in images],
+                    "ordered_timestamps_ns": [item.timestamp_ns for item in images],
+                    "sequence_reordered_by": "source_sequence_index_then_timestamp",
+                    "native_temporal_coalignment_preserved": True,
+                    "canonicalization_preserves_sequence_order": canonicalization.sequence_order_changed is False,
+                },
+                "alignment": alignment.as_dict(),
+                "fusion": {
+                    "performed": False,
+                    "accepted_views": 0,
+                    "rejected_views": [],
+                    "reason": alignment.message,
+                    "point_cloud": None,
+                },
+                "integrity": {
+                    "authoritative_sfm_unchanged": True,
+                    "registered_images_unchanged": True,
+                    "authoritative_sfm_digest": authority_before,
+                    "registered_image_sha256": images_before,
+                    "canonical_pose_layer": "offline_sfm_bundle_adjusted",
+                },
+                "authority": {
+                    "camera_pose_authority_owner": I43A_AUTHORITATIVE_FRAME_OWNER,
+                    "rolling_depth_pose_authority_promoted": False,
+                    "sequence_affine_establishes_physical_metric_scale": False,
+                    "per_frame_alignment_performed": False,
+                    "metric_scale_claimed": False,
+                    "measurement_authoritative": False,
+                    "certified_metrology": False,
+                    "surface_mesh_generated": False,
+                    "provider_promotion_performed": False,
+                },
+            }
+            _write_json(context.output_dir / "i4_3d2_rolling_depth_execution_summary.json", summary)
+            return result
         aligned_stack = alignment.scale_to_reconstruction * depth_stack.astype(np.float64) + alignment.shift_to_reconstruction
         valid_stack = np.isfinite(aligned_stack) & (aligned_stack > 1e-8)
         aligned_stack = np.asarray(aligned_stack, dtype=np.float32)
@@ -1036,7 +1224,8 @@ class RollingDepthProductionProviderAdapter:
         )
         depth_alignment = reconstruction_unit_depth_alignment(
             provenance=(
-                "RollingDepth I4.3D2 global sequence affine already applied;"
+                "RollingDepth I4.3D2 provider-native polarity canonicalized before global sequence affine;"
+                f"native_to_canonical_multiplier={canonicalization.multiplier:.1f};"
                 f"source_revision={self.environment.source_revision};"
                 f"scale={alignment.scale_to_reconstruction:.12g};shift={alignment.shift_to_reconstruction:.12g};"
                 "physical_metric_scale=false"
@@ -1105,6 +1294,7 @@ class RollingDepthProductionProviderAdapter:
             source_pose_layers=np.asarray(fusion.source_pose_layers, dtype="U160"),
             rolling_depth_sequence_scale=np.asarray(alignment.scale_to_reconstruction, dtype=np.float64),
             rolling_depth_sequence_shift=np.asarray(alignment.shift_to_reconstruction, dtype=np.float64),
+            rolling_depth_native_to_canonical_multiplier=np.asarray(canonicalization.multiplier, dtype=np.float64),
         )
         canonical_ply = _write_binary_ply(context.output_dir / "canonical_rolling_depth_fused.ply", cloud.points_reconstruction, cloud.colors_rgb)
 
@@ -1164,12 +1354,14 @@ class RollingDepthProductionProviderAdapter:
             "runtime": self.environment.as_dict(),
             "prepared_video": prepared.as_dict(),
             "worker": dict(worker.metadata),
+            "depth_canonicalization": canonicalization.as_dict(),
             "temporal_sequence": {
                 "ordered_keyframe_ids": [item.keyframe_id for item in images],
                 "ordered_source_sequence_indices": [item.source_sequence_index for item in images],
                 "ordered_timestamps_ns": [item.timestamp_ns for item in images],
                 "sequence_reordered_by": "source_sequence_index_then_timestamp",
                 "native_temporal_coalignment_preserved": True,
+                "canonicalization_preserves_sequence_order": canonicalization.sequence_order_changed is False,
             },
             "alignment": alignment.as_dict(),
             "fusion": {
@@ -1257,6 +1449,11 @@ def validate_i4_3d2_binding(
             "native_output": "depth_evidence",
             "temporal_mode": "multi_dilation_snippet_coalignment",
             "sequence_level_alignment": "global_affine_to_authoritative_sfm",
+            "native_depth_semantics": I43D2_NATIVE_DEPTH_SEMANTICS,
+            "native_depth_polarity": I43D2_NATIVE_DEPTH_POLARITY,
+            "canonical_depth_polarity": I43D2_CANONICAL_DEPTH_POLARITY,
+            "native_to_canonical_transform": "provider_native_polarity_sign_flip",
+            "native_to_canonical_multiplier": I43D2_NATIVE_TO_CANONICAL_MULTIPLIER,
             "per_frame_alignment": False,
             "all_registered_views_default_i4_3d2": True,
             "permanent_global_view_cap": None,
@@ -1291,7 +1488,13 @@ __all__ = [
     "I43D2_ADAPTER_VERSION",
     "I43D2_PROVIDER_ID",
     "I43D2_RUNTIME_LOCK_NAME",
+    "I43D2_NATIVE_DEPTH_SEMANTICS",
+    "I43D2_NATIVE_DEPTH_POLARITY",
+    "I43D2_CANONICAL_DEPTH_POLARITY",
+    "I43D2_NATIVE_TO_CANONICAL_MULTIPLIER",
     "RollingDepthSequenceAlignmentEvidence",
+    "RollingDepthDepthCanonicalizationEvidence",
+    "canonicalize_rolling_depth_native_sequence",
     "fit_rolling_depth_sequence_to_sfm",
     "PreparedRollingDepthVideo",
     "RollingDepthSequenceBuilder",

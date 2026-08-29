@@ -14,11 +14,19 @@ Production defaults for the RTX 2060 development machine follow the official low
 
 RollingDepth's native output is temporally co-aligned **relative depth evidence**. The provider preserves the model's whole-sequence co-alignment. It explicitly forbids independent per-frame reconstruction-scale fitting.
 
+Real I4.3G3 production evidence exposed an important provider-native semantic detail: the official RollingDepth `depth_pred` representation decreases as canonical camera depth increases. I4.3D2 therefore canonicalizes only that provider-native polarity with one explicit sign transform before generic SfM alignment:
+
+`d_canonical = -1 * d_rolling_native`
+
+The raw worker NPZ remains unchanged and retained as native evidence. The execution summary records the native polarity, canonical polarity, transform name, multiplier, and the fact that sequence order and physical metric authority are unchanged.
+
 One robust affine mapping is estimated from sparse PyCOLMAP observations pooled across the complete registered sequence:
 
-`z_sfm ~= a * d_rolling + b`
+`z_sfm ~= a * d_canonical + b`
 
 The same `a` and `b` are applied to every RollingDepth frame. This mapping only expresses the temporal depth sequence in the existing arbitrary SfM reconstruction gauge. It is not physical metric-scale evidence.
+
+The generic sequence affine fitter continues to require `a > 0`. Negative canonical depth scale is still rejected; the provider-specific sign normalization is not implemented as `abs(a)` or as a weakening of the generic geometry gate.
 
 Canonical projection and fusion use only bundle-adjusted PyCOLMAP poses. RollingDepth never supplies or replaces canonical camera poses.
 
