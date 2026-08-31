@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 
+import numpy as np
 import pytest
 
 from core.reconstruction.dense_provider_architecture import DenseProviderRunStatus
@@ -173,6 +174,9 @@ def test_i43e1_binding_passes_only_after_d3_closure(tmp_path: Path) -> None:
     assert snapshot["status"] == "pass"
     assert snapshot["provider"]["implementation"] == "metric3d_v2"
     assert snapshot["architecture"]["family"] == "single_image_depth"
+    assert snapshot["architecture"]["native_confidence_range"] == "unbounded_score"
+    assert snapshot["architecture"]["native_confidence_consumed_as_point_confidence"] is False
+    assert snapshot["architecture"]["native_confidence_normalization_invented"] is False
     assert snapshot["authority"]["metric_scale_claimed"] is False
     assert snapshot["qualification"]["state"] == "candidate"
     assert "unidepth_v2" in snapshot["qualification"]["remaining_i4_3e_providers_pending"]
@@ -212,3 +216,72 @@ def test_i43e1_worker_import_is_model_and_cuda_lazy() -> None:
     for forbidden in ("torch", "cv2", "core.models.registry"):
         assert forbidden not in new_modules
     assert callable(module.main) and callable(module.run)
+    assert callable(module._native_confidence_stats)
+
+
+def test_i43e1_worker_accepts_finite_unbounded_native_confidence() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    worker = project_root / "scripts/reconstruction_single_image_depth_provider_worker.py"
+    spec = importlib.util.spec_from_file_location("i43e1_worker_confidence_probe", worker)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    low, high = module._native_confidence_stats(
+        np.full((2, 3), 2.5, dtype=np.float32), expected_hw=(2, 3)
+    )
+    assert low == pytest.approx(2.5)
+    assert high == pytest.approx(2.5)
+
+
+def test_i43e1_worker_rejects_nonfinite_native_confidence() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    worker = project_root / "scripts/reconstruction_single_image_depth_provider_worker.py"
+    spec = importlib.util.spec_from_file_location("i43e1_worker_nonfinite_confidence_probe", worker)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError, match="native confidence must be finite"):
+        module._native_confidence_stats(
+            np.array([[1.0, np.nan]], dtype=np.float32), expected_hw=(1, 2)
+        )
+
+
+def test_i43e1_preserves_unbounded_native_confidence_without_using_it_as_fusion_weight(tmp_path: Path) -> None:
+    context, env = make_metric3d_context(tmp_path, view_count=3)
+    adapter = Metric3DV2ProductionProviderAdapter(
+        context=context,
+        environment=env,
+        runner=FakeMetric3DWorkerRunner(confidence_value=2.5),
+    )
+    request, decision = explicit_metric3d_selection(3)
+    result = adapter.execute(request, decision)
+    assert result.status is DenseProviderRunStatus.COMPLETED
+
+    summary = json.loads((context.output_dir / "i4_3e1_metric3d_v2_execution_summary.json").read_text(encoding="utf-8"))
+    assert summary["authority"]["native_confidence_consumed_as_point_confidence"] is False
+    assert summary["authority"]["native_confidence_normalization_invented"] is False
+    for record in summary["alignment"]["records"]:
+        assert record["native_confidence_consumed_as_point_confidence"] is False
+        assert record["native_confidence_range"] == "unbounded_score"
+        assert record["native_confidence_min"] == pytest.approx(2.5)
+        assert record["native_confidence_max"] == pytest.approx(2.5)
+
+    with np.load(result.canonical_geometry_ref, allow_pickle=False) as archive:
+        # Canonical fusion confidence remains valid [0,1] neutral weighting and
+        # does not reinterpret the native Metric3D score as calibrated confidence.
+        assert np.isfinite(archive["mean_confidence"]).all()
+        assert np.allclose(archive["mean_confidence"], 1.0)
+
+
+def test_i43e1_still_rejects_nonfinite_native_confidence(tmp_path: Path) -> None:
+    context, env = make_metric3d_context(tmp_path, view_count=3)
+    adapter = Metric3DV2ProductionProviderAdapter(
+        context=context,
+        environment=env,
+        runner=FakeMetric3DWorkerRunner(confidence_value=float("nan")),
+    )
+    request, decision = explicit_metric3d_selection(3)
+    with pytest.raises(ReconstructionValidationError, match="native confidence must be finite"):
+        adapter.execute(request, decision)

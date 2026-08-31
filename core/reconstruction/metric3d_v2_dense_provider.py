@@ -275,6 +275,8 @@ def metric3d_v2_dense_provider_descriptor(probe: Metric3DV2EnvironmentProbe) -> 
             "native_depth_scale": "metric",
             "native_intrinsics_source": "estimated",
             "native_confidence_kind": "confidence",
+            "native_confidence_range": "unbounded_score",
+            "native_confidence_consumed_as_point_confidence": False,
             "single_image_stateful_sequence": False,
             "all_registered_views_available_by_default": True,
             "adaptive_view_selection_deferred_to": "I4.3F",
@@ -637,8 +639,8 @@ class Metric3DV2ProductionProviderAdapter:
                 raise ReconstructionValidationError("I4.3E1 worker evidence must remain on each authoritative SfM pixel grid.")
             if not np.isfinite(depth[valid_mask]).all() or np.any(depth[valid_mask] <= 0.0):
                 raise ReconstructionValidationError("I4.3E1 valid Metric3D depth evidence must be finite and positive.")
-            if not np.isfinite(confidence).all() or np.any(confidence < 0.0) or np.any(confidence > 1.0):
-                raise ReconstructionValidationError("I4.3E1 Metric3D confidence must be finite in [0,1].")
+            if not np.isfinite(confidence).all():
+                raise ReconstructionValidationError("I4.3E1 Metric3D native confidence must be finite.")
 
             evidence = align_sfm_keyframe_dense_depth(
                 context.sfm_result,
@@ -655,7 +657,10 @@ class Metric3DV2ProductionProviderAdapter:
             alignment_record = evidence.as_dict()
             alignment_record["native_metric_depth_promoted_to_canonical_metric_scale"] = False
             alignment_record["estimated_model_intrinsics_consumed_for_canonical_projection"] = False
-            alignment_record["native_confidence_consumed_as_point_confidence"] = True
+            alignment_record["native_confidence_consumed_as_point_confidence"] = False
+            alignment_record["native_confidence_range"] = "unbounded_score"
+            alignment_record["native_confidence_min"] = float(np.min(confidence))
+            alignment_record["native_confidence_max"] = float(np.max(confidence))
             alignment_records.append(alignment_record)
             if not evidence.is_accepted or evidence.alignment is None:
                 rejected.append(item.keyframe_id)
@@ -673,7 +678,10 @@ class Metric3DV2ProductionProviderAdapter:
                         T_reconstruction_from_camera=camera_by_keyframe[item.keyframe_id].T_reconstruction_from_camera,
                         depth_unit=DenseDepthUnit.SOURCE_MODEL_UNITS,
                         depth_alignment=evidence.alignment,
-                        confidence=confidence,
+                        # Metric3D v2 exposes an unbounded native confidence score.
+                        # Preserve it in worker/alignment evidence, but do not invent a
+                        # normalization mapping for canonical [0,1] fusion weights.
+                        confidence=None,
                         valid_mask=valid_mask,
                         pose_layer="offline_sfm_bundle_adjusted",
                     )
@@ -784,6 +792,8 @@ class Metric3DV2ProductionProviderAdapter:
                     "camera_pose_authority_owner": I43A_AUTHORITATIVE_FRAME_OWNER,
                     "native_metric_depth_promoted_to_canonical_metric_scale": False,
                     "estimated_model_intrinsics_consumed_for_canonical_projection": False,
+                    "native_confidence_consumed_as_point_confidence": False,
+                    "native_confidence_normalization_invented": False,
                     "metric_scale_claimed": False,
                     "measurement_authoritative": False,
                     "certified_metrology": False,
@@ -852,6 +862,9 @@ def validate_i4_3e1_binding(
             "native_depth_scale": "metric",
             "native_intrinsics_source": "estimated",
             "native_confidence_kind": "confidence",
+            "native_confidence_range": "unbounded_score",
+            "native_confidence_consumed_as_point_confidence": False,
+            "native_confidence_normalization_invented": False,
             "per_view_alignment": "sparse_correspondence_scale_to_authoritative_sfm",
             "all_registered_views_available_by_default": True,
             "permanent_global_view_cap": None,

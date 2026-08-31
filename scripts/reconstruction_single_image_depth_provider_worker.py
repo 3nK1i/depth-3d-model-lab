@@ -39,6 +39,17 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
 
 
+
+
+def _native_confidence_stats(confidence: Any, *, expected_hw: tuple[int, int]) -> tuple[float, float]:
+    """Validate Metric3D native confidence without inventing a [0,1] mapping."""
+    import numpy as np
+
+    array = np.asarray(confidence, dtype=np.float32)
+    if array.shape != expected_hw or not np.isfinite(array).all():
+        raise ValueError("Metric3D v2 native confidence must be finite on the input grid")
+    return float(np.min(array)), float(np.max(array))
+
 def run(manifest_path: Path, output_dir: Path) -> Path:
     # Heavy/project imports remain inside run() so importing this worker does not
     # allocate CUDA state or load optional model runtimes.
@@ -116,8 +127,9 @@ def run(manifest_path: Path, output_dir: Path) -> Path:
                 raise ValueError("Metric3D v2 native estimated-intrinsics semantics drifted")
             if result.confidence_kind != "confidence" or confidence is None:
                 raise ValueError("Metric3D v2 native confidence semantics drifted")
-            if confidence.shape != expected_hw or not np.isfinite(confidence).all() or np.any(confidence < 0.0) or np.any(confidence > 1.0):
-                raise ValueError("Metric3D v2 confidence must be finite in [0,1] on the input grid")
+            confidence_min, confidence_max = _native_confidence_stats(
+                confidence, expected_hw=expected_hw
+            )
             if valid_mask.shape != expected_hw:
                 raise ValueError("Metric3D v2 valid mask pixel grid drifted")
 
@@ -141,6 +153,9 @@ def run(manifest_path: Path, output_dir: Path) -> Path:
                     "native_depth_scale": "metric",
                     "intrinsics_source_native": "estimated",
                     "confidence_kind_native": "confidence",
+                    "confidence_range_native": "unbounded_score",
+                    "confidence_min_native": confidence_min,
+                    "confidence_max_native": confidence_max,
                     "model_intrinsics_are_canonical_authority": False,
                     "model_metric_depth_establishes_metric_scale": False,
                     "latency_ms": float(result.latency_ms),
