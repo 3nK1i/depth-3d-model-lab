@@ -760,3 +760,369 @@ def build_i5_1b_difficult_handheld_replay(
         },
         "next": "I5.1C difficult-handheld robustness qualification and closure.",
     }
+
+# ---------------------------------------------------------------------------
+# I5.1C — difficult-handheld robustness qualification and closure
+# ---------------------------------------------------------------------------
+
+I51C_SCHEMA_VERSION = 1
+I51C_PHASE = "I5.1C"
+I51C_RECEIPT_PHASE = "I5.1C_QUALIFICATION_RECEIPT"
+I51C_MIN_FOCUSED_TESTS = 15
+I51C_MIN_PREDECESSOR_TESTS = 60
+I51C_MIN_COMBINED_TESTS = 80
+
+
+def _i51c_require(mapping: Mapping[str, Any], key: str, expected: Any, *, label: str) -> None:
+    actual = mapping.get(key)
+    if actual != expected:
+        raise ReconstructionValidationError(
+            f"I5.1C {label}.{key} contract drift: expected={expected!r} actual={actual!r}."
+        )
+
+
+def validate_i5_1b_for_i5_1c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact evidence-complete Horse replay being closed by I5.1C."""
+    if payload.get("phase") != I51B_PHASE or payload.get("status") != "replay_evidence_complete" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.1C requires the passing evidence-complete I5.1B replay record.")
+
+    scope = _mapping(payload.get("scope"), label="I5.1B scope")
+    _i51c_require(scope, "fresh_difficult_handheld_replay_only", True, label="I5.1B scope")
+    _i51c_require(scope, "i5_1_final_closure", False, label="I5.1B scope")
+    for key in ("provider_specific_robustness_campaign", "mp_sfm_strategy_evaluation", "auto_policy_work_started", "hybrid_experiment_started"):
+        _i51c_require(scope, key, False, label="I5.1B scope")
+
+    provenance = _mapping(payload.get("provenance"), label="I5.1B provenance")
+    _i51c_require(provenance, "i5_1a_sha256_bound", True, label="I5.1B provenance")
+    predecessor_sha = str(provenance.get("i5_1a_sha256", "")).strip().lower()
+    if not _SHA256_RE.fullmatch(predecessor_sha):
+        raise ReconstructionValidationError("I5.1C I5.1B predecessor SHA256 binding is malformed.")
+    _i51c_require(provenance, "fresh_source_sha256_bound", True, label="I5.1B provenance")
+    _i51c_require(provenance, "historical_raw_video_sha256_available", False, label="I5.1B provenance")
+    _i51c_require(provenance, "fresh_vs_historical_content_hash_equality_claimed", False, label="I5.1B provenance")
+    _i51c_require(provenance, "historical_runtime_summary_json_reconstructed", False, label="I5.1B provenance")
+    _i51c_require(provenance, "current_stage_summaries_preserved", True, label="I5.1B provenance")
+
+    source = validate_i5_1b_source_identity(_mapping(payload.get("source_identity"), label="I5.1B source_identity"))
+    if source["sha256"] != str(provenance.get("fresh_source_sha256", "")).strip().lower():
+        raise ReconstructionValidationError("I5.1C fresh source identity does not match the I5.1B provenance binding.")
+
+    quality = _mapping(payload.get("quality"), label="I5.1B quality")
+    _i51c_require(quality, "status", "degraded", label="I5.1B quality")
+    _i51c_require(quality, "failed_stage", "dense_pair_qualification", label="I5.1B quality")
+    _i51c_require(quality, "fresh_global_selected_qualified_views", 2, label="I5.1B quality")
+    _i51c_require(quality, "fresh_best_selected_qualified_views", 7, label="I5.1B quality")
+    _i51c_require(quality, "fresh_dense_gate_reached", False, label="I5.1B quality")
+    _i51c_require(quality, "recommended_decoupled_plan", "uniform_localized_dense_pool", label="I5.1B quality")
+    _i51c_require(quality, "quality_status_is_legitimate_operating_envelope_evidence", True, label="I5.1B quality")
+    _i51c_require(quality, "quality_status_is_not_provider_ranking", True, label="I5.1B quality")
+
+    comparison = _mapping(payload.get("historical_comparison"), label="I5.1B historical_comparison")
+    _i51c_require(comparison, "historical_selected_qualified_views", 2, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "historical_dense_gate_reached", False, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "historical_dense_gate_required_connected_views", 10, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "fresh_global_selected_qualified_views", 2, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "fresh_best_selected_qualified_views", 7, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "selected_view_gain_over_historical", 5, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "fresh_dense_gate_reached", False, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "historical_raw_video_sha256_available", False, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "fresh_vs_historical_content_hash_equality_claimed", False, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "comparison_is_scenario_continuity_not_content_hash_equivalence", True, label="I5.1B historical_comparison")
+    _i51c_require(comparison, "counts_are_not_provider_scores", True, label="I5.1B historical_comparison")
+
+    execution = _mapping(payload.get("execution"), label="I5.1B execution")
+    for key in ("current_difficult_handheld_replay_started", "global_i1_executed", "sfm_rerun", "global_da3_dense_executed", "localization_executed", "dense_ab_executed", "da3_extra_candidates_executed", "dense_pair_rerun"):
+        _i51c_require(execution, key, True, label="I5.1B execution")
+    _i51c_require(execution, "production_default_modified", False, label="I5.1B execution")
+    stage_return_codes = _mapping(execution.get("stage_return_codes"), label="I5.1B stage_return_codes")
+    if stage_return_codes.get("i1") not in {0, 2} or stage_return_codes.get("localization") not in {0, 3} or stage_return_codes.get("dense_ab") != 0:
+        raise ReconstructionValidationError("I5.1C I5.1B stage return-code contract drifted.")
+
+    stage_evidence = _mapping(payload.get("stage_evidence"), label="I5.1B stage_evidence")
+    i1 = validate_i5_1b_i1(_mapping(stage_evidence.get("i1_summary"), label="I5.1B I1 stage summary"))
+    if i1.get("status") != "degraded" or i1.get("failed_stage") != "dense_pair_qualification" or _i51b_i1_selected_views(i1) != 2:
+        raise ReconstructionValidationError("I5.1C I5.1B global dense-degradation boundary drifted.")
+    localization = validate_i5_1b_localization(
+        _mapping(stage_evidence.get("localization_summary"), label="I5.1B localization stage summary"),
+        source_sha256=source["sha256"],
+    )
+    if localization.get("status") != "localization_ready":
+        raise ReconstructionValidationError("I5.1C requires the completed I5.1B localization stage.")
+    dense = validate_i5_1b_dense_ab(_mapping(stage_evidence.get("dense_ab_summary"), label="I5.1B dense A/B stage summary"))
+    dense_decision = _mapping(dense.get("decision"), label="I5.1B dense A/B decision")
+    _i51c_require(dense_decision, "recommended_plan", "uniform_localized_dense_pool", label="I5.1B dense A/B decision")
+    _i51c_require(dense_decision, "real_dense_ab_validation_pass", False, label="I5.1B dense A/B decision")
+    _i51c_require(dense_decision, "i4_1_6c_production_binding_authorized", False, label="I5.1B dense A/B decision")
+
+    plans = {str(item.get("plan_name")): item for item in dense.get("plans", []) if isinstance(item, Mapping)}
+    if set(plans) != {"uniform_localized_dense_pool", "global_anchors_plus_local_neighbors"}:
+        raise ReconstructionValidationError("I5.1C dense A/B plan inventory drifted.")
+    uniform = _mapping(plans["uniform_localized_dense_pool"], label="uniform dense plan")
+    anchors = _mapping(plans["global_anchors_plus_local_neighbors"], label="anchor-neighbor dense plan")
+    for plan, aligned, planned, selected in ((uniform, 93, 102, 7), (anchors, 109, 118, 6)):
+        _i51c_require(plan, "alignment_accepted", aligned, label="I5.1B dense plan")
+        _i51c_require(plan, "planned_candidates", planned, label="I5.1B dense plan")
+        _i51c_require(plan, "selected_qualified_views", selected, label="I5.1B dense plan")
+        _i51c_require(plan, "dense_gate_pass", False, label="I5.1B dense plan")
+
+    decision = _mapping(payload.get("decision"), label="I5.1B decision")
+    for key in ("i4_closed", "i5_authorized", "i5_1_started", "i5_1a_complete", "i5_1b_complete", "i5_1c_authorized"):
+        _i51c_require(decision, key, True, label="I5.1B decision")
+    _i51c_require(decision, "i5_1_complete", False, label="I5.1B decision")
+    _i51c_require(decision, "i5_2_authorized", False, label="I5.1B decision")
+    for key in _I51B_DECISION_FALSE:
+        _i51c_require(decision, key, False, label="I5.1B decision")
+
+    authority = _mapping(payload.get("authority"), label="I5.1B authority")
+    _i51c_require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.1B authority")
+    _i51c_require(authority, "permanent_global_view_cap", None, label="I5.1B authority")
+    for key in _AUTHORITY_FALSE:
+        _i51c_require(authority, key, False, label="I5.1B authority")
+    authority_audit = _mapping(payload.get("authority_audit"), label="I5.1B authority_audit")
+    _i51c_require(authority_audit, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.1B authority_audit")
+    _i51c_require(authority_audit, "default_reconstruction_scale_status", "arbitrary", label="I5.1B authority_audit")
+    _i51c_require(authority_audit, "permanent_global_view_cap", None, label="I5.1B authority_audit")
+
+    if payload.get("next") != "I5.1C difficult-handheld robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.1C predecessor next-boundary contract drifted.")
+
+    return {
+        "provenance": deepcopy(dict(provenance)),
+        "source_identity": source,
+        "quality": deepcopy(dict(quality)),
+        "historical_comparison": deepcopy(dict(comparison)),
+        "execution": deepcopy(dict(execution)),
+        "i1_summary": deepcopy(dict(i1)),
+        "localization_summary": deepcopy(dict(localization)),
+        "dense_ab_summary": deepcopy(dict(dense)),
+        "authority": deepcopy(dict(authority)),
+        "authority_audit": deepcopy(dict(authority_audit)),
+        "decision": deepcopy(dict(decision)),
+    }
+
+
+def validate_i5_1b_oom_diagnostic(text: str) -> dict[str, Any]:
+    """Admit only the explicitly preserved pre-correction host-OOM facts."""
+    if not isinstance(text, str) or not text.strip():
+        raise ReconstructionValidationError("I5.1C failed-attempt diagnostic must be non-empty text.")
+    required = (
+        "i5_1b_difficult_handheld_replay_20260902_133628",
+        "I4.1.6A Decoupled Dense-Candidate Localization: LOCALIZATION_READY",
+        "I4.1.6B aligning/projecting extra 147/176",
+        "oom-kill",
+        "task=python",
+        "Out of memory: Killed process",
+        "anon-rss:10942216kB",
+    )
+    missing = [needle for needle in required if needle not in text]
+    if missing:
+        raise ReconstructionValidationError(f"I5.1C failed-attempt diagnostic is missing required OOM evidence: {missing}")
+    return {
+        "pre_correction_host_oom_observed": True,
+        "failed_attempt_directory_timestamp": "20260902_133628",
+        "i4_1_6a_completed_before_oom": True,
+        "failure_stage": "i4_1_6b_dense_alignment_projection",
+        "last_observed_candidate": "147/176",
+        "killed_process": "python",
+        "killed_python_anon_rss_kib": 10942216,
+        "failed_attempt_preserved": True,
+        "failed_attempt_reclassified_as_quality_result": False,
+        "event_is_supporting_robustness_evidence": True,
+    }
+
+
+def validate_i5_1c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("phase") != I51C_RECEIPT_PHASE or payload.get("status") != "pass" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.1C requires a passing qualification regression receipt.")
+    scope = _mapping(payload.get("scope"), label="I5.1C receipt scope")
+    for key in ("focused_i5_1c_tests", "predecessor_i5_1_regression", "oom_correction_regression", "import_probe", "runner_help_probe"):
+        _i51c_require(scope, key, True, label="I5.1C receipt scope")
+    for key in ("provider_execution_started", "sfm_rerun", "dense_pair_rerun", "quality_replay_rerun", "thresholds_modified", "auto_policy_implemented", "hybrid_authorized"):
+        _i51c_require(scope, key, False, label="I5.1C receipt scope")
+
+    counts = _mapping(payload.get("counts"), label="I5.1C receipt counts")
+    focused = _non_negative_int(counts.get("focused_tests"), label="I5.1C focused_tests")
+    predecessor = _non_negative_int(counts.get("predecessor_total_tests"), label="I5.1C predecessor_total_tests")
+    combined = _non_negative_int(counts.get("combined_exercised_tests"), label="I5.1C combined_exercised_tests")
+    if focused < I51C_MIN_FOCUSED_TESTS or predecessor < I51C_MIN_PREDECESSOR_TESTS or combined < I51C_MIN_COMBINED_TESTS:
+        raise ReconstructionValidationError("I5.1C regression receipt test coverage is below the required closure floor.")
+    if combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.1C regression receipt combined count is inconsistent.")
+
+    return_codes = _mapping(payload.get("return_codes"), label="I5.1C receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if return_codes.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.1C regression receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def build_i5_1c_difficult_handheld_closure(
+    *,
+    i5_1a_result: Mapping[str, Any],
+    i5_1a_binding: I51EvidenceBinding,
+    i5_1b_result: Mapping[str, Any],
+    i5_1b_binding: I51EvidenceBinding,
+    oom_diagnostic: str,
+    oom_diagnostic_binding: I51EvidenceBinding,
+    qualification_receipt: Mapping[str, Any],
+    qualification_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    baseline = validate_i5_1a_for_replay(i5_1a_result)
+    replay = validate_i5_1b_for_i5_1c(i5_1b_result)
+    oom = validate_i5_1b_oom_diagnostic(oom_diagnostic)
+    receipt = validate_i5_1c_receipt(qualification_receipt)
+
+    a_binding = i5_1a_binding.as_dict()
+    b_binding = i5_1b_binding.as_dict()
+    oom_binding = oom_diagnostic_binding.as_dict()
+    receipt_binding = qualification_receipt_binding.as_dict()
+    if replay["provenance"]["i5_1a_sha256"] != a_binding["sha256"]:
+        raise ReconstructionValidationError("I5.1C I5.1B predecessor SHA does not match the independently verified I5.1A artifact.")
+
+    if replay["authority"] != baseline["authority"] or replay["authority_audit"] != baseline["authority_audit"]:
+        raise ReconstructionValidationError("I5.1C authority drifted between I5.1A and I5.1B.")
+
+    quality = replay["quality"]
+    comparison = replay["historical_comparison"]
+    dense = replay["dense_ab_summary"]
+    plans = {str(item.get("plan_name")): item for item in dense.get("plans", []) if isinstance(item, Mapping)}
+    uniform = plans["uniform_localized_dense_pool"]
+    anchors = plans["global_anchors_plus_local_neighbors"]
+
+    return {
+        "schema_version": I51C_SCHEMA_VERSION,
+        "phase": I51C_PHASE,
+        "status": "difficult_handheld_robustness_qualified",
+        "pass": True,
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "provider_execution_started": False,
+            "sfm_rerun": False,
+            "dense_pair_rerun": False,
+            "quality_replay_rerun": False,
+            "manual_review_rerun": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "provider_specific_robustness_campaign_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_1a_baseline": a_binding,
+            "i5_1b_replay": b_binding,
+            "i5_1b_failed_attempt_diagnostic": oom_binding,
+            "i5_1c_qualification_receipt": receipt_binding,
+        },
+        "provenance": {
+            "i5_1a_reverified": True,
+            "i5_1b_reverified": True,
+            "i5_1b_i5_1a_binding_reverified": True,
+            "fresh_source_identity_preserved": True,
+            "fresh_source_sha256": replay["source_identity"]["sha256"],
+            "historical_raw_video_sha256_available": False,
+            "fresh_vs_historical_content_hash_equality_claimed": False,
+            "comparison_is_scenario_continuity_not_content_hash_equivalence": True,
+            "failed_attempt_diagnostic_sha256_bound": True,
+            "corrected_replay_is_quality_qualification_source": True,
+            "failed_attempt_is_supporting_resilience_evidence_only": True,
+            "no_synthetic_historical_runtime_json_created": True,
+        },
+        "qualification": {
+            "scenario_id": baseline["scenario"]["scenario_id"],
+            "capture_class": baseline["scenario"]["capture_class"],
+            "quality_status": quality["status"],
+            "historical_selected_qualified_views": comparison["historical_selected_qualified_views"],
+            "fresh_global_selected_qualified_views": quality["fresh_global_selected_qualified_views"],
+            "fresh_best_selected_qualified_views": quality["fresh_best_selected_qualified_views"],
+            "selected_view_gain_over_historical": comparison["selected_view_gain_over_historical"],
+            "required_connected_qualified_views": comparison["historical_dense_gate_required_connected_views"],
+            "production_dense_gate_reached": quality["fresh_dense_gate_reached"],
+            "material_improvement_over_historical_baseline": comparison["selected_view_gain_over_historical"] > 0,
+            "improvement_is_insufficient_for_production_gate": True,
+            "operating_envelope_classification": "outside_current_production_dense_robustness_envelope",
+            "primary_robustness_bottleneck": "local_dense_consistency_connectivity",
+            "global_sfm_completed_before_dense_degradation": True,
+            "decoupled_localization_completed": True,
+            "recommended_scenario_experiment_plan": quality["recommended_decoupled_plan"],
+            "recommended_plan_is_scenario_experiment_result_not_production_default": True,
+            "counts_are_not_provider_scores": True,
+            "quality_status_is_not_provider_ranking": True,
+            "threshold_relaxation_authorized": False,
+            "retry_until_quality_pass_performed": False,
+        },
+        "dense_ab_observation": {
+            "global_baseline_selected": 2,
+            "global_baseline_pair_pass_fraction": dense["baseline_global_only"]["pair_pass_fraction"],
+            "uniform_localized_dense_pool": {
+                "aligned": uniform["alignment_accepted"],
+                "planned": uniform["planned_candidates"],
+                "pair_pass_fraction": uniform["pair_pass_fraction"],
+                "selected": uniform["selected_qualified_views"],
+                "dense_gate": uniform["dense_gate_pass"],
+            },
+            "global_anchors_plus_local_neighbors": {
+                "aligned": anchors["alignment_accepted"],
+                "planned": anchors["planned_candidates"],
+                "pair_pass_fraction": anchors["pair_pass_fraction"],
+                "selected": anchors["selected_qualified_views"],
+                "dense_gate": anchors["dense_gate_pass"],
+            },
+        },
+        "robustness_event": {
+            **oom,
+            "root_cause_classification": "unbounded_bulk_dense_record_memory_lifetime",
+            "semantics_preserving_memory_lifetime_correction_applied": True,
+            "corrected_replay_completed": True,
+            "corrected_replay_quality_status": quality["status"],
+            "correction_changed_reconstruction_inputs": False,
+            "correction_changed_candidate_plans": False,
+            "correction_changed_quality_thresholds": False,
+            "correction_changed_camera_authority": False,
+            "correction_changed_production_defaults": False,
+            "i5_11_oom_recovery_closed_early": False,
+            "oom_event_reserved_for_later_i5_11_resilience_context": True,
+        },
+        "regression_summary": {
+            "focused_i5_1c_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority_audit": deepcopy(replay["authority_audit"]),
+        "authority": deepcopy(replay["authority"]),
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_started": True,
+            "i5_1a_complete": True,
+            "i5_1b_complete": True,
+            "i5_1c_complete": True,
+            "i5_1_complete": True,
+            "i5_1_quality_status": "degraded",
+            "i5_2_authorized": True,
+            "i5_2_started": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "dense_consistency_threshold_relaxation_authorized": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_2_low_overlap_authorized_not_started": True,
+            "i5_3_blur_exposure_clutter_symmetry_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_evaluation_not_started": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.2 low overlap / weak parallax.",
+    }
