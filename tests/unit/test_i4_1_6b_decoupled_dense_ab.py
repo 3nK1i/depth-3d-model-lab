@@ -209,3 +209,53 @@ def test_real_dense_plan_keeps_strict_pair_gain_for_unsaturated_baseline() -> No
     assert decision["real_dense_ab_validation_pass"] is False
     assert decision["baseline_pair_pass_fraction_saturated"] is False
     assert decision["pair_quality_requirement_pass"] is False
+
+
+def test_dense_ab_compacts_persisted_records_without_losing_metadata(tmp_path: Path) -> None:
+    from scripts.run_i4_1_6b_decoupled_dense_ab import _compact_dense_record
+
+    record = {
+        "workspace_order": 7,
+        "keyframe_id": "kf-7",
+        "cloud_npz": str(tmp_path / "cloud.npz"),
+        "points": np.ones((10, 3), dtype=np.float64),
+        "colors": np.ones((10, 3), dtype=np.uint8),
+        "aligned_depth": np.ones((4, 5), dtype=np.float64),
+        "camera": object(),
+    }
+    compact = _compact_dense_record(record)
+    assert compact is not None
+    assert "points" not in compact
+    assert "colors" not in compact
+    assert "aligned_depth" not in compact
+    assert compact["workspace_order"] == 7
+    assert compact["keyframe_id"] == "kf-7"
+    assert compact["camera"] is record["camera"]
+    assert "points" in record
+
+
+def test_dense_ab_hydrates_only_persisted_bulk_arrays(tmp_path: Path) -> None:
+    from scripts.run_i4_1_6b_decoupled_dense_ab import _hydrate_dense_record
+
+    cloud = tmp_path / "canonical_cloud.npz"
+    points = np.arange(30, dtype=np.float64).reshape(10, 3)
+    colors = np.arange(30, dtype=np.uint8).reshape(10, 3)
+    depth = np.arange(20, dtype=np.float64).reshape(4, 5)
+    np.savez_compressed(
+        cloud,
+        points_reconstruction=points,
+        colors_rgb=colors,
+        aligned_depth_reconstruction_units=depth,
+    )
+    compact = {
+        "workspace_order": 3,
+        "keyframe_id": "kf-3",
+        "cloud_npz": str(cloud),
+        "camera": object(),
+    }
+    hydrated = _hydrate_dense_record(compact)
+    assert np.array_equal(hydrated["points"], points)
+    assert np.array_equal(hydrated["colors"], colors)
+    assert np.array_equal(hydrated["aligned_depth"], depth)
+    assert hydrated["camera"] is compact["camera"]
+    assert "points" not in compact

@@ -46,3 +46,27 @@ def test_saturated_baseline_with_large_selected_gain_remains_fail_closed_on_pair
     assert decision["real_dense_ab_validation_pass"] is True
     assert decision["selected_view_gain_over_global_only"] == 80
     assert decision["pair_quality_regressed"] is False
+
+
+def test_many_dense_records_do_not_retain_bulk_arrays_in_memory(tmp_path) -> None:
+    import numpy as np
+
+    from scripts.run_i4_1_6b_decoupled_dense_ab import _compact_dense_record
+
+    records = []
+    for index in range(176):
+        record = {
+            "workspace_order": index,
+            "keyframe_id": f"kf-{index}",
+            "cloud_npz": str(tmp_path / f"cloud-{index}.npz"),
+            "points": np.ones((64, 3), dtype=np.float64),
+            "colors": np.ones((64, 3), dtype=np.uint8),
+            "aligned_depth": np.ones((16, 16), dtype=np.float64),
+        }
+        records.append(_compact_dense_record(record))
+
+    assert len(records) == 176
+    assert all(item is not None for item in records)
+    assert all("points" not in item for item in records if item is not None)
+    assert all("colors" not in item for item in records if item is not None)
+    assert all("aligned_depth" not in item for item in records if item is not None)

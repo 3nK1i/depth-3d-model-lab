@@ -328,3 +328,435 @@ def build_i5_1a_difficult_handheld_baseline(
         },
         "next": "I5.1B current frozen-foundation difficult-handheld replay.",
     }
+
+# ---------------------------------------------------------------------------
+# I5.1B — current frozen-foundation difficult-handheld replay
+# ---------------------------------------------------------------------------
+
+I51B_SCHEMA_VERSION = 1
+I51B_PHASE = "I5.1B"
+
+_I51B_DECISION_FALSE = (
+    "provider_selected",
+    "provider_promoted",
+    "provider_ranking_created",
+    "universal_provider_winner_declared",
+    "global_scalar_score_created",
+    "auto_policy_implemented",
+    "hybrid_authorized",
+    "dense_consistency_threshold_relaxation_authorized",
+    "metric_scale_claimed",
+    "measurement_authoritative",
+    "certified_metrology",
+    "surface_mesh_generated",
+)
+
+
+def _positive_int(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ReconstructionValidationError(f"I5.1B {label} must be a positive integer.")
+    return int(value)
+
+
+def _positive_float(value: Any, *, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ReconstructionValidationError(f"I5.1B {label} must be a positive finite number.")
+    result = float(value)
+    if result <= 0.0 or result != result or result in (float("inf"), float("-inf")):
+        raise ReconstructionValidationError(f"I5.1B {label} must be a positive finite number.")
+    return result
+
+
+def validate_i5_1a_for_replay(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the frozen I5.1A authorization boundary for fresh replay."""
+    if payload.get("phase") != "I5.1A" or payload.get("status") != "historical_baseline_admitted" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.1B requires a passing frozen I5.1A historical baseline.")
+
+    scenario = _mapping(payload.get("scenario"), label="I5.1A scenario")
+    _require(scenario, "fresh_source_identity_required_for_i5_1b", True, label="I5.1A scenario")
+    if str(scenario.get("scenario_id", "")) != "i5_1_horse_difficult_handheld_baseline":
+        raise ReconstructionValidationError("I5.1B predecessor scenario identity drifted.")
+
+    historical = _mapping(payload.get("historical_baseline"), label="I5.1A historical_baseline")
+    _require(historical, "historical_failure_is_preserved_evidence", True, label="I5.1A historical_baseline")
+    _require(historical, "historical_failure_reclassified_as_pass", False, label="I5.1A historical_baseline")
+    _require(historical, "historical_dense_gate_reached", False, label="I5.1A historical_baseline")
+    if _non_negative_int(historical.get("historical_dense_path_collapsed_to_views"), label="historical_dense_path_collapsed_to_views") != 2:
+        raise ReconstructionValidationError("I5.1B historical Horse two-view baseline drifted.")
+    if _positive_int(historical.get("historical_dense_gate_required_connected_views"), label="historical_dense_gate_required_connected_views") != 10:
+        raise ReconstructionValidationError("I5.1B historical Horse 10-view gate drifted.")
+
+    provenance = _mapping(payload.get("provenance"), label="I5.1A provenance")
+    _require(provenance, "historical_raw_video_content_rehashed_by_i5_1a", False, label="I5.1A provenance")
+    _require(provenance, "no_stronger_historical_source_identity_claim_created", True, label="I5.1A provenance")
+    _require(provenance, "current_replay_must_establish_fresh_source_identity", True, label="I5.1A provenance")
+
+    authority = _mapping(payload.get("authority"), label="I5.1A authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.1A authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.1A authority")
+    for key in (
+        "authoritative_sfm_modified", "provider_selected", "provider_promoted", "auto_policy_implemented",
+        "hybrid_authorized", "metric_scale_claimed", "measurement_authoritative",
+        "certified_metrology", "surface_mesh_generated",
+    ):
+        _require(authority, key, False, label="I5.1A authority")
+
+    authority_audit = _mapping(payload.get("authority_audit"), label="I5.1A authority_audit")
+    _require(authority_audit, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.1A authority_audit")
+    _require(authority_audit, "default_reconstruction_scale_status", "arbitrary", label="I5.1A authority_audit")
+    _require(authority_audit, "permanent_global_view_cap", None, label="I5.1A authority_audit")
+
+    decision = _mapping(payload.get("decision"), label="I5.1A decision")
+    for key in ("i4_closed", "i5_authorized", "i5_1_started", "i5_1a_complete", "i5_1_current_replay_authorized"):
+        _require(decision, key, True, label="I5.1A decision")
+    _require(decision, "i5_1_complete", False, label="I5.1A decision")
+    _require(decision, "i5_2_authorized", False, label="I5.1A decision")
+    for key in _I51B_DECISION_FALSE:
+        _require(decision, key, False, label="I5.1A decision")
+
+    if payload.get("next") != "I5.1B current frozen-foundation difficult-handheld replay.":
+        raise ReconstructionValidationError("I5.1B predecessor next-boundary contract drifted.")
+
+    return {
+        "scenario": deepcopy(dict(scenario)),
+        "historical_baseline": deepcopy(dict(historical)),
+        "provenance": deepcopy(dict(provenance)),
+        "authority": deepcopy(dict(authority)),
+        "authority_audit": deepcopy(dict(authority_audit)),
+        "decision": deepcopy(dict(decision)),
+    }
+
+
+def validate_i5_1b_source_identity(payload: Mapping[str, Any]) -> dict[str, Any]:
+    source = _mapping(payload, label="source_identity")
+    path = str(source.get("path", "")).strip()
+    sha = str(source.get("sha256", "")).strip().lower()
+    if not path:
+        raise ReconstructionValidationError("I5.1B fresh source path is required.")
+    if not _SHA256_RE.fullmatch(sha):
+        raise ReconstructionValidationError("I5.1B fresh source SHA256 is malformed.")
+    result = {
+        "path": path,
+        "sha256": sha,
+        "size_bytes": _positive_int(source.get("size_bytes"), label="source size_bytes"),
+        "total_frames": _positive_int(source.get("total_frames"), label="source total_frames"),
+        "fps": _positive_float(source.get("fps"), label="source fps"),
+        "duration_seconds": _positive_float(source.get("duration_seconds"), label="source duration_seconds"),
+        "width": _positive_int(source.get("width"), label="source width"),
+        "height": _positive_int(source.get("height"), label="source height"),
+    }
+    return result
+
+
+def _i51b_i1_selected_views(payload: Mapping[str, Any]) -> int:
+    selected = payload.get("selected_path")
+    if not isinstance(selected, Mapping):
+        return 0
+    value = selected.get("view_count", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReconstructionValidationError("I5.1B I1 selected_path.view_count is invalid.")
+    return int(value)
+
+
+def validate_i5_1b_i1(payload: Mapping[str, Any]) -> dict[str, Any]:
+    summary = _mapping(payload, label="I1 summary")
+    if summary.get("phase") != "I1":
+        raise ReconstructionValidationError("I5.1B requires an I1 replay summary.")
+    status = str(summary.get("status", ""))
+    if status not in {"pass", "degraded", "failed"}:
+        raise ReconstructionValidationError("I5.1B I1 replay status is invalid.")
+    authority = summary.get("authority")
+    if isinstance(authority, Mapping):
+        for key in ("metric_scale_claimed", "measurement_authoritative", "surface_mesh_generated"):
+            _require(authority, key, False, label="I1 authority")
+    if status == "failed" and not str(summary.get("failed_stage", "")).strip():
+        raise ReconstructionValidationError("I5.1B failed I1 summary must name failed_stage.")
+    _i51b_i1_selected_views(summary)
+    return deepcopy(dict(summary))
+
+
+def validate_i5_1b_localization(payload: Mapping[str, Any], *, source_sha256: str) -> dict[str, Any]:
+    summary = _mapping(payload, label="I4.1.6A localization summary")
+    if summary.get("phase") != "I4.1.6A" or summary.get("status") not in {"localization_ready", "localization_degraded"}:
+        raise ReconstructionValidationError("I5.1B localization summary contract drifted.")
+    source = _mapping(summary.get("source"), label="I4.1.6A source")
+    if str(source.get("source_sha256", "")).lower() != str(source_sha256).lower():
+        raise ReconstructionValidationError("I5.1B localization source SHA256 does not match the fresh replay source.")
+    decision = _mapping(summary.get("decision"), label="I4.1.6A decision")
+    for key in ("single_authoritative_sfm_frame", "global_full_span_sampling_preserved", "extra_dense_candidates_are_observations_not_second_map", "extra_dense_candidates_require_pose_localization"):
+        _require(decision, key, True, label="I4.1.6A decision")
+    for key in (
+        "production_sampling_integration_authorized", "production_default_changed",
+        "dense_consistency_threshold_relaxation_authorized", "metric_scale_claimed",
+        "measurement_authoritative", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I4.1.6A decision")
+    plans = summary.get("plans")
+    if not isinstance(plans, list) or not plans:
+        raise ReconstructionValidationError("I5.1B localization summary requires plan evidence.")
+    for plan in plans:
+        p = _mapping(plan, label="I4.1.6A plan")
+        _positive_int(p.get("planned_candidates"), label="localization planned_candidates")
+        extra = _non_negative_int(p.get("extra_candidates"), label="localization extra_candidates")
+        accepted = _non_negative_int(p.get("accepted_extra_candidates"), label="localization accepted_extra_candidates")
+        if accepted > extra:
+            raise ReconstructionValidationError("I5.1B localization accepted extras exceed extra candidates.")
+        fraction = float(p.get("extra_localization_fraction", -1.0))
+        if not 0.0 <= fraction <= 1.0:
+            raise ReconstructionValidationError("I5.1B localization fraction must be in [0,1].")
+    return deepcopy(dict(summary))
+
+
+def validate_i5_1b_dense_ab(payload: Mapping[str, Any]) -> dict[str, Any]:
+    summary = _mapping(payload, label="I4.1.6B dense A/B summary")
+    if summary.get("phase") != "I4.1.6B" or summary.get("status") != "real_dense_ab_ready":
+        raise ReconstructionValidationError("I5.1B dense A/B summary contract drifted.")
+    decision = _mapping(summary.get("decision"), label="I4.1.6B decision")
+    for key in ("single_authoritative_sfm_frame", "global_full_span_sampling_preserved", "extra_dense_candidates_are_observations_not_second_map", "extra_dense_candidates_pose_localized"):
+        _require(decision, key, True, label="I4.1.6B decision")
+    for key in (
+        "production_sampling_integration_authorized", "production_default_changed",
+        "metric_scale_claimed", "measurement_authoritative", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I4.1.6B decision")
+    thresholds = _mapping(summary.get("thresholds"), label="I4.1.6B thresholds")
+    _require(thresholds, "threshold_relaxation", False, label="I4.1.6B thresholds")
+    if _positive_int(thresholds.get("max_bridge_gap"), label="dense max_bridge_gap") > 6:
+        raise ReconstructionValidationError("I5.1B dense max_bridge_gap exceeds the qualified range.")
+    plans = summary.get("plans")
+    if not isinstance(plans, list) or not plans:
+        raise ReconstructionValidationError("I5.1B dense A/B summary requires plan evidence.")
+    for plan in plans:
+        p = _mapping(plan, label="I4.1.6B plan")
+        _positive_int(p.get("planned_candidates"), label="dense planned_candidates")
+        accepted = _non_negative_int(p.get("alignment_accepted"), label="dense alignment_accepted")
+        if accepted > int(p.get("planned_candidates")):
+            raise ReconstructionValidationError("I5.1B dense alignment accepted count exceeds candidates.")
+        selected = _non_negative_int(p.get("selected_qualified_views"), label="dense selected_qualified_views")
+        if p.get("dense_gate_pass") is True and selected < 10:
+            raise ReconstructionValidationError("I5.1B dense gate cannot pass below ten selected qualified views.")
+    return deepcopy(dict(summary))
+
+
+def _validate_i5_1b_replay_parameters(payload: Mapping[str, Any]) -> dict[str, Any]:
+    params = _mapping(payload, label="replay_parameters")
+    profile = str(params.get("profile", ""))
+    matching = str(params.get("matching", ""))
+    if profile not in {"efficient", "balanced", "high_quality"}:
+        raise ReconstructionValidationError("I5.1B replay profile is invalid.")
+    if matching != "exhaustive":
+        raise ReconstructionValidationError("I5.1B controlled Horse replay requires exhaustive matching; strategy evaluation belongs to I5.10.")
+    result = {
+        "profile": profile,
+        "matching": matching,
+        "max_keyframes": _positive_int(params.get("max_keyframes"), label="max_keyframes"),
+        "max_dense_views": _positive_int(params.get("max_dense_views"), label="max_dense_views"),
+        "dense_candidate_cap": _positive_int(params.get("dense_candidate_cap"), label="dense_candidate_cap"),
+        "video_target_fps": _positive_float(params.get("video_target_fps"), label="video_target_fps"),
+        "local_target_fps": _positive_float(params.get("local_target_fps"), label="local_target_fps"),
+        "process_res": _positive_int(params.get("process_res"), label="process_res"),
+        "controlled_experiment_bounds_only": True,
+        "permanent_global_view_cap": None,
+    }
+    if result["max_keyframes"] < 10 or result["max_dense_views"] < 10:
+        raise ReconstructionValidationError("I5.1B replay requires at least ten global keyframes/dense views.")
+    if result["dense_candidate_cap"] < result["max_keyframes"]:
+        raise ReconstructionValidationError("I5.1B dense candidate cap must cover the global replay bound.")
+    return result
+
+
+def _fresh_best_selected(dense_ab: Mapping[str, Any] | None, global_selected: int) -> int:
+    best = int(global_selected)
+    if dense_ab is None:
+        return best
+    plans = dense_ab.get("plans", [])
+    if isinstance(plans, list):
+        for plan in plans:
+            if isinstance(plan, Mapping):
+                value = plan.get("selected_qualified_views", 0)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    best = max(best, int(value))
+    return best
+
+
+def build_i5_1b_difficult_handheld_replay(
+    *,
+    i5_1a_result: Mapping[str, Any],
+    i5_1a_sha256: str,
+    source_identity: Mapping[str, Any],
+    i1_summary: Mapping[str, Any],
+    localization_summary: Mapping[str, Any] | None,
+    dense_ab_summary: Mapping[str, Any] | None,
+    stage_return_codes: Mapping[str, Any],
+    replay_parameters: Mapping[str, Any],
+) -> dict[str, Any]:
+    predecessor = validate_i5_1a_for_replay(i5_1a_result)
+    predecessor_sha = str(i5_1a_sha256).strip().lower()
+    if not _SHA256_RE.fullmatch(predecessor_sha):
+        raise ReconstructionValidationError("I5.1B I5.1A SHA256 binding is malformed.")
+    source = validate_i5_1b_source_identity(source_identity)
+    i1 = validate_i5_1b_i1(i1_summary)
+    localization = None if localization_summary is None else validate_i5_1b_localization(
+        localization_summary, source_sha256=source["sha256"]
+    )
+    dense = None if dense_ab_summary is None else validate_i5_1b_dense_ab(dense_ab_summary)
+    params = _validate_i5_1b_replay_parameters(replay_parameters)
+
+    return_codes = _mapping(stage_return_codes, label="stage_return_codes")
+    i1_rc = return_codes.get("i1")
+    loc_rc = return_codes.get("localization")
+    dense_rc = return_codes.get("dense_ab")
+    if isinstance(i1_rc, bool) or not isinstance(i1_rc, int):
+        raise ReconstructionValidationError("I5.1B I1 return code must be an integer.")
+    if i1_rc not in {0, 2}:
+        raise ReconstructionValidationError("I5.1B I1 return code is outside the qualified replay contract {0,2}.")
+    if localization is None and loc_rc is not None:
+        raise ReconstructionValidationError("I5.1B localization return code exists without localization evidence.")
+    if localization is not None and (isinstance(loc_rc, bool) or not isinstance(loc_rc, int)):
+        raise ReconstructionValidationError("I5.1B localization return code must be an integer when localization ran.")
+    if localization is not None and loc_rc not in {0, 3}:
+        raise ReconstructionValidationError("I5.1B localization return code is outside the qualified replay contract {0,3}.")
+    if dense is None and dense_rc is not None:
+        raise ReconstructionValidationError("I5.1B dense return code exists without dense A/B evidence.")
+    if dense is not None and (isinstance(dense_rc, bool) or not isinstance(dense_rc, int)):
+        raise ReconstructionValidationError("I5.1B dense return code must be an integer when dense A/B ran.")
+    if dense is not None and dense_rc != 0:
+        raise ReconstructionValidationError("I5.1B dense A/B evidence requires a zero runner return code.")
+    if dense is not None:
+        dense_source = dense.get("source")
+        if not isinstance(dense_source, Mapping) or str(dense_source.get("video", "")) != source["path"]:
+            raise ReconstructionValidationError("I5.1B dense A/B source path does not match the fresh replay source.")
+
+    i1_status = str(i1.get("status"))
+    global_selected = _i51b_i1_selected_views(i1)
+    dense_gate = False
+    recommended_plan = None
+    if dense is not None:
+        plans = dense.get("plans", [])
+        dense_gate = any(bool(item.get("dense_gate_pass")) for item in plans if isinstance(item, Mapping))
+        decision = _mapping(dense.get("decision"), label="I4.1.6B decision")
+        recommended_plan = str(decision.get("recommended_plan", "")) or None
+
+    if i1_status == "failed" and str(i1.get("failed_stage")) == "sfm":
+        quality_status = "rejected"
+        failed_stage = "sfm"
+    elif global_selected >= 10 or dense_gate:
+        quality_status = "pass"
+        failed_stage = None
+    else:
+        quality_status = "degraded"
+        failed_stage = str(i1.get("failed_stage", "")) or (
+            "decoupled_localization" if localization is not None and localization.get("status") == "localization_degraded" else "dense_qualification"
+        )
+
+    best_selected = _fresh_best_selected(dense, global_selected)
+    historical = predecessor["historical_baseline"]
+    historical_selected = int(historical["historical_dense_path_collapsed_to_views"])
+
+    execution = {
+        "current_difficult_handheld_replay_started": True,
+        "global_i1_executed": True,
+        "sfm_rerun": True,
+        "global_da3_dense_executed": bool(i1_status != "failed" or str(i1.get("failed_stage")) != "sfm"),
+        "localization_executed": localization is not None,
+        "dense_ab_executed": dense is not None,
+        "da3_extra_candidates_executed": bool(dense is not None),
+        "dense_pair_rerun": bool(dense is not None),
+        "fusion_may_execute_inside_i1": True,
+        "production_default_modified": False,
+        "stage_return_codes": {
+            "i1": int(i1_rc),
+            "localization": None if loc_rc is None else int(loc_rc),
+            "dense_ab": None if dense_rc is None else int(dense_rc),
+        },
+    }
+
+    return {
+        "schema_version": I51B_SCHEMA_VERSION,
+        "phase": I51B_PHASE,
+        "status": "replay_evidence_complete",
+        "pass": True,
+        "scope": {
+            "fresh_difficult_handheld_replay_only": True,
+            "provider_specific_robustness_campaign": False,
+            "mp_sfm_strategy_evaluation": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+            "i5_1_final_closure": False,
+        },
+        "source_identity": source,
+        "provenance": {
+            "i5_1a_sha256_bound": True,
+            "i5_1a_sha256": predecessor_sha,
+            "fresh_source_sha256_bound": True,
+            "fresh_source_sha256": source["sha256"],
+            "historical_raw_video_sha256_available": False,
+            "fresh_vs_historical_content_hash_equality_claimed": False,
+            "historical_runtime_summary_json_reconstructed": False,
+            "current_stage_summaries_preserved": True,
+        },
+        "replay_parameters": params,
+        "quality": {
+            "status": quality_status,
+            "failed_stage": failed_stage,
+            "fresh_global_selected_qualified_views": int(global_selected),
+            "fresh_best_selected_qualified_views": int(best_selected),
+            "fresh_dense_gate_reached": bool(global_selected >= 10 or dense_gate),
+            "recommended_decoupled_plan": recommended_plan,
+            "quality_status_is_legitimate_operating_envelope_evidence": True,
+            "quality_status_is_not_provider_ranking": True,
+        },
+        "historical_comparison": {
+            "historical_outcome": historical["historical_outcome"],
+            "historical_selected_qualified_views": historical_selected,
+            "historical_dense_gate_reached": False,
+            "historical_dense_gate_required_connected_views": 10,
+            "fresh_global_selected_qualified_views": int(global_selected),
+            "fresh_best_selected_qualified_views": int(best_selected),
+            "selected_view_gain_over_historical": int(best_selected - historical_selected),
+            "fresh_dense_gate_reached": bool(global_selected >= 10 or dense_gate),
+            "historical_raw_video_sha256_available": False,
+            "fresh_vs_historical_content_hash_equality_claimed": False,
+            "comparison_is_scenario_continuity_not_content_hash_equivalence": True,
+            "counts_are_not_provider_scores": True,
+        },
+        "stage_evidence": {
+            "i1_summary": deepcopy(dict(i1)),
+            "localization_summary": None if localization is None else deepcopy(dict(localization)),
+            "dense_ab_summary": None if dense is None else deepcopy(dict(dense)),
+        },
+        "execution": execution,
+        "authority_audit": deepcopy(predecessor["authority_audit"]),
+        "authority": deepcopy(predecessor["authority"]),
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_started": True,
+            "i5_1a_complete": True,
+            "i5_1b_complete": True,
+            "i5_1c_authorized": True,
+            "i5_1_complete": False,
+            "i5_2_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "dense_consistency_threshold_relaxation_authorized": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_2_low_overlap_not_started": True,
+            "i5_3_blur_exposure_clutter_symmetry_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_evaluation_not_started": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.1C difficult-handheld robustness qualification and closure.",
+    }

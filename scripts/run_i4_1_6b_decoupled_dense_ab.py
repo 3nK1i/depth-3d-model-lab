@@ -13,6 +13,7 @@ metric authority, measurement authority, or mesh authority.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 from math import isfinite
 from pathlib import Path
@@ -402,6 +403,52 @@ def _extra_record(
     return record, summary
 
 
+
+def _compact_dense_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Drop bulk arrays after the canonical cloud has been persisted.
+
+    I4.1.6B may admit well over one hundred full-resolution observations. Keeping
+    every points/depth/color array resident makes host RAM grow linearly with the
+    candidate count. The canonical NPZ is already the authoritative persisted
+    payload for pair diagnostics, so retain only lightweight metadata in memory.
+    """
+    if record is None:
+        return None
+    compact = dict(record)
+    for key in ("points", "colors", "aligned_depth"):
+        compact.pop(key, None)
+    return compact
+
+
+def _hydrate_dense_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Load bulk dense arrays for one record from its persisted canonical NPZ."""
+    cloud_path = Path(str(record.get("cloud_npz", ""))).expanduser().resolve()
+    if not cloud_path.is_file():
+        raise ReconstructionValidationError(
+            f"I4.1.6B dense record canonical cloud missing: {cloud_path}"
+        )
+    try:
+        with np.load(cloud_path, allow_pickle=False) as payload:
+            points = np.asarray(payload["points_reconstruction"], dtype=np.float64)
+            colors = np.asarray(payload["colors_rgb"], dtype=np.uint8)
+            aligned_depth = np.asarray(
+                payload["aligned_depth_reconstruction_units"], dtype=np.float64
+            )
+    except (OSError, ValueError, KeyError) as exc:
+        raise ReconstructionValidationError(
+            f"I4.1.6B unable to hydrate canonical cloud {cloud_path}: {exc}"
+        ) from exc
+    if points.ndim != 2 or points.shape[1] != 3 or colors.shape != points.shape:
+        raise ReconstructionValidationError(
+            f"I4.1.6B hydrated canonical cloud arrays are invalid: {cloud_path}"
+        )
+    hydrated = dict(record)
+    hydrated["points"] = points
+    hydrated["colors"] = colors
+    hydrated["aligned_depth"] = aligned_depth
+    return hydrated
+
+
 def _plan_dense_ab(
     *,
     plan: Any,
@@ -444,12 +491,18 @@ def _plan_dense_ab(
         for order_b in aligned_orders[pos + 1:]:
             if order_b - order_a > int(args.max_bridge_gap):
                 break
-            pair = _diagnose_pair(
-                a=records[order_a], b=records[order_b], thresholds=dict(_DENSE_THRESHOLDS),
-                scene_scale=float(scene_scale), sparse_landmarks=sparse_points, output_dir=pair_dir,
-                max_points_per_direction=int(args.max_points_per_direction),
-                nn_max_points_per_view=int(args.nn_max_points_per_view),
-            )
+            record_a = _hydrate_dense_record(records[order_a])
+            record_b = _hydrate_dense_record(records[order_b])
+            try:
+                pair = _diagnose_pair(
+                    a=record_a, b=record_b, thresholds=dict(_DENSE_THRESHOLDS),
+                    scene_scale=float(scene_scale), sparse_landmarks=sparse_points, output_dir=pair_dir,
+                    max_points_per_direction=int(args.max_points_per_direction),
+                    nn_max_points_per_view=int(args.nn_max_points_per_view),
+                )
+            finally:
+                del record_a, record_b
+                gc.collect()
             pair["campaign_stage"] = "I4.1.6B"
             pair["plan_name"] = plan.mode.value
             pair["source_sequence_indices"] = [
@@ -580,7 +633,7 @@ def main() -> int:
         record, summary = _load_reused_dense_candidate(order=int(workspace.order), dense_dir=dense_dir, sfm_result=sfm_result)
         base = dict(summary); base["source_sequence_index"] = int(source_index); base["global_anchor_reused"] = True
         if record is not None:
-            clone = dict(record); clone["source_sequence_index"] = int(source_index); record = clone
+            clone = dict(record); clone["source_sequence_index"] = int(source_index); record = _compact_dense_record(clone)
         global_records_by_source[int(source_index)] = (record, base)
 
     extra_records_by_source: dict[int, tuple[dict[str, Any] | None, dict[str, Any]]] = {}
@@ -604,9 +657,12 @@ def main() -> int:
             i4_1_6a_dir=a_dir, da3_dir=output / "01_da3_extra_candidates",
             output=output, args=args,
         )
-        extra_records_by_source[source_index] = (record, summary)
+        alignment_accepted = record is not None
+        extra_records_by_source[source_index] = (_compact_dense_record(record), summary)
+        del record
+        gc.collect()
         print(
-            f"  alignment={'PASS' if record is not None else 'REJECTED'} "
+            f"  alignment={'PASS' if alignment_accepted else 'REJECTED'} "
             f"scale={summary.get('scale_to_reconstruction_units')} reason={summary.get('rejection_code')}",
             flush=True,
         )
