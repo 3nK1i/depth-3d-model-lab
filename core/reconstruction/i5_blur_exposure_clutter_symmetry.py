@@ -1108,6 +1108,364 @@ def build_i5_3b_blur_exposure_clutter_symmetry_replay(
     }
 
 
+# ---------------------------------------------------------------------------
+# I5.3C — blur / exposure / clutter / symmetry robustness qualification + closure
+# ---------------------------------------------------------------------------
+
+I53C_SCHEMA_VERSION = 1
+I53C_PHASE = "I5.3C"
+I53C_RECEIPT_PHASE = "I5.3C_QUALIFICATION_RECEIPT"
+
+
+def _i53c_registration_string(scenario: Mapping[str, Any], *, label: str) -> str:
+    input_images = scenario.get("input_images")
+    registered_images = scenario.get("registered_images")
+    if not isinstance(input_images, int) or input_images <= 0:
+        raise ReconstructionValidationError(f"I5.3C {label} input_images is invalid.")
+    if not isinstance(registered_images, int) or registered_images < 0 or registered_images > input_images:
+        raise ReconstructionValidationError(f"I5.3C {label} registered_images is invalid.")
+    ratio = scenario.get("registration_ratio")
+    expected_ratio = registered_images / input_images
+    if not isinstance(ratio, (int, float)) or not isfinite(float(ratio)) or abs(float(ratio) - expected_ratio) > 1e-9:
+        raise ReconstructionValidationError(f"I5.3C {label} registration ratio is inconsistent with image counts.")
+    full = scenario.get("full_input_scope_registered")
+    partial = scenario.get("partial_registration_preserved")
+    if full is not (registered_images == input_images):
+        raise ReconstructionValidationError(f"I5.3C {label} full-input registration flag is inconsistent.")
+    if partial is not (0 < registered_images < input_images):
+        raise ReconstructionValidationError(f"I5.3C {label} partial-registration flag is inconsistent.")
+    return f"{registered_images}/{input_images}"
+
+
+def validate_i5_3b_for_i5_3c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact evidence-complete I5.3B replay being closed by I5.3C."""
+    if payload.get("phase") != I53B_PHASE or payload.get("status") != "blur_exposure_clutter_symmetry_replay_evidence_complete" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.3C requires the evidence-complete I5.3B replay record.")
+    quality_status = str(payload.get("quality_status", ""))
+    if quality_status not in {"pass", "degraded", "rejected"}:
+        raise ReconstructionValidationError("I5.3C I5.3B quality status is invalid.")
+
+    scope = _mapping(payload.get("scope"), label="I5.3B scope")
+    for key in (
+        "current_frozen_foundation_real_replay", "stress_images_materialized",
+        "control_replay_attempted", "blur_replay_attempted", "underexposure_replay_attempted",
+        "overexposure_replay_attempted", "clutter_replay_attempted", "symmetry_replay_attempted",
+    ):
+        _require(scope, key, True, label="I5.3B scope")
+    for key in (
+        "dense_provider_rerun", "provider_specific_robustness_started", "mp_sfm_strategy_evaluation_started",
+        "thresholds_modified", "production_default_modified", "auto_policy_work_started", "hybrid_experiment_started",
+    ):
+        _require(scope, key, False, label="I5.3B scope")
+
+    provenance = _mapping(payload.get("provenance"), label="I5.3B provenance")
+    for key in (
+        "source_reverified_before_replay", "source_reverified_after_replay", "staged_inputs_reverified_after_replay",
+        "same_production_native_sfm_runner_all_scenarios", "stress_recipes_reused_exactly_from_i5_3a",
+    ):
+        _require(provenance, key, True, label="I5.3B provenance")
+    _require(provenance, "same_matching_policy_all_scenarios", "exhaustive", label="I5.3B provenance")
+    for key in ("result_driven_recipe_tuning", "retry_until_quality_pass", "historical_result_overwritten"):
+        _require(provenance, key, False, label="I5.3B provenance")
+    if not _valid_sha256(provenance.get("frozen_source_asset_set_sha256")):
+        raise ReconstructionValidationError("I5.3C I5.3B source asset-set SHA256 is malformed.")
+
+    bindings = _mapping(payload.get("evidence_bindings"), label="I5.3B evidence_bindings")
+    a_binding = _mapping(bindings.get("i5_3a_admission"), label="I5.3B I5.3A binding")
+    if not _valid_sha256(a_binding.get("sha256")):
+        raise ReconstructionValidationError("I5.3C I5.3B predecessor I5.3A SHA256 binding is malformed.")
+
+    comparison = _validate_i5_3b_image_domain_comparison(
+        _mapping(payload.get("image_domain_revalidation"), label="I5.3B image-domain revalidation")
+    )
+    semantic = {
+        key: bool(_mapping(comparison.get(key), label=f"I5.3B {key} image-domain evidence").get("semantic_stress_revalidated"))
+        for key in ("blur", "underexposure", "overexposure", "clutter", "symmetry")
+    }
+    if provenance.get("failed_semantic_revalidation_preserved") is not (not bool(comparison.get("all_semantic_stresses_revalidated"))):
+        raise ReconstructionValidationError("I5.3C semantic-revalidation provenance flag is inconsistent.")
+
+    scenarios = _mapping(payload.get("scenarios"), label="I5.3B scenarios")
+    for key in ("control", "blur", "underexposure", "overexposure", "clutter", "symmetry"):
+        scenario = _mapping(scenarios.get(key), label=f"I5.3B {key} scenario")
+        _i53c_registration_string(scenario, label=key)
+        status = str(scenario.get("quality_status", ""))
+        if status not in {"accepted", "degraded", "rejected"}:
+            raise ReconstructionValidationError(f"I5.3C {key} scenario quality status is invalid.")
+        sfm_executed = scenario.get("sfm_executed")
+        if sfm_executed is not bool(scope.get(f"{key}_sfm_rerun")):
+            raise ReconstructionValidationError(f"I5.3C {key} SfM execution flag drifted from I5.3B scope.")
+        authority = _mapping(scenario.get("authority"), label=f"I5.3B {key} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.3B {key} authority")
+        for flag in ("metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated"):
+            _require(authority, flag, False, label=f"I5.3B {key} authority")
+        if sfm_executed:
+            _require(authority, "per_scenario_gauge", "arbitrary", label=f"I5.3B {key} authority")
+        else:
+            if status != "rejected":
+                raise ReconstructionValidationError(f"I5.3C {key} pre-SfM evidence must retain rejected quality status.")
+            _require(scenario, "registration_attempted", False, label=f"I5.3B {key} pre-SfM evidence")
+            _require(scenario, "pre_sfm_ingestion_rejected", True, label=f"I5.3B {key} pre-SfM evidence")
+            _require(scenario, "rejection_stage", "ingestion", label=f"I5.3B {key} pre-SfM evidence")
+            _require(authority, "per_scenario_gauge", "unavailable_no_sfm_model", label=f"I5.3B {key} authority")
+
+    if scenarios["control"].get("quality_status") == "rejected" and quality_status != "rejected":
+        raise ReconstructionValidationError("I5.3C rejected control must remain an overall rejected replay.")
+    if quality_status == "pass":
+        if not comparison.get("all_semantic_stresses_revalidated"):
+            raise ReconstructionValidationError("I5.3C PASS replay requires all semantic stresses to be revalidated.")
+        if any(_mapping(scenarios[key], label=f"I5.3B {key}").get("quality_status") != "accepted" for key in scenarios):
+            raise ReconstructionValidationError("I5.3C PASS replay requires accepted quality for every scenario.")
+
+    authority = _mapping(payload.get("authority"), label="I5.3B authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.3B authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.3B authority")
+    for key in (
+        "authoritative_sfm_modified", "provider_selected", "provider_promoted", "auto_policy_implemented",
+        "hybrid_authorized", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(authority, key, False, label="I5.3B authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.3B decision")
+    for key in (
+        "i4_closed", "i5_authorized", "i5_1_complete", "i5_2_complete", "i5_3_started",
+        "i5_3a_complete", "i5_3b_complete", "i5_3c_qualification_closure_authorized",
+    ):
+        _require(decision, key, True, label="I5.3B decision")
+    for key in (
+        "i5_3_complete", "i5_4_authorized", "provider_selected", "provider_promoted", "provider_ranking_created",
+        "universal_provider_winner_declared", "global_scalar_score_created", "mp_sfm_authorized",
+        "auto_policy_implemented", "hybrid_authorized", "threshold_relaxation_authorized",
+        "production_default_modified", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.3B decision")
+    if payload.get("next") != "I5.3C blur / exposure / clutter / symmetry robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.3C predecessor next-boundary contract drifted.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_3c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("phase") != I53C_RECEIPT_PHASE or payload.get("status") != "pass" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.3C requires a passing qualification regression receipt.")
+    scope = _mapping(payload.get("scope"), label="I5.3C receipt scope")
+    for key in (
+        "focused_i5_3c_tests", "predecessor_i5_3_regression", "real_replay_contract_regression",
+        "stress_conclusion_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.3C receipt scope")
+    for key in (
+        "sfm_rerun", "stress_images_rematerialized", "dense_provider_rerun", "quality_replay_rerun",
+        "thresholds_modified", "production_default_modified", "mp_sfm_started", "auto_policy_implemented",
+        "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.3C receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.3C receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.3C receipt test counts must be non-negative integers.")
+    if focused < 10 or predecessor < 40 or combined < 50 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.3C receipt coverage is below the required closure floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.3C receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.3C receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def _i53c_stress_conclusion(
+    *,
+    name: str,
+    scenario: Mapping[str, Any],
+    image_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    semantic = bool(image_evidence.get("semantic_stress_revalidated"))
+    registration = _i53c_registration_string(scenario, label=name)
+    status = str(scenario.get("quality_status"))
+    input_images = int(scenario["input_images"])
+    registered_images = int(scenario["registered_images"])
+    if not semantic:
+        conclusion = "inconclusive_proxy_not_revalidated"
+        qualified = False
+    elif scenario.get("pre_sfm_ingestion_rejected") is True:
+        conclusion = "outside_current_sparse_sfm_ingestion_envelope"
+        qualified = False
+    elif status == "rejected":
+        conclusion = "outside_current_sparse_sfm_reconstruction_envelope"
+        qualified = False
+    elif registered_images == input_images and status == "accepted":
+        conclusion = "survived_admitted_stress_case"
+        qualified = True
+    elif 0 < registered_images < input_images:
+        conclusion = "degraded_partial_registration"
+        qualified = False
+    else:
+        conclusion = "degraded_quality"
+        qualified = False
+    return {
+        "semantic_stress_revalidated": semantic,
+        "scenario_quality_status": status,
+        "registration": registration,
+        "sfm_executed": bool(scenario.get("sfm_executed")),
+        "pre_sfm_ingestion_rejected": bool(scenario.get("pre_sfm_ingestion_rejected", False)),
+        "robustness_conclusion": conclusion,
+        "robustness_qualified": qualified,
+        "universal_robustness_claimed": False,
+    }
+
+
+def build_i5_3c_blur_exposure_clutter_symmetry_closure(
+    *,
+    i5_3a_result: Mapping[str, Any],
+    i5_3a_binding: I51EvidenceBinding,
+    i5_3b_result: Mapping[str, Any],
+    i5_3b_binding: I51EvidenceBinding,
+    qualification_receipt: Mapping[str, Any],
+    qualification_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    admission = validate_i5_3a_for_i5_3b(i5_3a_result)
+    replay = validate_i5_3b_for_i5_3c(i5_3b_result)
+    receipt = validate_i5_3c_receipt(qualification_receipt)
+
+    replay_bindings = _mapping(replay.get("evidence_bindings"), label="I5.3B evidence_bindings")
+    replay_a_binding = _mapping(replay_bindings.get("i5_3a_admission"), label="I5.3B I5.3A binding")
+    if str(replay_a_binding.get("sha256", "")).lower() != str(i5_3a_binding.sha256).lower():
+        raise ReconstructionValidationError("I5.3C I5.3B predecessor SHA does not match the independently verified I5.3A artifact.")
+    source = _mapping(admission.get("source_identity"), label="I5.3A source_identity")
+    provenance = _mapping(replay.get("provenance"), label="I5.3B provenance")
+    if provenance.get("frozen_source_asset_set_sha256") != source.get("asset_set_sha256"):
+        raise ReconstructionValidationError("I5.3C I5.3A/I5.3B source asset identity drifted.")
+    if replay.get("authority") != admission.get("authority"):
+        raise ReconstructionValidationError("I5.3C authority drifted between I5.3A and I5.3B.")
+
+    scenarios = _mapping(replay.get("scenarios"), label="I5.3B scenarios")
+    comparison = _mapping(replay.get("image_domain_revalidation"), label="I5.3B image-domain revalidation")
+    registrations = {
+        key: _i53c_registration_string(_mapping(scenarios.get(key), label=f"I5.3B {key}"), label=key)
+        for key in ("control", "blur", "underexposure", "overexposure", "clutter", "symmetry")
+    }
+    conclusions = {
+        key: _i53c_stress_conclusion(
+            name=key,
+            scenario=_mapping(scenarios.get(key), label=f"I5.3B {key}"),
+            image_evidence=_mapping(comparison.get(key), label=f"I5.3B image-domain {key}"),
+        )
+        for key in ("blur", "underexposure", "overexposure", "clutter", "symmetry")
+    }
+    quality_status = str(replay.get("quality_status"))
+    clutter_inconclusive = conclusions["clutter"]["robustness_conclusion"] == "inconclusive_proxy_not_revalidated"
+    if quality_status == "degraded" and clutter_inconclusive:
+        operating_envelope = "degraded_on_admitted_castle_p19_visual_stress_cases_with_clutter_inconclusive"
+    elif quality_status == "pass":
+        operating_envelope = "qualified_on_admitted_castle_p19_visual_stress_cases"
+    elif quality_status == "degraded":
+        operating_envelope = "degraded_on_admitted_castle_p19_visual_stress_cases"
+    else:
+        operating_envelope = "rejected_on_admitted_castle_p19_visual_stress_cases"
+
+    semantic_confirmed = [key for key, value in conclusions.items() if value["semantic_stress_revalidated"]]
+    semantic_inconclusive = [key for key, value in conclusions.items() if not value["semantic_stress_revalidated"]]
+    authority = deepcopy(dict(_mapping(replay.get("authority"), label="I5.3B authority")))
+    return {
+        "schema_version": I53C_SCHEMA_VERSION,
+        "phase": I53C_PHASE,
+        "status": "blur_exposure_clutter_symmetry_robustness_qualified",
+        "pass": True,
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "i5_3a_admission_reused": True,
+            "i5_3b_real_replay_reused": True,
+            "sfm_rerun": False,
+            "stress_images_rematerialized": False,
+            "dense_provider_rerun": False,
+            "quality_replay_rerun": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_3a_admission": i5_3a_binding.as_dict(),
+            "i5_3b_replay": i5_3b_binding.as_dict(),
+            "i5_3c_qualification_receipt": qualification_receipt_binding.as_dict(),
+        },
+        "qualification": {
+            "quality_status": quality_status,
+            "operating_envelope": operating_envelope,
+            "source_asset_set_sha256": source["asset_set_sha256"],
+            "control_registration": registrations["control"],
+            "blur_registration": registrations["blur"],
+            "underexposure_registration": registrations["underexposure"],
+            "overexposure_registration": registrations["overexposure"],
+            "clutter_registration": registrations["clutter"],
+            "symmetry_registration": registrations["symmetry"],
+            "semantic_stresses_confirmed": semantic_confirmed,
+            "semantic_stresses_inconclusive": semantic_inconclusive,
+            "clutter_proxy_inconclusive": clutter_inconclusive,
+            "retry_until_quality_pass": False,
+            "result_driven_recipe_tuning": False,
+            "universal_visual_stress_robustness_claimed": False,
+            "clutter_robustness_claimed": False,
+            "dense_reconstruction_robustness_claimed": False,
+            "provider_robustness_claimed": False,
+        },
+        "stress_conclusions": conclusions,
+        "image_domain_evidence": deepcopy(dict(comparison)),
+        "regression_summary": {
+            "focused_i5_3c_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_complete": True,
+            "i5_2_complete": True,
+            "i5_3_started": True,
+            "i5_3a_complete": True,
+            "i5_3b_complete": True,
+            "i5_3c_complete": True,
+            "i5_3_complete": True,
+            "i5_3_quality_status": quality_status,
+            "i5_4_authorized": True,
+            "i5_4_started": False,
+            "i5_5_authorized": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "production_default_modified": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_4_forward_motion_kitti_authorized_not_started": True,
+            "i5_5_dynamic_scene_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_deferred_to_i5_10": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.4 forward-motion / KITTI robustness.",
+    }
+
+
 __all__ = [
     "I53A_SCHEMA_VERSION",
     "I53A_PHASE",
@@ -1115,6 +1473,9 @@ __all__ = [
     "I53B_SCHEMA_VERSION",
     "I53B_PHASE",
     "I53B_RECEIPT_PHASE",
+    "I53C_SCHEMA_VERSION",
+    "I53C_PHASE",
+    "I53C_RECEIPT_PHASE",
     "I53AStressDesignPolicy",
     "validate_i5_2c_for_i5_3",
     "build_i5_3a_stress_plan",
@@ -1128,4 +1489,7 @@ __all__ = [
     "compare_i5_3b_image_domain",
     "analyze_i5_3b_sfm_report",
     "build_i5_3b_blur_exposure_clutter_symmetry_replay",
+    "validate_i5_3b_for_i5_3c",
+    "validate_i5_3c_receipt",
+    "build_i5_3c_blur_exposure_clutter_symmetry_closure",
 ]
