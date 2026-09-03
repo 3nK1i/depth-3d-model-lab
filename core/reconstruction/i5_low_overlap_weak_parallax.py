@@ -539,3 +539,570 @@ __all__ = [
     "validate_i5_2a_receipt",
     "build_i5_2a_low_overlap_weak_parallax_admission",
 ]
+
+# ---------------------------------------------------------------------------
+# I5.2B — current frozen-foundation real replay
+# ---------------------------------------------------------------------------
+
+import numpy as np
+
+I52B_SCHEMA_VERSION = 1
+I52B_PHASE = "I5.2B"
+I52B_RECEIPT_PHASE = "I5.2B_REPLAY_RECEIPT"
+
+
+def _float_quantiles(values: object) -> dict[str, float | None]:
+    array = np.asarray(values, dtype=np.float64).reshape(-1)
+    array = array[np.isfinite(array)]
+    if len(array) == 0:
+        return {"p05": None, "p25": None, "p50": None, "p75": None, "p95": None}
+    return {
+        "p05": float(np.quantile(array, 0.05)),
+        "p25": float(np.quantile(array, 0.25)),
+        "p50": float(np.quantile(array, 0.50)),
+        "p75": float(np.quantile(array, 0.75)),
+        "p95": float(np.quantile(array, 0.95)),
+    }
+
+
+def validate_i5_2a_for_i5_2b(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("phase") != "I5.2A" or payload.get("status") != "low_overlap_weak_parallax_scenario_admitted" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.2B requires the passing frozen I5.2A admission result.")
+    decision = _mapping(payload.get("decision"), label="I5.2A decision")
+    for key in ("i4_closed", "i5_authorized", "i5_1_complete", "i5_2_started", "i5_2a_complete", "i5_2b_real_replay_authorized"):
+        _require(decision, key, True, label="I5.2A decision")
+    for key in (
+        "i5_2_complete", "i5_3_authorized", "provider_selected", "provider_promoted",
+        "provider_ranking_created", "universal_provider_winner_declared", "global_scalar_score_created",
+        "auto_policy_implemented", "hybrid_authorized", "threshold_relaxation_authorized",
+        "metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.2A decision")
+    scope = _mapping(payload.get("scope"), label="I5.2A scope")
+    for key in ("current_low_overlap_replay_started", "current_weak_parallax_replay_started", "thresholds_modified", "production_default_modified"):
+        _require(scope, key, False, label="I5.2A scope")
+    authority = _mapping(payload.get("authority"), label="I5.2A authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.2A authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.2A authority")
+    for key in _AUTHORITY_FALSE:
+        _require(authority, key, False, label="I5.2A authority")
+    plan = _mapping(payload.get("stress_plan"), label="I5.2A stress_plan")
+    execution = _mapping(plan.get("execution_contract"), label="I5.2A execution_contract")
+    _require(execution, "matching_strategy_locked_for_like_for_like_replay", "exhaustive", label="I5.2A execution_contract")
+    _require(execution, "same_pycolmap_authority_for_control_and_stress_slices", True, label="I5.2A execution_contract")
+    _require(execution, "production_sampling_policy_changed", False, label="I5.2A execution_contract")
+    _require(execution, "permanent_global_view_cap", None, label="I5.2A execution_contract")
+    for key in ("control", "low_overlap_proxy", "weak_parallax_proxy"):
+        scenario = _mapping(plan.get(key), label=f"I5.2A {key}")
+        names = scenario.get("names")
+        indices = scenario.get("indices")
+        count = scenario.get("image_count")
+        if not isinstance(count, int) or count < 3:
+            raise ReconstructionValidationError(f"I5.2B {key} image_count is invalid.")
+        if not isinstance(names, Sequence) or isinstance(names, (str, bytes)) or len(names) != count:
+            raise ReconstructionValidationError(f"I5.2B {key} names do not match image_count.")
+        if not isinstance(indices, Sequence) or isinstance(indices, (str, bytes)) or len(indices) != count:
+            raise ReconstructionValidationError(f"I5.2B {key} indices do not match image_count.")
+    if payload.get("next") != "I5.2B current frozen-foundation low-overlap / weak-parallax replay.":
+        raise ReconstructionValidationError("I5.2B predecessor next-boundary contract drifted.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_2b_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("phase") != I52B_RECEIPT_PHASE or payload.get("status") != "pass" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.2B requires a passing replay regression receipt.")
+    scope = _mapping(payload.get("scope"), label="I5.2B receipt scope")
+    for key in (
+        "focused_i5_2b_tests", "predecessor_i5_2a_regression", "production_native_sfm_contract_regression",
+        "scale_invariant_geometry_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.2B receipt scope")
+    for key in (
+        "real_sfm_executed_by_test_receipt", "dense_provider_rerun", "thresholds_modified",
+        "production_default_modified", "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.2B receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.2B receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.2B receipt test counts must be non-negative integers.")
+    if focused < 15 or predecessor < 30 or combined < 50 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.2B receipt coverage is below the required replay floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.2B receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.2B receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def _scenario_plan_identity(plan: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    names_raw = plan.get("names")
+    indices_raw = plan.get("indices")
+    count = plan.get("image_count")
+    if not isinstance(count, int) or count < 3:
+        raise ReconstructionValidationError("I5.2B scenario plan image_count must be at least three.")
+    if not isinstance(names_raw, Sequence) or isinstance(names_raw, (str, bytes)) or len(names_raw) != count:
+        raise ReconstructionValidationError("I5.2B scenario names do not match image_count.")
+    if not isinstance(indices_raw, Sequence) or isinstance(indices_raw, (str, bytes)) or len(indices_raw) != count:
+        raise ReconstructionValidationError("I5.2B scenario indices do not match image_count.")
+    names = tuple(str(value) for value in names_raw)
+    indices = tuple(int(value) for value in indices_raw)
+    if len(set(names)) != count or len(set(indices)) != count or list(indices) != sorted(indices):
+        raise ReconstructionValidationError("I5.2B scenario plan identity is not unique/ordered.")
+    return names, indices
+
+
+def _registered_components(registered_ids: Sequence[str], pair_common: Mapping[tuple[str, str], int]) -> tuple[int, bool]:
+    nodes = tuple(str(value) for value in registered_ids)
+    if not nodes:
+        return 0, False
+    adjacency = {node: set() for node in nodes}
+    for (a, b), common in pair_common.items():
+        if int(common) > 0:
+            adjacency.setdefault(a, set()).add(b)
+            adjacency.setdefault(b, set()).add(a)
+    seen: set[str] = set()
+    largest = 0
+    for node in nodes:
+        if node in seen:
+            continue
+        stack = [node]
+        size = 0
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            size += 1
+            stack.extend(adjacency.get(current, ()))
+        largest = max(largest, size)
+    return largest, largest == len(nodes)
+
+
+def analyze_i5_2b_sfm_report(
+    report: Mapping[str, Any],
+    *,
+    scenario_plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    if report.get("phase") != "8.3D" or report.get("real_sfm_executed") is not True:
+        raise ReconstructionValidationError("I5.2B requires a real Phase 8.3D PyCOLMAP report.")
+    names, source_indices = _scenario_plan_identity(scenario_plan)
+    result = _mapping(report.get("sfm_result"), label="I5.2B sfm_result")
+    if result.get("backend_id") != "pycolmap-offline-sfm":
+        raise ReconstructionValidationError("I5.2B report is not from the authoritative production-native PyCOLMAP backend.")
+    gauge = _mapping(result.get("gauge"), label="I5.2B gauge")
+    _require(gauge, "scale_status", "arbitrary", label="I5.2B gauge")
+    _require(gauge, "unit_to_metre", None, label="I5.2B gauge")
+    metadata = _mapping(result.get("metadata"), label="I5.2B metadata")
+    _require(metadata, "real_sfm", True, label="I5.2B metadata")
+    _require(metadata, "matching_strategy", "exhaustive", label="I5.2B metadata")
+    workspace = _mapping(result.get("workspace"), label="I5.2B workspace")
+    workspace_images = workspace.get("images")
+    if not isinstance(workspace_images, Sequence) or isinstance(workspace_images, (str, bytes)) or len(workspace_images) != len(names):
+        raise ReconstructionValidationError("I5.2B workspace image count does not match the frozen scenario slice.")
+
+    keyframe_to_name: dict[str, str] = {}
+    planned_names = set(names)
+    for raw in workspace_images:
+        item = _mapping(raw, label="I5.2B workspace image")
+        keyframe_id = str(item.get("keyframe_id", ""))
+        source_locator = str(item.get("source_locator", ""))
+        staged = str(item.get("staged_image_path", ""))
+        candidate = Path(source_locator).name or Path(staged).name
+        if candidate not in planned_names:
+            staged_name = Path(staged).name
+            if staged_name in planned_names:
+                candidate = staged_name
+        if candidate not in planned_names or not keyframe_id:
+            raise ReconstructionValidationError("I5.2B workspace/source identity drifted from the frozen scenario plan.")
+        keyframe_to_name[keyframe_id] = candidate
+    if set(keyframe_to_name.values()) != planned_names:
+        raise ReconstructionValidationError("I5.2B materialized workspace does not contain the exact frozen scenario names.")
+
+    cameras_raw = result.get("cameras")
+    landmarks_raw = result.get("landmarks")
+    statistics = _mapping(result.get("statistics"), label="I5.2B statistics")
+    if not isinstance(cameras_raw, Sequence) or isinstance(cameras_raw, (str, bytes)):
+        raise ReconstructionValidationError("I5.2B cameras must be a sequence.")
+    if not isinstance(landmarks_raw, Sequence) or isinstance(landmarks_raw, (str, bytes)):
+        raise ReconstructionValidationError("I5.2B landmarks must be a sequence.")
+    registered_count = int(statistics.get("registered_keyframes", -1))
+    if registered_count != len(cameras_raw) or int(statistics.get("input_keyframes", -1)) != len(names):
+        raise ReconstructionValidationError("I5.2B SfM statistics do not match scenario/camera counts.")
+
+    source_index_by_name = dict(zip(names, source_indices))
+    camera_centers: list[list[float]] = []
+    registered_keyframes: list[str] = []
+    registered_names: list[str] = []
+    for raw in cameras_raw:
+        camera = _mapping(raw, label="I5.2B camera")
+        keyframe_id = str(camera.get("keyframe_id", ""))
+        if keyframe_id not in keyframe_to_name:
+            raise ReconstructionValidationError("I5.2B registered camera references an unknown workspace keyframe.")
+        matrix = np.asarray(camera.get("T_reconstruction_from_camera"), dtype=np.float64)
+        if matrix.shape != (4, 4) or not np.isfinite(matrix).all() or not np.allclose(matrix[3], [0.0, 0.0, 0.0, 1.0], atol=1e-7):
+            raise ReconstructionValidationError("I5.2B camera pose must be a finite homogeneous 4x4 matrix.")
+        registered_keyframes.append(keyframe_id)
+        registered_names.append(keyframe_to_name[keyframe_id])
+        camera_centers.append(matrix[:3, 3].tolist())
+    if len(registered_keyframes) != len(set(registered_keyframes)):
+        raise ReconstructionValidationError("I5.2B registered keyframes are not unique.")
+
+    registered_set = set(registered_keyframes)
+    visible_landmarks: dict[str, set[str]] = {key: set() for key in registered_keyframes}
+    metric_points: list[list[float]] = []
+    metric_support_rows: list[list[bool]] = []
+    for raw in landmarks_raw:
+        landmark = _mapping(raw, label="I5.2B landmark")
+        landmark_id = str(landmark.get("landmark_id", ""))
+        point = np.asarray(landmark.get("position_reconstruction"), dtype=np.float64)
+        observations = landmark.get("observations")
+        if not landmark_id or point.shape != (3,) or not np.isfinite(point).all():
+            raise ReconstructionValidationError("I5.2B sparse landmark is invalid.")
+        if not isinstance(observations, Sequence) or isinstance(observations, (str, bytes)):
+            raise ReconstructionValidationError("I5.2B sparse landmark observations are invalid.")
+        observed = set()
+        for raw_obs in observations:
+            obs = _mapping(raw_obs, label="I5.2B observation")
+            keyframe_id = str(obs.get("keyframe_id", ""))
+            if keyframe_id in registered_set:
+                observed.add(keyframe_id)
+                visible_landmarks[keyframe_id].add(landmark_id)
+        if len(observed) >= 2:
+            metric_points.append(point.tolist())
+            metric_support_rows.append([key in observed for key in registered_keyframes])
+
+    pair_common: dict[tuple[str, str], int] = {}
+    pair_records: list[dict[str, Any]] = []
+    for i in range(len(registered_keyframes) - 1):
+        a = registered_keyframes[i]
+        a_name = keyframe_to_name[a]
+        set_a = visible_landmarks[a]
+        for j in range(i + 1, len(registered_keyframes)):
+            b = registered_keyframes[j]
+            b_name = keyframe_to_name[b]
+            set_b = visible_landmarks[b]
+            common = len(set_a & set_b)
+            union = len(set_a | set_b)
+            minimum_visible = min(len(set_a), len(set_b))
+            normalized = common / minimum_visible if minimum_visible else 0.0
+            jaccard = common / union if union else 0.0
+            pair_common[(a, b)] = common
+            pair_records.append({
+                "name_a": a_name,
+                "name_b": b_name,
+                "source_index_a": int(source_index_by_name[a_name]),
+                "source_index_b": int(source_index_by_name[b_name]),
+                "source_index_separation": abs(int(source_index_by_name[b_name]) - int(source_index_by_name[a_name])),
+                "common_landmarks": common,
+                "minimum_visible_landmarks": minimum_visible,
+                "normalized_common_over_min_visible": float(normalized),
+                "jaccard": float(jaccard),
+            })
+
+    registered_name_set = set(registered_names)
+    adjacent_records: list[dict[str, Any]] = []
+    for a_name, b_name in zip(names[:-1], names[1:]):
+        if a_name not in registered_name_set or b_name not in registered_name_set:
+            continue
+        record = next((item for item in pair_records if {item["name_a"], item["name_b"]} == {a_name, b_name}), None)
+        if record is not None:
+            adjacent_records.append(record)
+    largest_component, connected = _registered_components(registered_keyframes, pair_common)
+
+    parallax_payload: dict[str, Any]
+    if len(registered_keyframes) >= 2 and metric_points:
+        matrix = np.asarray(metric_support_rows, dtype=bool).T
+        centers = np.asarray(camera_centers, dtype=np.float64)
+        orders = [int(source_index_by_name[name]) for name in registered_names]
+        # The established I2.4 formulation measures maximum supporting-pair
+        # parallax and baseline/range per sparse landmark.  Reimplementing the
+        # small numeric kernel here keeps I5.2B independent of retained-dense
+        # voxel assumptions while preserving the exact scale-invariant meaning.
+        xyz = np.asarray(metric_points, dtype=np.float64)
+        max_angle = np.zeros(len(xyz), dtype=np.float64)
+        max_ratio = np.zeros(len(xyz), dtype=np.float64)
+        for i in range(len(centers) - 1):
+            for j in range(i + 1, len(centers)):
+                mask = matrix[i] & matrix[j]
+                ids = np.flatnonzero(mask)
+                if len(ids) == 0:
+                    continue
+                vi = xyz[ids] - centers[i]
+                vj = xyz[ids] - centers[j]
+                ri = np.linalg.norm(vi, axis=1)
+                rj = np.linalg.norm(vj, axis=1)
+                valid = (ri > 1e-12) & (rj > 1e-12)
+                if not np.any(valid):
+                    continue
+                ids = ids[valid]
+                vi = vi[valid]; vj = vj[valid]; ri = ri[valid]; rj = rj[valid]
+                cosine = np.einsum("ij,ij->i", vi, vj) / (ri * rj)
+                angle = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
+                baseline = float(np.linalg.norm(centers[i] - centers[j]))
+                ratio = baseline / np.maximum((ri + rj) * 0.5, 1e-12)
+                max_angle[ids] = np.maximum(max_angle[ids], angle)
+                max_ratio[ids] = np.maximum(max_ratio[ids], ratio)
+        parallax_payload = {
+            "landmarks_with_two_or_more_registered_observations": int(len(xyz)),
+            "maximum_pair_parallax_degrees_quantiles": _float_quantiles(max_angle),
+            "maximum_baseline_to_range_ratio_quantiles": _float_quantiles(max_ratio),
+            "scale_invariant": True,
+            "absolute_baseline_cross_scenario_comparison_permitted": False,
+            "methodology_lineage": "I2.4 maximum-supporting-pair parallax and baseline/range formulation",
+        }
+    else:
+        parallax_payload = {
+            "landmarks_with_two_or_more_registered_observations": 0,
+            "maximum_pair_parallax_degrees_quantiles": _float_quantiles([]),
+            "maximum_baseline_to_range_ratio_quantiles": _float_quantiles([]),
+            "scale_invariant": True,
+            "absolute_baseline_cross_scenario_comparison_permitted": False,
+            "methodology_lineage": "I2.4 maximum-supporting-pair parallax and baseline/range formulation",
+        }
+
+    quality = _mapping(report.get("quality_assessment", metadata.get("quality_assessment", {})), label="I5.2B quality_assessment")
+    quality_status = str(quality.get("status", ""))
+    if quality_status not in {"accepted", "degraded", "rejected"}:
+        raise ReconstructionValidationError("I5.2B SfM quality status is invalid.")
+    adjacent_norm = [float(item["normalized_common_over_min_visible"]) for item in adjacent_records]
+    adjacent_common = [float(item["common_landmarks"]) for item in adjacent_records]
+    all_norm = [float(item["normalized_common_over_min_visible"]) for item in pair_records]
+    all_common = [float(item["common_landmarks"]) for item in pair_records]
+    return {
+        "scenario_kind": str(scenario_plan.get("kind", "")),
+        "input_images": len(names),
+        "registered_images": registered_count,
+        "registration_ratio": float(registered_count / len(names)),
+        "full_input_scope_registered": registered_count == len(names),
+        "partial_registration_preserved": 0 < registered_count < len(names),
+        "registered_names": registered_names,
+        "quality_status": quality_status,
+        "quality_assessment": deepcopy(dict(quality)),
+        "statistics": deepcopy(dict(statistics)),
+        "geometry": {
+            "covisibility": {
+                "pair_count": len(pair_records),
+                "adjacent_selected_pair_count": len(adjacent_records),
+                "registered_graph_largest_component": int(largest_component),
+                "registered_graph_connected": bool(connected),
+                "all_pair_common_landmarks_quantiles": _float_quantiles(all_common),
+                "all_pair_normalized_overlap_quantiles": _float_quantiles(all_norm),
+                "adjacent_pair_common_landmarks_quantiles": _float_quantiles(adjacent_common),
+                "adjacent_pair_normalized_overlap_quantiles": _float_quantiles(adjacent_norm),
+                "normalization": "common_landmarks / min(visible_landmarks_a, visible_landmarks_b)",
+                "authoritative_source": "PyCOLMAP sparse landmark co-visibility",
+            },
+            "parallax": parallax_payload,
+        },
+        "authority": {
+            "camera_pose_authority_owner": "pycolmap_sfm",
+            "per_scenario_gauge": "arbitrary",
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+    }
+
+
+def _p50(payload: Mapping[str, Any], *keys: str) -> float | None:
+    current: Any = payload
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    if current is None:
+        return None
+    value = float(current)
+    return value if isfinite(value) else None
+
+
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator <= 0.0:
+        return None
+    return float(numerator / denominator)
+
+
+def compare_i5_2b_stress_geometry(
+    *,
+    control: Mapping[str, Any],
+    low_overlap: Mapping[str, Any],
+    weak_parallax: Mapping[str, Any],
+) -> dict[str, Any]:
+    control_cov = _p50(control, "geometry", "covisibility", "adjacent_pair_normalized_overlap_quantiles", "p50")
+    low_cov = _p50(low_overlap, "geometry", "covisibility", "adjacent_pair_normalized_overlap_quantiles", "p50")
+    control_common = _p50(control, "geometry", "covisibility", "adjacent_pair_common_landmarks_quantiles", "p50")
+    low_common = _p50(low_overlap, "geometry", "covisibility", "adjacent_pair_common_landmarks_quantiles", "p50")
+    control_angle = _p50(control, "geometry", "parallax", "maximum_pair_parallax_degrees_quantiles", "p50")
+    weak_angle = _p50(weak_parallax, "geometry", "parallax", "maximum_pair_parallax_degrees_quantiles", "p50")
+    control_ratio = _p50(control, "geometry", "parallax", "maximum_baseline_to_range_ratio_quantiles", "p50")
+    weak_ratio = _p50(weak_parallax, "geometry", "parallax", "maximum_baseline_to_range_ratio_quantiles", "p50")
+
+    low_confirmed = control_common is not None and low_common is not None and low_common < control_common
+    weak_angle_confirmed = control_angle is not None and weak_angle is not None and weak_angle < control_angle
+    weak_ratio_confirmed = control_ratio is not None and weak_ratio is not None and weak_ratio < control_ratio
+    usable = {
+        "control": control.get("quality_status") != "rejected",
+        "low_overlap": low_overlap.get("quality_status") != "rejected",
+        "weak_parallax": weak_parallax.get("quality_status") != "rejected",
+    }
+    return {
+        "comparison_gauge": "per_scenario_arbitrary_sfm_gauge",
+        "scale_invariant_metrics_only": True,
+        "cross_scenario_absolute_baseline_comparison_permitted": False,
+        "low_overlap": {
+            "control_adjacent_common_landmarks_p50": control_common,
+            "stress_adjacent_common_landmarks_p50": low_common,
+            "common_landmark_stress_to_control_ratio": _ratio(low_common, control_common),
+            "control_adjacent_normalized_covisibility_p50": control_cov,
+            "stress_adjacent_normalized_covisibility_p50": low_cov,
+            "normalized_overlap_stress_to_control_ratio": _ratio(low_cov, control_cov),
+            "authoritative_covisibility_reduction_confirmed": bool(low_confirmed),
+            "semantic_confirmation_metric": "median adjacent PyCOLMAP co-visible sparse landmark count",
+            "registered_graph_connected": bool(_mapping(low_overlap.get("geometry"), label="low geometry").get("covisibility", {}).get("registered_graph_connected", False)),
+        },
+        "weak_parallax": {
+            "control_max_pair_parallax_degrees_p50": control_angle,
+            "stress_max_pair_parallax_degrees_p50": weak_angle,
+            "parallax_stress_to_control_ratio": _ratio(weak_angle, control_angle),
+            "authoritative_parallax_reduction_confirmed": bool(weak_angle_confirmed),
+            "control_baseline_to_range_ratio_p50": control_ratio,
+            "stress_baseline_to_range_ratio_p50": weak_ratio,
+            "baseline_ratio_stress_to_control_ratio": _ratio(weak_ratio, control_ratio),
+            "authoritative_baseline_to_range_reduction_confirmed": bool(weak_ratio_confirmed),
+        },
+        "scenario_usable": usable,
+        "semantic_stress_revalidation_complete": bool(low_confirmed and weak_angle_confirmed and weak_ratio_confirmed),
+        "threshold_used_for_semantic_confirmation": None,
+        "directional_comparison_only": True,
+    }
+
+
+def build_i5_2b_low_overlap_weak_parallax_replay(
+    *,
+    i5_2a_result: Mapping[str, Any],
+    i5_2a_binding: I51EvidenceBinding,
+    replay_receipt: Mapping[str, Any],
+    replay_receipt_binding: I51EvidenceBinding,
+    control_analysis: Mapping[str, Any],
+    low_overlap_analysis: Mapping[str, Any],
+    weak_parallax_analysis: Mapping[str, Any],
+    source_reverified_before: bool,
+    source_reverified_after: bool,
+) -> dict[str, Any]:
+    predecessor = validate_i5_2a_for_i5_2b(i5_2a_result)
+    receipt = validate_i5_2b_receipt(replay_receipt)
+    if source_reverified_before is not True or source_reverified_after is not True:
+        raise ReconstructionValidationError("I5.2B source asset identity must be reverified before and after the real replay.")
+    comparison = compare_i5_2b_stress_geometry(
+        control=control_analysis,
+        low_overlap=low_overlap_analysis,
+        weak_parallax=weak_parallax_analysis,
+    )
+    statuses = [str(item.get("quality_status", "")) for item in (control_analysis, low_overlap_analysis, weak_parallax_analysis)]
+    if any(status not in {"accepted", "degraded", "rejected"} for status in statuses):
+        raise ReconstructionValidationError("I5.2B scenario analysis contains an invalid quality status.")
+    if statuses[0] == "rejected":
+        quality_status = "rejected"
+    elif comparison["semantic_stress_revalidation_complete"] and all(status == "accepted" for status in statuses):
+        quality_status = "pass"
+    else:
+        quality_status = "degraded"
+
+    authority = deepcopy(dict(_mapping(predecessor.get("authority"), label="I5.2A authority")))
+    return {
+        "schema_version": I52B_SCHEMA_VERSION,
+        "phase": I52B_PHASE,
+        "status": "low_overlap_weak_parallax_replay_evidence_complete",
+        "pass": True,
+        "quality_status": quality_status,
+        "scope": {
+            "current_frozen_foundation_real_replay": True,
+            "control_sfm_rerun": True,
+            "low_overlap_sfm_rerun": True,
+            "weak_parallax_sfm_rerun": True,
+            "dense_provider_rerun": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_2a_admission": i5_2a_binding.as_dict(),
+            "i5_2b_replay_receipt": replay_receipt_binding.as_dict(),
+        },
+        "provenance": {
+            "frozen_source_asset_set_sha256": predecessor["source_identity"]["asset_set_sha256"],
+            "source_reverified_before_replay": True,
+            "source_reverified_after_replay": True,
+            "same_matching_policy_all_scenarios": "exhaustive",
+            "same_production_native_sfm_runner_all_scenarios": True,
+            "stress_subset_membership_reused_exactly_from_i5_2a": True,
+            "result_driven_subset_tuning": False,
+            "retry_until_quality_pass": False,
+            "historical_result_overwritten": False,
+        },
+        "scenarios": {
+            "control": deepcopy(dict(control_analysis)),
+            "low_overlap": deepcopy(dict(low_overlap_analysis)),
+            "weak_parallax": deepcopy(dict(weak_parallax_analysis)),
+        },
+        "comparison": comparison,
+        "regression_summary": {
+            "focused_i5_2b_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_complete": True,
+            "i5_2_started": True,
+            "i5_2a_complete": True,
+            "i5_2b_complete": True,
+            "i5_2c_qualification_closure_authorized": True,
+            "i5_2_complete": False,
+            "i5_3_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_2c_qualification_closure_authorized_not_started": True,
+            "i5_3_blur_exposure_clutter_symmetry_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_evaluation_not_started": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.2C low-overlap / weak-parallax robustness qualification and closure.",
+    }
+
+
+__all__ += [
+    "I52B_SCHEMA_VERSION",
+    "I52B_PHASE",
+    "I52B_RECEIPT_PHASE",
+    "validate_i5_2a_for_i5_2b",
+    "validate_i5_2b_receipt",
+    "analyze_i5_2b_sfm_report",
+    "compare_i5_2b_stress_geometry",
+    "build_i5_2b_low_overlap_weak_parallax_replay",
+]
