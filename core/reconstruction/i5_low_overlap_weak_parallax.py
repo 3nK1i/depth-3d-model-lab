@@ -1106,3 +1106,305 @@ __all__ += [
     "compare_i5_2b_stress_geometry",
     "build_i5_2b_low_overlap_weak_parallax_replay",
 ]
+
+# ---------------------------------------------------------------------------
+# I5.2C — low-overlap / weak-parallax robustness qualification + closure
+# ---------------------------------------------------------------------------
+
+I52C_SCHEMA_VERSION = 1
+I52C_PHASE = "I5.2C"
+I52C_RECEIPT_PHASE = "I5.2C_QUALIFICATION_RECEIPT"
+
+
+def _i52c_registration_string(scenario: Mapping[str, Any], *, label: str) -> str:
+    input_images = scenario.get("input_images")
+    registered_images = scenario.get("registered_images")
+    if not isinstance(input_images, int) or input_images <= 0:
+        raise ReconstructionValidationError(f"I5.2C {label} input_images is invalid.")
+    if not isinstance(registered_images, int) or registered_images < 0 or registered_images > input_images:
+        raise ReconstructionValidationError(f"I5.2C {label} registered_images is invalid.")
+    ratio = scenario.get("registration_ratio")
+    expected_ratio = registered_images / input_images
+    if not isinstance(ratio, (int, float)) or not isfinite(float(ratio)) or abs(float(ratio) - expected_ratio) > 1e-9:
+        raise ReconstructionValidationError(f"I5.2C {label} registration ratio is inconsistent with image counts.")
+    full = scenario.get("full_input_scope_registered")
+    partial = scenario.get("partial_registration_preserved")
+    if full is not (registered_images == input_images):
+        raise ReconstructionValidationError(f"I5.2C {label} full-input registration flag is inconsistent.")
+    if partial is not (0 < registered_images < input_images):
+        raise ReconstructionValidationError(f"I5.2C {label} partial-registration flag is inconsistent.")
+    return f"{registered_images}/{input_images}"
+
+
+def validate_i5_2b_for_i5_2c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact evidence-complete I5.2B replay being closed by I5.2C."""
+    if payload.get("phase") != I52B_PHASE or payload.get("status") != "low_overlap_weak_parallax_replay_evidence_complete" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.2C requires the passing evidence-complete I5.2B replay record.")
+    quality_status = str(payload.get("quality_status", ""))
+    if quality_status not in {"pass", "degraded", "rejected"}:
+        raise ReconstructionValidationError("I5.2C I5.2B quality status is invalid.")
+
+    scope = _mapping(payload.get("scope"), label="I5.2B scope")
+    for key in ("current_frozen_foundation_real_replay", "control_sfm_rerun", "low_overlap_sfm_rerun", "weak_parallax_sfm_rerun"):
+        _require(scope, key, True, label="I5.2B scope")
+    for key in (
+        "dense_provider_rerun", "provider_specific_robustness_started", "mp_sfm_strategy_evaluation_started",
+        "thresholds_modified", "production_default_modified", "auto_policy_work_started", "hybrid_experiment_started",
+    ):
+        _require(scope, key, False, label="I5.2B scope")
+
+    provenance = _mapping(payload.get("provenance"), label="I5.2B provenance")
+    for key in (
+        "source_reverified_before_replay", "source_reverified_after_replay",
+        "same_production_native_sfm_runner_all_scenarios", "stress_subset_membership_reused_exactly_from_i5_2a",
+    ):
+        _require(provenance, key, True, label="I5.2B provenance")
+    _require(provenance, "same_matching_policy_all_scenarios", "exhaustive", label="I5.2B provenance")
+    for key in ("result_driven_subset_tuning", "retry_until_quality_pass", "historical_result_overwritten"):
+        _require(provenance, key, False, label="I5.2B provenance")
+    if not _valid_sha256(provenance.get("frozen_source_asset_set_sha256")):
+        raise ReconstructionValidationError("I5.2C I5.2B source asset-set SHA256 is malformed.")
+
+    bindings = _mapping(payload.get("evidence_bindings"), label="I5.2B evidence_bindings")
+    a_binding = _mapping(bindings.get("i5_2a_admission"), label="I5.2B I5.2A binding")
+    if not _valid_sha256(a_binding.get("sha256")):
+        raise ReconstructionValidationError("I5.2C I5.2B predecessor I5.2A SHA256 binding is malformed.")
+
+    scenarios = _mapping(payload.get("scenarios"), label="I5.2B scenarios")
+    scenario_quality: dict[str, str] = {}
+    for key in ("control", "low_overlap", "weak_parallax"):
+        scenario = _mapping(scenarios.get(key), label=f"I5.2B {key} scenario")
+        _i52c_registration_string(scenario, label=key)
+        status = str(scenario.get("quality_status", ""))
+        if status not in {"accepted", "degraded", "rejected"}:
+            raise ReconstructionValidationError(f"I5.2C {key} scenario quality status is invalid.")
+        scenario_quality[key] = status
+        authority = _mapping(scenario.get("authority"), label=f"I5.2B {key} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.2B {key} authority")
+        _require(authority, "per_scenario_gauge", "arbitrary", label=f"I5.2B {key} authority")
+        for flag in ("metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated"):
+            _require(authority, flag, False, label=f"I5.2B {key} authority")
+
+    comparison = _mapping(payload.get("comparison"), label="I5.2B comparison")
+    _require(comparison, "scale_invariant_metrics_only", True, label="I5.2B comparison")
+    _require(comparison, "cross_scenario_absolute_baseline_comparison_permitted", False, label="I5.2B comparison")
+    _require(comparison, "threshold_used_for_semantic_confirmation", None, label="I5.2B comparison")
+    _require(comparison, "directional_comparison_only", True, label="I5.2B comparison")
+    low = _mapping(comparison.get("low_overlap"), label="I5.2B low-overlap comparison")
+    weak = _mapping(comparison.get("weak_parallax"), label="I5.2B weak-parallax comparison")
+    semantic_complete = comparison.get("semantic_stress_revalidation_complete") is True
+    if quality_status == "pass":
+        if not semantic_complete:
+            raise ReconstructionValidationError("I5.2C PASS replay lost authoritative stress revalidation.")
+        for key in ("authoritative_covisibility_reduction_confirmed",):
+            _require(low, key, True, label="I5.2B low-overlap comparison")
+        for key in ("authoritative_parallax_reduction_confirmed", "authoritative_baseline_to_range_reduction_confirmed"):
+            _require(weak, key, True, label="I5.2B weak-parallax comparison")
+        if any(status != "accepted" for status in scenario_quality.values()):
+            raise ReconstructionValidationError("I5.2C PASS replay must retain accepted scenario quality states.")
+    elif quality_status in {"degraded", "rejected"}:
+        # Legitimate non-PASS evidence remains closable.  I5.2C must not turn a
+        # degraded/rejected replay into a reason to retune or rerun until PASS.
+        pass
+
+    authority = _mapping(payload.get("authority"), label="I5.2B authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.2B authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.2B authority")
+    for key in _AUTHORITY_FALSE:
+        _require(authority, key, False, label="I5.2B authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.2B decision")
+    for key in ("i4_closed", "i5_authorized", "i5_1_complete", "i5_2_started", "i5_2a_complete", "i5_2b_complete", "i5_2c_qualification_closure_authorized"):
+        _require(decision, key, True, label="I5.2B decision")
+    for key in (
+        "i5_2_complete", "i5_3_authorized", "provider_selected", "provider_promoted", "provider_ranking_created",
+        "universal_provider_winner_declared", "global_scalar_score_created", "auto_policy_implemented", "hybrid_authorized",
+        "threshold_relaxation_authorized", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.2B decision")
+    if payload.get("next") != "I5.2C low-overlap / weak-parallax robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.2C predecessor next-boundary contract drifted.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_2c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("phase") != I52C_RECEIPT_PHASE or payload.get("status") != "pass" or payload.get("pass") is not True:
+        raise ReconstructionValidationError("I5.2C requires a passing qualification regression receipt.")
+    scope = _mapping(payload.get("scope"), label="I5.2C receipt scope")
+    for key in (
+        "focused_i5_2c_tests", "predecessor_i5_2_regression", "real_replay_contract_regression",
+        "stress_geometry_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.2C receipt scope")
+    for key in (
+        "sfm_rerun", "dense_provider_rerun", "quality_replay_rerun", "thresholds_modified",
+        "production_default_modified", "mp_sfm_started", "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.2C receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.2C receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.2C receipt test counts must be non-negative integers.")
+    if focused < 10 or predecessor < 40 or combined < 50 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.2C receipt coverage is below the required closure floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.2C receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.2C receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def build_i5_2c_low_overlap_weak_parallax_closure(
+    *,
+    i5_2a_result: Mapping[str, Any],
+    i5_2a_binding: I51EvidenceBinding,
+    i5_2b_result: Mapping[str, Any],
+    i5_2b_binding: I51EvidenceBinding,
+    qualification_receipt: Mapping[str, Any],
+    qualification_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    admission = validate_i5_2a_for_i5_2b(i5_2a_result)
+    replay = validate_i5_2b_for_i5_2c(i5_2b_result)
+    receipt = validate_i5_2c_receipt(qualification_receipt)
+
+    replay_bindings = _mapping(replay.get("evidence_bindings"), label="I5.2B evidence_bindings")
+    replay_a_binding = _mapping(replay_bindings.get("i5_2a_admission"), label="I5.2B I5.2A binding")
+    if str(replay_a_binding.get("sha256", "")).lower() != str(i5_2a_binding.sha256).lower():
+        raise ReconstructionValidationError("I5.2C I5.2B predecessor SHA does not match the independently verified I5.2A artifact.")
+    source = _mapping(admission.get("source_identity"), label="I5.2A source_identity")
+    provenance = _mapping(replay.get("provenance"), label="I5.2B provenance")
+    if provenance.get("frozen_source_asset_set_sha256") != source.get("asset_set_sha256"):
+        raise ReconstructionValidationError("I5.2C I5.2A/I5.2B source asset identity drifted.")
+    if replay.get("authority") != admission.get("authority"):
+        raise ReconstructionValidationError("I5.2C authority drifted between I5.2A and I5.2B.")
+
+    scenarios = _mapping(replay.get("scenarios"), label="I5.2B scenarios")
+    control = _mapping(scenarios.get("control"), label="I5.2B control")
+    low = _mapping(scenarios.get("low_overlap"), label="I5.2B low overlap")
+    weak = _mapping(scenarios.get("weak_parallax"), label="I5.2B weak parallax")
+    control_reg = _i52c_registration_string(control, label="control")
+    low_reg = _i52c_registration_string(low, label="low_overlap")
+    weak_reg = _i52c_registration_string(weak, label="weak_parallax")
+    comparison = _mapping(replay.get("comparison"), label="I5.2B comparison")
+    low_evidence = deepcopy(dict(_mapping(comparison.get("low_overlap"), label="I5.2B low-overlap comparison")))
+    weak_evidence = deepcopy(dict(_mapping(comparison.get("weak_parallax"), label="I5.2B weak-parallax comparison")))
+    quality_status = str(replay.get("quality_status"))
+    if quality_status == "pass":
+        operating_envelope = "qualified_on_admitted_castle_p19_sparse_sfm_stress_cases"
+    elif quality_status == "degraded":
+        operating_envelope = "degraded_on_admitted_castle_p19_sparse_sfm_stress_cases"
+    else:
+        operating_envelope = "rejected_on_admitted_castle_p19_sparse_sfm_stress_cases"
+
+    authority = deepcopy(dict(_mapping(replay.get("authority"), label="I5.2B authority")))
+    return {
+        "schema_version": I52C_SCHEMA_VERSION,
+        "phase": I52C_PHASE,
+        "status": "low_overlap_weak_parallax_robustness_qualified",
+        "pass": True,
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "i5_2a_admission_reused": True,
+            "i5_2b_real_replay_reused": True,
+            "sfm_rerun": False,
+            "dense_provider_rerun": False,
+            "quality_replay_rerun": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_2a_admission": i5_2a_binding.as_dict(),
+            "i5_2b_replay": i5_2b_binding.as_dict(),
+            "i5_2c_qualification_receipt": qualification_receipt_binding.as_dict(),
+        },
+        "qualification": {
+            "quality_status": quality_status,
+            "operating_envelope": operating_envelope,
+            "source_asset_set_sha256": source["asset_set_sha256"],
+            "control_registration": control_reg,
+            "low_overlap_registration": low_reg,
+            "weak_parallax_registration": weak_reg,
+            "partial_registration_preserved": bool(low.get("partial_registration_preserved") or weak.get("partial_registration_preserved") or control.get("partial_registration_preserved")),
+            "low_overlap_authoritative_revalidation": bool(low_evidence.get("authoritative_covisibility_reduction_confirmed")),
+            "weak_parallax_authoritative_revalidation": bool(
+                weak_evidence.get("authoritative_parallax_reduction_confirmed")
+                and weak_evidence.get("authoritative_baseline_to_range_reduction_confirmed")
+            ),
+            "semantic_stress_revalidation_complete": bool(comparison.get("semantic_stress_revalidation_complete")),
+            "retry_until_quality_pass": False,
+            "result_driven_subset_tuning": False,
+            "universal_low_overlap_robustness_claimed": False,
+            "universal_weak_parallax_robustness_claimed": False,
+            "dense_reconstruction_robustness_claimed": False,
+            "provider_robustness_claimed": False,
+        },
+        "stress_evidence": {
+            "comparison_gauge": comparison.get("comparison_gauge"),
+            "scale_invariant_metrics_only": True,
+            "cross_scenario_absolute_baseline_comparison_permitted": False,
+            "low_overlap": low_evidence,
+            "weak_parallax": weak_evidence,
+        },
+        "regression_summary": {
+            "focused_i5_2c_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_complete": True,
+            "i5_2_started": True,
+            "i5_2a_complete": True,
+            "i5_2b_complete": True,
+            "i5_2c_complete": True,
+            "i5_2_complete": True,
+            "i5_2_quality_status": quality_status,
+            "i5_3_authorized": True,
+            "i5_3_started": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "production_default_modified": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_3_blur_exposure_clutter_symmetry_authorized_not_started": True,
+            "i5_4_forward_motion_kitti_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_deferred_to_i5_10": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.3 blur / exposure / clutter / symmetry.",
+    }
+
+
+__all__ += [
+    "I52C_SCHEMA_VERSION",
+    "I52C_PHASE",
+    "I52C_RECEIPT_PHASE",
+    "validate_i5_2b_for_i5_2c",
+    "validate_i5_2c_receipt",
+    "build_i5_2c_low_overlap_weak_parallax_closure",
+]
