@@ -24,7 +24,11 @@ import json
 from math import isfinite
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Mapping, Sequence
+
+import cv2
+import numpy as np
 
 from core.reconstruction.errors import ReconstructionValidationError
 from core.reconstruction.i5_difficult_handheld_robustness import I51EvidenceBinding
@@ -598,15 +602,722 @@ def build_i5_5a_dynamic_scene_admission(
     }
 
 
+I55B_SCHEMA_VERSION = 1
+I55B_PHASE = "I5.5B"
+I55B_RECEIPT_PHASE = "I5.5B_REPLAY_RECEIPT"
+
+
+def validate_i5_5a_for_i5_5b(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the frozen I5.5A admission before any real replay/materialization."""
+
+    _require(payload, "schema_version", 1, label="I5.5A admission")
+    _require(payload, "phase", "I5.5A", label="I5.5A admission")
+    _require(payload, "status", "controlled_dynamic_scene_scenario_admitted", label="I5.5A admission")
+    _require(payload, "pass", True, label="I5.5A admission")
+
+    scope = _mapping(payload.get("scope"), label="I5.5A scope")
+    for key in (
+        "scenario_admission_only", "i5_4c_closure_reused", "static_multiview_source_bound",
+        "paired_control_dynamic_proxy_frozen",
+    ):
+        _require(scope, key, True, label="I5.5A scope")
+    for key in (
+        "sfm_rerun", "stress_images_materialized", "source_images_modified", "dense_provider_rerun",
+        "dynamic_masking_added", "semantic_segmentation_added", "motion_outlier_filter_added",
+        "provider_specific_robustness_started", "mp_sfm_strategy_evaluation_started", "thresholds_modified",
+        "production_default_modified", "auto_policy_work_started", "hybrid_experiment_started",
+    ):
+        _require(scope, key, False, label="I5.5A scope")
+
+    identity = validate_i5_5a_source_identity(_mapping(payload.get("source_identity"), label="I5.5A source identity"))
+    if int(identity.get("image_count", -1)) < 19:
+        raise ReconstructionValidationError("I5.5B requires the frozen I5.5A source with at least 19 images.")
+
+    semantics = _mapping(payload.get("source_semantics"), label="I5.5A source semantics")
+    _require(semantics, "operator_static_control_confirmation", True, label="I5.5A source semantics")
+    _require(semantics, "operator_confirmation_is_scene_motion_ground_truth", False, label="I5.5A source semantics")
+    _require(semantics, "controlled_dynamic_proxy_created_only_in_i5_5b", True, label="I5.5A source semantics")
+    _require(semantics, "natural_dynamic_scene_ground_truth", False, label="I5.5A source semantics")
+
+    plan = _mapping(payload.get("stress_plan"), label="I5.5A stress plan")
+    control = _mapping(plan.get("static_control"), label="I5.5A static control")
+    stress = _mapping(plan.get("dynamic_foreground_proxy"), label="I5.5A dynamic proxy")
+    expected_indices = list(range(19))
+    expected_names = [str(value) for value in identity["ordered_names"][:19]]
+    for node, label in ((control, "I5.5A static control"), (stress, "I5.5A dynamic proxy")):
+        _require(node, "image_count", 19, label=label)
+        _require(node, "matching_policy", "exhaustive", label=label)
+        _require(node, "max_keyframes", 19, label=label)
+        if [int(value) for value in node.get("indices", [])] != expected_indices:
+            raise ReconstructionValidationError(f"{label} indices drifted from the frozen 0..18 scope.")
+        if [str(value) for value in node.get("names", [])] != expected_names:
+            raise ReconstructionValidationError(f"{label} names drifted from the frozen source scope.")
+        if str(node.get("source_asset_set_sha256", "")).lower() != _scope_asset_sha(identity["files"][:19]):
+            raise ReconstructionValidationError(f"{label} source asset-set SHA256 drifted.")
+    _require(control, "kind", "static_multiview_control", label="I5.5A static control")
+    _require(control, "materialization_in_i5_5a", False, label="I5.5A static control")
+    _require(stress, "kind", "controlled_source_derived_independent_foreground_motion_proxy", label="I5.5A dynamic proxy")
+    _require(stress, "materialization_in_i5_5a", False, label="I5.5A dynamic proxy")
+    _require(stress, "controlled_independent_foreground_motion_proxy", True, label="I5.5A dynamic proxy")
+    _require(stress, "natural_dynamic_scene_ground_truth", False, label="I5.5A dynamic proxy")
+    _require(stress, "dynamic_proxy_motion_independent_of_source_camera_motion_by_construction", True, label="I5.5A dynamic proxy")
+
+    recipe = _mapping(stress.get("materialization_recipe"), label="I5.5A dynamic recipe")
+    _require(recipe, "recipe_version", 1, label="I5.5A dynamic recipe")
+    _require(recipe, "kind", "fixed_source_derived_patch_independent_translation", label="I5.5A dynamic recipe")
+    _require(recipe, "paste_mode", "opaque", label="I5.5A dynamic recipe")
+    _require(recipe, "patch_resize", "none_same_normalized_extent", label="I5.5A dynamic recipe")
+    _require(recipe, "output_encoding", "png_lossless", label="I5.5A dynamic recipe")
+    _require(recipe, "source_file_bytes_modified", False, label="I5.5A dynamic recipe")
+    expected_recipe_sha = _canonical_sha256(recipe)
+    if str(stress.get("recipe_sha256", "")).lower() != expected_recipe_sha:
+        raise ReconstructionValidationError("I5.5A dynamic proxy recipe SHA256 drifted.")
+    if str(payload.get("qualification", {}).get("dynamic_proxy_recipe_sha256", "")).lower() != expected_recipe_sha:
+        raise ReconstructionValidationError("I5.5A qualification recipe SHA256 drifted.")
+
+    required = _mapping(plan.get("required_i5_5b_revalidation"), label="I5.5A I5.5B revalidation contract")
+    for key in (
+        "source_identity_reverified_before_and_after", "same_decoded_source_pixels_for_control_and_stress",
+        "donor_patch_pixel_identity_preserved", "target_centroid_trajectory_matches_frozen_recipe",
+        "changed_pixels_confined_to_frozen_target_boxes", "dynamic_region_feature_bearing_revalidation",
+        "same_production_sfm_configuration_for_control_and_stress",
+        "report_registration_landmarks_observations_reprojection_track_length_and_sparse_component_count",
+        "control_must_be_production_accepted_before_dynamic_robustness_conclusion",
+    ):
+        _require(required, key, True, label="I5.5A I5.5B revalidation contract")
+    for key in ("natural_dynamic_scene_ground_truth", "result_driven_recipe_tuning", "retry_until_quality_pass"):
+        _require(required, key, False, label="I5.5A I5.5B revalidation contract")
+
+    classification = _mapping(plan.get("classification_policy"), label="I5.5A classification policy")
+    _require(classification, "control_not_accepted", "scenario_control_not_qualified_for_dynamic_robustness_conclusion", label="I5.5A classification policy")
+    _require(classification, "control_accepted_stress_accepted", "pass_on_admitted_controlled_dynamic_foreground_proxy", label="I5.5A classification policy")
+    _require(classification, "control_accepted_stress_degraded", "degraded_on_admitted_controlled_dynamic_foreground_proxy", label="I5.5A classification policy")
+    _require(classification, "control_accepted_stress_rejected", "rejected_on_admitted_controlled_dynamic_foreground_proxy", label="I5.5A classification policy")
+    _require(classification, "natural_dynamic_scene_robustness_claimed", False, label="I5.5A classification policy")
+    _require(plan, "result_driven_recipe_tuning", False, label="I5.5A stress plan")
+    _require(plan, "retry_until_quality_pass", False, label="I5.5A stress plan")
+    _require(plan, "production_default_modified", False, label="I5.5A stress plan")
+
+    authority = _mapping(payload.get("authority"), label="I5.5A authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.5A authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.5A authority")
+    for key in (
+        "authoritative_sfm_modified", "provider_selected", "provider_promoted", "auto_policy_implemented",
+        "hybrid_authorized", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(authority, key, False, label="I5.5A authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.5A decision")
+    for key in (
+        "i4_closed", "i5_authorized", "i5_1_complete", "i5_2_complete", "i5_3_complete", "i5_4_complete",
+        "i5_5_started", "i5_5a_complete", "i5_5b_real_replay_authorized",
+    ):
+        _require(decision, key, True, label="I5.5A decision")
+    for key in (
+        "i5_5b_started", "i5_5c_complete", "i5_5_complete", "i5_6_authorized", "provider_specific_robustness_started",
+        "mp_sfm_authorized", "provider_selected", "provider_promoted", "provider_ranking_created",
+        "universal_provider_winner_declared", "global_scalar_score_created", "auto_policy_implemented",
+        "hybrid_authorized", "threshold_relaxation_authorized", "production_default_modified", "metric_scale_claimed",
+        "measurement_authoritative", "certified_metrology", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.5A decision")
+    if payload.get("next") != "I5.5B current frozen-foundation dynamic-scene replay.":
+        raise ReconstructionValidationError("I5.5A next-step boundary does not authorize I5.5B.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_5b_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    _require(payload, "schema_version", 1, label="I5.5B receipt")
+    _require(payload, "phase", I55B_RECEIPT_PHASE, label="I5.5B receipt")
+    _require(payload, "status", "pass", label="I5.5B receipt")
+    _require(payload, "pass", True, label="I5.5B receipt")
+    scope = _mapping(payload.get("scope"), label="I5.5B receipt scope")
+    for key in (
+        "focused_i5_5b_tests", "predecessor_i5_5a_regression", "production_native_sfm_contract_regression",
+        "dynamic_materialization_regression", "dynamic_comparison_regression", "authority_guard_regression",
+        "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.5B receipt scope")
+    for key in (
+        "real_sfm_executed_by_test_receipt", "real_stress_images_materialized_by_test_receipt", "dense_provider_rerun",
+        "dynamic_masking_added", "semantic_segmentation_added", "motion_outlier_filter_added", "thresholds_modified",
+        "production_default_modified", "mp_sfm_started", "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.5B receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.5B receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.5B receipt counts must be non-negative integers.")
+    if focused < 15 or predecessor < 50 or combined < 65 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.5B receipt coverage is below the required replay floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.5B receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.5B receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def _i55b_pixel_box(box: Mapping[str, Any], *, width: int, height: int) -> tuple[int, int, int, int]:
+    if width <= 0 or height <= 0:
+        raise ReconstructionValidationError("I5.5B image dimensions must be positive.")
+    x = float(box.get("x")); y = float(box.get("y")); w = float(box.get("width")); h = float(box.get("height"))
+    if not all(isfinite(value) for value in (x, y, w, h)):
+        raise ReconstructionValidationError("I5.5B normalized box values must be finite.")
+    width_px = max(1, int(np.floor(w * width + 0.5)))
+    height_px = max(1, int(np.floor(h * height + 0.5)))
+    x0 = int(np.floor(x * width + 0.5)); y0 = int(np.floor(y * height + 0.5))
+    if x0 < 0 or y0 < 0 or x0 + width_px > width or y0 + height_px > height:
+        raise ReconstructionValidationError("I5.5B normalized box does not fit the decoded image.")
+    return x0, y0, width_px, height_px
+
+
+def _i55b_pixel_sha(image: np.ndarray) -> str:
+    contiguous = np.ascontiguousarray(image)
+    digest = hashlib.sha256()
+    digest.update(str(contiguous.shape).encode("ascii")); digest.update(b"\0")
+    digest.update(str(contiguous.dtype).encode("ascii")); digest.update(b"\0")
+    digest.update(contiguous.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _i55b_write_lossless_png(path: Path, image: np.ndarray) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ok = cv2.imwrite(str(path), image, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    if not ok:
+        raise ReconstructionValidationError(f"I5.5B failed to write lossless PNG: {path}")
+    decoded = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if decoded is None or decoded.shape != image.shape or not np.array_equal(decoded, image):
+        raise ReconstructionValidationError(f"I5.5B lossless PNG verification failed: {path}")
+    return _sha256(path)
+
+
+def materialize_i5_5b_pair(*, dataset_dir: Path, admission: Mapping[str, Any], output_dir: Path) -> dict[str, Any]:
+    frozen = validate_i5_5a_for_i5_5b(admission)
+    dataset = Path(dataset_dir).expanduser().resolve()
+    if not dataset.is_dir():
+        raise ReconstructionValidationError(f"I5.5B dataset directory missing: {dataset}")
+    output = Path(output_dir).expanduser().resolve()
+    if output.exists():
+        shutil.rmtree(output)
+    control_dir = output / "control"
+    stress_dir = output / "dynamic_proxy"
+    control_dir.mkdir(parents=True, exist_ok=False)
+    stress_dir.mkdir(parents=True, exist_ok=False)
+
+    identity = _mapping(frozen["source_identity"], label="I5.5A source identity")
+    files = identity["files"]
+    plan = _mapping(frozen["stress_plan"], label="I5.5A stress plan")
+    control_plan = _mapping(plan["static_control"], label="I5.5A static control")
+    stress_plan = _mapping(plan["dynamic_foreground_proxy"], label="I5.5A dynamic proxy")
+    recipe = _mapping(stress_plan["materialization_recipe"], label="I5.5A materialization recipe")
+    source_names = [str(value) for value in control_plan["names"]]
+
+    decoded: list[np.ndarray] = []
+    source_rows: list[dict[str, Any]] = []
+    for local_index, source_index in enumerate(control_plan["indices"]):
+        record = _mapping(files[int(source_index)], label=f"I5.5B source file {source_index}")
+        name = source_names[local_index]
+        if str(record.get("name")) != name:
+            raise ReconstructionValidationError("I5.5B frozen source record/name ordering drifted.")
+        path = (dataset / name).resolve()
+        try:
+            path.relative_to(dataset)
+        except ValueError as exc:
+            raise ReconstructionValidationError(f"I5.5B source path escapes dataset: {path}") from exc
+        if not path.is_file() or _sha256(path) != str(record.get("sha256", "")).lower():
+            raise ReconstructionValidationError(f"I5.5B frozen source image missing or SHA256 drifted: {name}")
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ReconstructionValidationError(f"I5.5B cannot decode frozen source image: {path}")
+        decoded.append(image)
+        source_rows.append({
+            "source_index": int(source_index), "source_name": name, "source_path": str(path),
+            "source_sha256": _sha256(path), "source_pixel_sha256": _i55b_pixel_sha(image),
+            "shape": [int(value) for value in image.shape],
+        })
+    shapes = {tuple(image.shape) for image in decoded}
+    if len(shapes) != 1:
+        raise ReconstructionValidationError("I5.5B frozen no-resize proxy requires constant decoded source dimensions.")
+    height, width = decoded[0].shape[:2]
+
+    donor_index = int(recipe["donor_source_index"])
+    donor_local_index = source_names.index(str(recipe["donor_source_name"]))
+    if int(control_plan["indices"][donor_local_index]) != donor_index:
+        raise ReconstructionValidationError("I5.5B donor source index/name binding drifted.")
+    donor_box = _i55b_pixel_box(_mapping(recipe["donor_box_normalized"], label="I5.5A donor box"), width=width, height=height)
+    dx, dy, dw, dh = donor_box
+    donor_patch = decoded[donor_local_index][dy:dy + dh, dx:dx + dw].copy()
+    donor_patch_sha = _i55b_pixel_sha(donor_patch)
+
+    target_boxes = recipe.get("target_boxes_normalized")
+    if not isinstance(target_boxes, Sequence) or isinstance(target_boxes, (str, bytes)) or len(target_boxes) != len(decoded):
+        raise ReconstructionValidationError("I5.5B frozen target-box trajectory is malformed.")
+
+    control_rows: list[dict[str, Any]] = []
+    stress_rows: list[dict[str, Any]] = []
+    for index, (source, source_row, raw_box) in enumerate(zip(decoded, source_rows, target_boxes)):
+        staged_name = f"{index:04d}.png"
+        control_path = control_dir / staged_name
+        control_sha = _i55b_write_lossless_png(control_path, source)
+        box = _i55b_pixel_box(_mapping(raw_box, label=f"I5.5A target box {index}"), width=width, height=height)
+        x, y, w, h = box
+        if (w, h) != (dw, dh):
+            raise ReconstructionValidationError("I5.5B frozen no-resize proxy target extent differs from donor patch extent.")
+        stress = source.copy()
+        stress[y:y + h, x:x + w] = donor_patch
+        stress_path = stress_dir / staged_name
+        stress_sha = _i55b_write_lossless_png(stress_path, stress)
+        control_rows.append({
+            **source_row, "staged_name": staged_name, "staged_path": str(control_path),
+            "staged_sha256": control_sha, "staged_pixel_sha256": _i55b_pixel_sha(source),
+        })
+        stress_rows.append({
+            **source_row, "staged_name": staged_name, "staged_path": str(stress_path),
+            "staged_sha256": stress_sha, "staged_pixel_sha256": _i55b_pixel_sha(stress),
+            "target_box_normalized": deepcopy(dict(raw_box)),
+            "target_box_pixels": {"x": x, "y": y, "width": w, "height": h},
+        })
+
+    return {
+        "schema_version": 1,
+        "phase": "I5.5B_MATERIALIZATION",
+        "recipe_sha256": str(stress_plan["recipe_sha256"]),
+        "pixel_box_conversion": "nearest_integer_half_up_for_xy_and_extent",
+        "source_dimensions": {"width": width, "height": height, "channels": int(decoded[0].shape[2])},
+        "source_dimensions_constant": True,
+        "donor": {
+            "source_index": donor_index, "source_name": str(recipe["donor_source_name"]),
+            "box_normalized": deepcopy(dict(recipe["donor_box_normalized"])),
+            "box_pixels": {"x": dx, "y": dy, "width": dw, "height": dh},
+            "patch_pixel_sha256": donor_patch_sha,
+        },
+        "control": {"directory": str(control_dir), "image_count": len(control_rows), "files": control_rows},
+        "dynamic_proxy": {"directory": str(stress_dir), "image_count": len(stress_rows), "files": stress_rows},
+        "natural_dynamic_scene_ground_truth": False,
+        "controlled_independent_foreground_motion_proxy": True,
+    }
+
+
+def _i55b_orb_count(image: np.ndarray) -> int:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    orb = cv2.ORB_create(nfeatures=2000, edgeThreshold=5, fastThreshold=8)
+    keypoints = orb.detect(gray, None)
+    return len(keypoints or [])
+
+
+def _i55b_quantile(values: Sequence[float], q: float) -> float | None:
+    if not values:
+        return None
+    return float(np.quantile(np.asarray(values, dtype=np.float64), q))
+
+
+def analyze_i5_5b_materialized_pair(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    _require(evidence, "schema_version", 1, label="I5.5B materialization")
+    _require(evidence, "phase", "I5.5B_MATERIALIZATION", label="I5.5B materialization")
+    _require(evidence, "source_dimensions_constant", True, label="I5.5B materialization")
+    _require(evidence, "natural_dynamic_scene_ground_truth", False, label="I5.5B materialization")
+    _require(evidence, "controlled_independent_foreground_motion_proxy", True, label="I5.5B materialization")
+    donor = _mapping(evidence.get("donor"), label="I5.5B donor")
+    control = _mapping(evidence.get("control"), label="I5.5B control materialization")
+    stress = _mapping(evidence.get("dynamic_proxy"), label="I5.5B dynamic materialization")
+    control_files = control.get("files"); stress_files = stress.get("files")
+    if not isinstance(control_files, Sequence) or isinstance(control_files, (str, bytes)) or len(control_files) != 19:
+        raise ReconstructionValidationError("I5.5B control materialization must contain 19 files.")
+    if not isinstance(stress_files, Sequence) or isinstance(stress_files, (str, bytes)) or len(stress_files) != 19:
+        raise ReconstructionValidationError("I5.5B dynamic materialization must contain 19 files.")
+
+    donor_box = _mapping(donor.get("box_pixels"), label="I5.5B donor pixel box")
+    donor_source_name = str(donor.get("source_name", ""))
+    donor_control_row = next((_mapping(row, label="I5.5B control row") for row in control_files if str(row.get("source_name")) == donor_source_name), None)
+    if donor_control_row is None:
+        raise ReconstructionValidationError("I5.5B donor source is absent from control materialization.")
+    donor_image = cv2.imread(str(donor_control_row["staged_path"]), cv2.IMREAD_COLOR)
+    if donor_image is None:
+        raise ReconstructionValidationError("I5.5B cannot decode staged donor control image.")
+    dx, dy, dw, dh = (int(donor_box[k]) for k in ("x", "y", "width", "height"))
+    donor_patch = donor_image[dy:dy + dh, dx:dx + dw]
+    donor_sha_ok = _i55b_pixel_sha(donor_patch) == str(donor.get("patch_pixel_sha256", ""))
+    donor_orb = _i55b_orb_count(donor_patch)
+
+    control_preserved = True
+    same_decoded = True
+    donor_identity = donor_sha_ok
+    confined = True
+    target_orb_counts: list[float] = []
+    changed_fractions: list[float] = []
+    centers: list[float] = []
+    target_boxes_match_recipe = True
+    dims = _mapping(evidence.get("source_dimensions"), label="I5.5B source dimensions")
+    width = int(dims["width"]); height = int(dims["height"])
+
+    for c_raw, s_raw in zip(control_files, stress_files):
+        c = _mapping(c_raw, label="I5.5B control row"); s = _mapping(s_raw, label="I5.5B stress row")
+        if c.get("source_name") != s.get("source_name") or c.get("source_pixel_sha256") != s.get("source_pixel_sha256"):
+            same_decoded = False
+        control_image = cv2.imread(str(c["staged_path"]), cv2.IMREAD_COLOR)
+        stress_image = cv2.imread(str(s["staged_path"]), cv2.IMREAD_COLOR)
+        source_image = cv2.imread(str(c["source_path"]), cv2.IMREAD_COLOR)
+        if control_image is None or stress_image is None or source_image is None:
+            raise ReconstructionValidationError("I5.5B cannot decode staged/source image during materialization revalidation.")
+        if control_image.shape != source_image.shape or not np.array_equal(control_image, source_image):
+            control_preserved = False
+        box = _mapping(s.get("target_box_pixels"), label="I5.5B stress target pixel box")
+        x, y, w, h = (int(box[k]) for k in ("x", "y", "width", "height"))
+        if stress_image.shape != control_image.shape or (w, h) != donor_patch.shape[1::-1]:
+            donor_identity = False
+            confined = False
+            continue
+        target = stress_image[y:y + h, x:x + w]
+        if not np.array_equal(target, donor_patch):
+            donor_identity = False
+        diff = np.any(stress_image != control_image, axis=2)
+        allowed = np.zeros(diff.shape, dtype=bool); allowed[y:y + h, x:x + w] = True
+        if np.any(diff & ~allowed):
+            confined = False
+        changed_fractions.append(float(np.count_nonzero(diff)) / float(diff.size))
+        whole_kp = cv2.ORB_create(nfeatures=3000, edgeThreshold=5, fastThreshold=8).detect(cv2.cvtColor(stress_image, cv2.COLOR_BGR2GRAY), None) or []
+        target_orb_counts.append(float(sum(1 for kp in whole_kp if x <= kp.pt[0] < x + w and y <= kp.pt[1] < y + h)))
+        centers.append((x + w * 0.5) / width)
+        normalized = _mapping(s.get("target_box_normalized"), label="I5.5B stress target normalized box")
+        expected_box = _i55b_pixel_box(normalized, width=width, height=height)
+        if (x, y, w, h) != expected_box:
+            target_boxes_match_recipe = False
+
+    trajectory_ok = bool(
+        target_boxes_match_recipe
+        and len(centers) == 19
+        and all(b > a for a, b in zip(centers[:-1], centers[1:]))
+    )
+    target_min = min(target_orb_counts) if target_orb_counts else 0.0
+    feature_bearing = bool(donor_orb > 0 and target_orb_counts and target_min > 0)
+    return {
+        "same_decoded_source_pixels_for_control_and_stress": bool(same_decoded),
+        "control_pixel_values_preserved": bool(control_preserved),
+        "donor_patch_pixel_identity_preserved": bool(donor_identity),
+        "target_centroid_trajectory_matches_frozen_recipe": bool(trajectory_ok),
+        "changed_pixels_confined_to_frozen_target_boxes": bool(confined),
+        "dynamic_region_feature_bearing_revalidated": feature_bearing,
+        "source_dimensions_constant": True,
+        "donor_patch_orb_keypoints": int(donor_orb),
+        "stress_target_orb_keypoints_min": int(target_min),
+        "stress_target_orb_keypoints_p50": _i55b_quantile(target_orb_counts, 0.5),
+        "changed_pixel_fraction_p50": _i55b_quantile(changed_fractions, 0.5),
+        "natural_dynamic_scene_ground_truth": False,
+        "controlled_independent_foreground_motion_proxy": True,
+    }
+
+
+def _i55b_plan_for_sfm(scenario_plan: Mapping[str, Any], staged_names: Sequence[str]) -> tuple[dict[str, Any], list[str]]:
+    count = scenario_plan.get("image_count")
+    source_names = scenario_plan.get("names")
+    if count != 19 or not isinstance(source_names, Sequence) or isinstance(source_names, (str, bytes)) or len(source_names) != 19:
+        raise ReconstructionValidationError("I5.5B scenario plan must preserve the frozen 19-image scope.")
+    _require(scenario_plan, "matching_policy", "exhaustive", label="I5.5B scenario plan")
+    _require(scenario_plan, "max_keyframes", 19, label="I5.5B scenario plan")
+    materialized = [str(value) for value in staged_names]
+    if len(materialized) != 19 or len(set(materialized)) != 19:
+        raise ReconstructionValidationError("I5.5B staged names must be 19 unique images.")
+    adapted = deepcopy(dict(scenario_plan))
+    adapted["names"] = materialized
+    adapted["indices"] = list(range(19))
+    return adapted, [str(value) for value in source_names]
+
+
+def analyze_i5_5b_sfm_report(
+    report: Mapping[str, Any], *, scenario_plan: Mapping[str, Any], staged_names: Sequence[str], sparse_component_count: int
+) -> dict[str, Any]:
+    if not isinstance(sparse_component_count, int) or sparse_component_count < 0:
+        raise ReconstructionValidationError("I5.5B sparse_component_count must be a non-negative integer.")
+    adapted, source_names = _i55b_plan_for_sfm(scenario_plan, staged_names)
+    from core.reconstruction.i5_low_overlap_weak_parallax import analyze_i5_2b_sfm_report
+
+    analysis = analyze_i5_2b_sfm_report(report, scenario_plan=adapted)
+    analysis["registration_attempted"] = True
+    analysis["sfm_executed"] = True
+    analysis["pre_sfm_ingestion_rejected"] = False
+    analysis["rejection_stage"] = None
+    analysis["rejection_reason"] = None
+    analysis["mapping_produced_sparse_model"] = True
+    analysis["sparse_component_count"] = sparse_component_count
+    registered_staged = [str(value) for value in analysis.get("registered_names", [])]
+    mapping = dict(zip([str(value) for value in staged_names], source_names))
+    analysis["registered_staged_names"] = registered_staged
+    analysis["registered_names"] = [mapping[value] for value in registered_staged]
+    analysis["source_membership_names"] = source_names
+    analysis["staged_membership_names"] = [str(value) for value in staged_names]
+    analysis["lossless_staging_name_mapping_preserved"] = True
+    return analysis
+
+
+def _i55b_rejection_common(*, scenario_plan: Mapping[str, Any], staged_names: Sequence[str], reason: str) -> tuple[list[str], list[str], str]:
+    _, source_names = _i55b_plan_for_sfm(scenario_plan, staged_names)
+    materialized = [str(value) for value in staged_names]
+    text = str(reason).strip()
+    if not text:
+        raise ReconstructionValidationError("I5.5B structured rejection requires a non-empty reason.")
+    return source_names, materialized, text
+
+
+def analyze_i5_5b_pre_sfm_ingestion_rejection(*, scenario_plan: Mapping[str, Any], staged_names: Sequence[str], reason: str) -> dict[str, Any]:
+    source_names, materialized, text = _i55b_rejection_common(scenario_plan=scenario_plan, staged_names=staged_names, reason=reason)
+    if "Fewer than three valid keyframes survived ingestion" not in text:
+        raise ReconstructionValidationError("I5.5B only structures the recognized pre-SfM ingestion rejection.")
+    return {
+        "input_images": 19, "registered_images": 0, "registration_ratio": 0.0,
+        "full_input_scope_registered": False, "partial_registration_preserved": False,
+        "registered_names": [], "registered_staged_names": [], "source_membership_names": source_names,
+        "staged_membership_names": materialized, "lossless_staging_name_mapping_preserved": True,
+        "quality_status": "rejected", "quality_assessment": {"status": "rejected", "usable": False, "reasons": [text]},
+        "statistics": {"input_keyframes": 19, "registered_keyframes": 0, "landmarks": 0, "observations": 0, "mean_reprojection_error_px": None},
+        "registration_attempted": False, "sfm_executed": False, "pre_sfm_ingestion_rejected": True,
+        "rejection_stage": "ingestion", "rejection_reason": text, "mapping_produced_sparse_model": False,
+        "sparse_component_count": 0,
+        "authority": {"camera_pose_authority_owner": "pycolmap_sfm", "per_scenario_gauge": "unavailable_no_sfm_model", "metric_scale_claimed": False, "measurement_authoritative": False, "certified_metrology": False, "surface_mesh_generated": False},
+    }
+
+
+def analyze_i5_5b_mapping_no_sparse_model_rejection(*, scenario_plan: Mapping[str, Any], staged_names: Sequence[str], reason: str) -> dict[str, Any]:
+    source_names, materialized, text = _i55b_rejection_common(scenario_plan=scenario_plan, staged_names=staged_names, reason=reason)
+    if "PyCOLMAP incremental mapping produced no sparse model" not in text:
+        raise ReconstructionValidationError("I5.5B only structures the recognized incremental-mapping no-model rejection.")
+    return {
+        "input_images": 19, "registered_images": 0, "registration_ratio": 0.0,
+        "full_input_scope_registered": False, "partial_registration_preserved": False,
+        "registered_names": [], "registered_staged_names": [], "source_membership_names": source_names,
+        "staged_membership_names": materialized, "lossless_staging_name_mapping_preserved": True,
+        "quality_status": "rejected", "quality_assessment": {"status": "rejected", "usable": False, "reasons": [text]},
+        "statistics": {"input_keyframes": 19, "registered_keyframes": 0, "landmarks": 0, "observations": 0, "mean_reprojection_error_px": None},
+        "registration_attempted": True, "sfm_executed": True, "pre_sfm_ingestion_rejected": False,
+        "rejection_stage": "incremental_mapping", "rejection_reason": text, "mapping_produced_sparse_model": False,
+        "sparse_component_count": 0,
+        "authority": {"camera_pose_authority_owner": "pycolmap_sfm", "per_scenario_gauge": "unavailable_no_sfm_model", "metric_scale_claimed": False, "measurement_authoritative": False, "certified_metrology": False, "surface_mesh_generated": False},
+    }
+
+
+def _i55b_metric(analysis: Mapping[str, Any], key: str) -> float | int | None:
+    stats = _mapping(analysis.get("statistics"), label="I5.5B scenario statistics")
+    if key == "mean_track_length":
+        quality = _mapping(analysis.get("quality_assessment"), label="I5.5B scenario quality")
+        value = quality.get("mean_track_length")
+    else:
+        value = stats.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(float(value)):
+        raise ReconstructionValidationError(f"I5.5B scenario metric {key} is invalid.")
+    return value
+
+
+def _i55b_ratio(stress: float | int | None, control: float | int | None) -> float | None:
+    if stress is None or control is None or float(control) == 0.0:
+        return None
+    return float(stress) / float(control)
+
+
+def compare_i5_5b_sfm_outcomes(
+    *, control: Mapping[str, Any], dynamic_proxy: Mapping[str, Any], materialization_revalidation: Mapping[str, Any]
+) -> dict[str, Any]:
+    c = deepcopy(dict(control)); s = deepcopy(dict(dynamic_proxy)); m = deepcopy(dict(materialization_revalidation))
+    for node, label in ((c, "control"), (s, "dynamic_proxy")):
+        authority = _mapping(node.get("authority"), label=f"I5.5B {label} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.5B {label} authority")
+        status = str(node.get("quality_status", ""))
+        if status not in {"accepted", "degraded", "rejected"}:
+            raise ReconstructionValidationError(f"I5.5B {label} quality status is invalid.")
+        components = node.get("sparse_component_count")
+        if not isinstance(components, int) or components < 0:
+            raise ReconstructionValidationError(f"I5.5B {label} sparse component count is invalid.")
+    required_materialization = (
+        "same_decoded_source_pixels_for_control_and_stress", "control_pixel_values_preserved",
+        "donor_patch_pixel_identity_preserved", "target_centroid_trajectory_matches_frozen_recipe",
+        "changed_pixels_confined_to_frozen_target_boxes", "source_dimensions_constant",
+        "controlled_independent_foreground_motion_proxy",
+    )
+    proxy_core_revalidated = all(m.get(key) is True for key in required_materialization)
+    proxy_feature_bearing = m.get("dynamic_region_feature_bearing_revalidated") is True
+    proxy_revalidated = bool(proxy_core_revalidated and proxy_feature_bearing)
+    c_registered = int(c.get("registered_images", -1)); s_registered = int(s.get("registered_images", -1))
+    if c_registered < 0 or s_registered < 0:
+        raise ReconstructionValidationError("I5.5B registration counts must be non-negative.")
+    c_landmarks = _i55b_metric(c, "landmarks"); s_landmarks = _i55b_metric(s, "landmarks")
+    c_obs = _i55b_metric(c, "observations"); s_obs = _i55b_metric(s, "observations")
+    c_repr = _i55b_metric(c, "mean_reprojection_error_px"); s_repr = _i55b_metric(s, "mean_reprojection_error_px")
+    c_track = _i55b_metric(c, "mean_track_length"); s_track = _i55b_metric(s, "mean_track_length")
+    return {
+        "control_quality_status": str(c["quality_status"]),
+        "dynamic_proxy_quality_status": str(s["quality_status"]),
+        "controlled_dynamic_proxy_revalidated": proxy_revalidated,
+        "dynamic_region_feature_bearing_revalidated": proxy_feature_bearing,
+        "registration_delta": s_registered - c_registered,
+        "registration_ratio_delta": float(s.get("registration_ratio", 0.0)) - float(c.get("registration_ratio", 0.0)),
+        "landmarks_control": c_landmarks, "landmarks_dynamic_proxy": s_landmarks,
+        "landmarks_stress_to_control_ratio": _i55b_ratio(s_landmarks, c_landmarks),
+        "observations_control": c_obs, "observations_dynamic_proxy": s_obs,
+        "observations_stress_to_control_ratio": _i55b_ratio(s_obs, c_obs),
+        "mean_reprojection_error_px_control": c_repr, "mean_reprojection_error_px_dynamic_proxy": s_repr,
+        "mean_reprojection_error_px_delta": None if c_repr is None or s_repr is None else float(s_repr) - float(c_repr),
+        "mean_track_length_control": c_track, "mean_track_length_dynamic_proxy": s_track,
+        "mean_track_length_delta": None if c_track is None or s_track is None else float(s_track) - float(c_track),
+        "sparse_component_count_control": int(c["sparse_component_count"]),
+        "sparse_component_count_dynamic_proxy": int(s["sparse_component_count"]),
+        "sparse_component_count_delta": int(s["sparse_component_count"]) - int(c["sparse_component_count"]),
+        "cross_run_absolute_geometry_comparison_permitted": False,
+        "cross_run_absolute_translation_comparison_permitted": False,
+        "per_scenario_sfm_gauge_remains_arbitrary": True,
+        "natural_dynamic_scene_ground_truth": False,
+        "threshold_relaxation_used": False,
+    }
+
+
+def build_i5_5b_dynamic_scene_replay(
+    *,
+    i5_5a_result: Mapping[str, Any],
+    i5_5a_binding: I51EvidenceBinding,
+    replay_receipt: Mapping[str, Any],
+    replay_receipt_binding: I51EvidenceBinding,
+    materialization_revalidation: Mapping[str, Any],
+    control_analysis: Mapping[str, Any],
+    dynamic_proxy_analysis: Mapping[str, Any],
+    paired_comparison: Mapping[str, Any],
+    source_reverified_before: bool,
+    source_reverified_after: bool,
+    staged_inputs_reverified: bool,
+) -> dict[str, Any]:
+    admission = validate_i5_5a_for_i5_5b(i5_5a_result)
+    receipt = validate_i5_5b_receipt(replay_receipt)
+    _validate_binding(i5_5a_binding, label="I5.5B I5.5A")
+    _validate_binding(replay_receipt_binding, label="I5.5B receipt")
+    if not (source_reverified_before and source_reverified_after and staged_inputs_reverified):
+        raise ReconstructionValidationError("I5.5B requires source-before/source-after and staged-input revalidation.")
+    control = deepcopy(dict(_mapping(control_analysis, label="I5.5B control analysis")))
+    stress = deepcopy(dict(_mapping(dynamic_proxy_analysis, label="I5.5B dynamic analysis")))
+    materialization = deepcopy(dict(_mapping(materialization_revalidation, label="I5.5B materialization revalidation")))
+    comparison = compare_i5_5b_sfm_outcomes(control=control, dynamic_proxy=stress, materialization_revalidation=materialization)
+    if deepcopy(dict(paired_comparison)) != comparison:
+        raise ReconstructionValidationError("I5.5B paired comparison is inconsistent with scenario evidence.")
+    for node, label in ((control, "control"), (stress, "dynamic proxy")):
+        if int(node.get("input_images", -1)) != 19:
+            raise ReconstructionValidationError(f"I5.5B {label} analysis must cover 19 inputs.")
+        authority = _mapping(node.get("authority"), label=f"I5.5B {label} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.5B {label} authority")
+
+    classification = _mapping(_mapping(admission["stress_plan"], label="I5.5A stress plan")["classification_policy"], label="I5.5A classification policy")
+    control_status = str(control.get("quality_status")); stress_status = str(stress.get("quality_status"))
+    proxy_ok = bool(comparison["controlled_dynamic_proxy_revalidated"])
+    if control_status != "accepted":
+        quality_status = "rejected"
+        conclusion = str(classification["control_not_accepted"])
+    elif not proxy_ok:
+        quality_status = "degraded"
+        conclusion = "inconclusive_controlled_dynamic_proxy_not_revalidated"
+    elif stress_status == "accepted":
+        quality_status = "pass"
+        conclusion = str(classification["control_accepted_stress_accepted"])
+    elif stress_status == "degraded":
+        quality_status = "degraded"
+        conclusion = str(classification["control_accepted_stress_degraded"])
+    else:
+        quality_status = "rejected"
+        conclusion = str(classification["control_accepted_stress_rejected"])
+
+    authority = deepcopy(dict(_mapping(admission.get("authority"), label="I5.5A authority")))
+    recipe_sha = str(admission["stress_plan"]["dynamic_foreground_proxy"]["recipe_sha256"])
+    return {
+        "schema_version": I55B_SCHEMA_VERSION,
+        "phase": I55B_PHASE,
+        "status": "current_frozen_foundation_dynamic_scene_replayed",
+        "pass": True,
+        "quality_status": quality_status,
+        "scope": {
+            "current_frozen_foundation_real_replay": True,
+            "paired_control_dynamic_proxy_replay": True,
+            "stress_images_materialized": True,
+            "control_replay_attempted": True,
+            "dynamic_proxy_replay_attempted": True,
+            "control_sfm_rerun": bool(control.get("sfm_executed")),
+            "dynamic_proxy_sfm_rerun": bool(stress.get("sfm_executed")),
+            "dense_provider_rerun": False,
+            "dynamic_masking_added": False,
+            "semantic_segmentation_added": False,
+            "motion_outlier_filter_added": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {"i5_5a_admission": i5_5a_binding.as_dict(), "i5_5b_replay_receipt": replay_receipt_binding.as_dict()},
+        "provenance": {
+            "frozen_source_asset_set_sha256": admission["source_identity"]["asset_set_sha256"],
+            "frozen_dynamic_proxy_recipe_sha256": recipe_sha,
+            "source_reverified_before_replay": True,
+            "source_reverified_after_replay": True,
+            "staged_inputs_reverified_after_replay": True,
+            "same_matching_policy_control_and_stress": "exhaustive",
+            "same_max_keyframes_control_and_stress": 19,
+            "same_production_native_sfm_runner_control_and_stress": True,
+            "result_driven_recipe_tuning": False,
+            "retry_until_quality_pass": False,
+            "historical_result_overwritten": False,
+        },
+        "materialization_revalidation": materialization,
+        "scenarios": {"control": control, "dynamic_proxy": stress},
+        "paired_comparison": comparison,
+        "qualification": {
+            "quality_status": quality_status,
+            "dynamic_scene_robustness_conclusion": conclusion,
+            "controlled_dynamic_foreground_proxy_revalidated": proxy_ok,
+            "control_quality_status": control_status,
+            "dynamic_proxy_quality_status": stress_status,
+            "natural_dynamic_scene_ground_truth": False,
+            "real_world_dynamic_scene_robustness_claimed": False,
+            "universal_dynamic_scene_robustness_claimed": False,
+            "dense_reconstruction_robustness_claimed": False,
+            "provider_robustness_claimed": False,
+            "metric_scale_claimed": False,
+        },
+        "regression_summary": {
+            "focused_i5_5b_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True, "i5_authorized": True, "i5_1_complete": True, "i5_2_complete": True,
+            "i5_3_complete": True, "i5_4_complete": True, "i5_5_started": True, "i5_5a_complete": True,
+            "i5_5b_complete": True, "i5_5c_qualification_closure_authorized": True, "i5_5c_complete": False,
+            "i5_5_complete": False, "i5_6_authorized": False, "provider_specific_robustness_started": False,
+            "mp_sfm_authorized": False, "provider_selected": False, "provider_promoted": False,
+            "provider_ranking_created": False, "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False, "auto_policy_implemented": False, "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False, "production_default_modified": False, "metric_scale_claimed": False,
+            "measurement_authoritative": False, "certified_metrology": False, "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_5c_qualification_closure_authorized_not_started": True,
+            "i5_6_mvs_robustness_not_authorized": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_deferred_to_i5_10": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.5C dynamic-scene handling robustness qualification and closure.",
+    }
+
+
 __all__ = [
-    "I55A_SCHEMA_VERSION",
-    "I55A_PHASE",
-    "I55A_RECEIPT_PHASE",
-    "I55AAdmissionPolicy",
-    "validate_i5_4c_for_i5_5",
-    "build_i5_5a_source_identity",
-    "validate_i5_5a_source_identity",
-    "build_i5_5a_stress_plan",
-    "validate_i5_5a_receipt",
-    "build_i5_5a_dynamic_scene_admission",
+    "I55A_SCHEMA_VERSION", "I55A_PHASE", "I55A_RECEIPT_PHASE", "I55AAdmissionPolicy",
+    "validate_i5_4c_for_i5_5", "build_i5_5a_source_identity", "validate_i5_5a_source_identity",
+    "build_i5_5a_stress_plan", "validate_i5_5a_receipt", "build_i5_5a_dynamic_scene_admission",
+    "I55B_SCHEMA_VERSION", "I55B_PHASE", "I55B_RECEIPT_PHASE", "validate_i5_5a_for_i5_5b",
+    "validate_i5_5b_receipt", "materialize_i5_5b_pair", "analyze_i5_5b_materialized_pair",
+    "analyze_i5_5b_sfm_report", "analyze_i5_5b_pre_sfm_ingestion_rejection",
+    "analyze_i5_5b_mapping_no_sparse_model_rejection", "compare_i5_5b_sfm_outcomes",
+    "build_i5_5b_dynamic_scene_replay",
 ]
