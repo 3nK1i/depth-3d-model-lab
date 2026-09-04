@@ -987,6 +987,279 @@ def build_i5_4b_forward_motion_kitti_replay(
     }
 
 
+I54C_SCHEMA_VERSION = 1
+I54C_PHASE = "I5.4C"
+I54C_RECEIPT_PHASE = "I5.4C_CLOSURE_RECEIPT"
+
+
+def _validate_i54c_binding_mapping(raw: Any, *, label: str) -> dict[str, Any]:
+    item = _mapping(raw, label=label)
+    path = str(item.get("path", "")).strip()
+    sha = str(item.get("sha256", "")).lower()
+    if not path:
+        raise ReconstructionValidationError(f"{label}.path must be non-empty.")
+    if not _valid_sha256(sha):
+        raise ReconstructionValidationError(f"{label}.sha256 must be a valid SHA256 digest.")
+    return {"path": path, "sha256": sha}
+
+
+def validate_i5_4b_for_i5_4c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    _require(payload, "schema_version", 1, label="I5.4B replay")
+    _require(payload, "phase", "I5.4B", label="I5.4B replay")
+    _require(payload, "status", "current_frozen_foundation_forward_motion_kitti_replayed", label="I5.4B replay")
+    _require(payload, "pass", True, label="I5.4B replay")
+    _require(payload, "quality_status", "rejected", label="I5.4B replay")
+
+    scope = _mapping(payload.get("scope"), label="I5.4B scope")
+    for key in (
+        "current_frozen_foundation_real_replay", "i5_4a_admission_reused", "frozen_60_frame_window_reused",
+        "production_native_pycolmap_replay", "sequential_matching_reused",
+    ):
+        _require(scope, key, True, label="I5.4B scope")
+    for key in (
+        "source_images_transformed", "window_retuned", "retry_until_quality_pass", "dense_provider_rerun",
+        "provider_specific_robustness_started", "mp_sfm_strategy_evaluation_started", "thresholds_modified",
+        "production_default_modified", "auto_policy_work_started", "hybrid_experiment_started",
+    ):
+        _require(scope, key, False, label="I5.4B scope")
+
+    bindings = _mapping(payload.get("evidence_bindings"), label="I5.4B evidence bindings")
+    _validate_i54c_binding_mapping(bindings.get("i5_4a_admission"), label="I5.4B I5.4A binding")
+    _validate_i54c_binding_mapping(bindings.get("i5_4b_replay_receipt"), label="I5.4B replay receipt binding")
+
+    source = _mapping(payload.get("source_binding"), label="I5.4B source binding")
+    _require(source, "window_images", 60, label="I5.4B source binding")
+    for key in ("source_reverified_before", "source_window_reverified_after", "staged_inputs_reverified"):
+        _require(source, key, True, label="I5.4B source binding")
+    for key in ("source_asset_set_sha256", "window_asset_set_sha256"):
+        if not _valid_sha256(source.get(key)):
+            raise ReconstructionValidationError(f"I5.4B source binding {key} is invalid.")
+
+    replay = _mapping(payload.get("replay"), label="I5.4B replay evidence")
+    _require(replay, "input_images", 60, label="I5.4B replay evidence")
+    _require(replay, "registered_images", 0, label="I5.4B replay evidence")
+    _require(replay, "registration_ratio", 0.0, label="I5.4B replay evidence")
+    _require(replay, "full_input_scope_registered", False, label="I5.4B replay evidence")
+    _require(replay, "quality_status", "rejected", label="I5.4B replay evidence")
+    _require(replay, "pre_sfm_ingestion_rejected", False, label="I5.4B replay evidence")
+    _require(replay, "rejection_stage", "incremental_mapping", label="I5.4B replay evidence")
+    _require(replay, "mapping_produced_sparse_model", False, label="I5.4B replay evidence")
+    _require(replay, "registration_attempted", True, label="I5.4B replay evidence")
+    _require(replay, "sfm_executed", True, label="I5.4B replay evidence")
+    reason = str(replay.get("rejection_reason", ""))
+    if "incremental mapping produced no sparse model" not in reason.lower():
+        raise ReconstructionValidationError("I5.4C requires the frozen I5.4B no-sparse-model rejection reason.")
+
+    stats = _mapping(replay.get("statistics"), label="I5.4B replay statistics")
+    _require(stats, "input_keyframes", 60, label="I5.4B replay statistics")
+    _require(stats, "registered_keyframes", 0, label="I5.4B replay statistics")
+    _require(stats, "landmarks", 0, label="I5.4B replay statistics")
+    _require(stats, "observations", 0, label="I5.4B replay statistics")
+
+    geometry = _mapping(replay.get("geometry"), label="I5.4B replay geometry")
+    motion = _mapping(geometry.get("camera_motion"), label="I5.4B replay camera motion")
+    _require(motion, "adjacent_registered_motion_pairs", 0, label="I5.4B replay camera motion")
+    _require(motion, "authoritative_forward_motion_geometry_proven", False, label="I5.4B replay camera motion")
+    _require(motion, "forward_motion_label", "inconclusive_forward_motion_proxy_not_revalidated", label="I5.4B replay camera motion")
+    _require(motion, "absolute_translation_magnitude_cross_run_comparison_permitted", False, label="I5.4B replay camera motion")
+    _require(motion, "arbitrary_gauge", True, label="I5.4B replay camera motion")
+
+    parallax = _mapping(geometry.get("parallax"), label="I5.4B replay parallax")
+    _require(parallax, "scale_invariant", True, label="I5.4B replay parallax")
+    _require(parallax, "absolute_baseline_cross_scenario_comparison_permitted", False, label="I5.4B replay parallax")
+
+    forward = _mapping(payload.get("forward_motion_revalidation"), label="I5.4B forward-motion revalidation")
+    _require(forward, "adjacent_registered_motion_pairs", 0, label="I5.4B forward-motion revalidation")
+    _require(forward, "authoritative_forward_motion_geometry_proven", False, label="I5.4B forward-motion revalidation")
+
+    qualification = _mapping(payload.get("qualification"), label="I5.4B qualification")
+    _require(qualification, "quality_status", "rejected", label="I5.4B qualification")
+    _require(qualification, "forward_motion_robustness_conclusion", "rejected_before_forward_motion_geometry_revalidation", label="I5.4B qualification")
+    _require(qualification, "authoritative_forward_motion_geometry_proven", False, label="I5.4B qualification")
+    _require(qualification, "registration", "0/60", label="I5.4B qualification")
+    _require(qualification, "retry_until_quality_pass", False, label="I5.4B qualification")
+    _require(qualification, "result_driven_window_tuning", False, label="I5.4B qualification")
+    for key in (
+        "universal_forward_motion_robustness_claimed", "kitti_dataset_universal_robustness_claimed",
+        "dense_reconstruction_robustness_claimed", "provider_robustness_claimed",
+    ):
+        _require(qualification, key, False, label="I5.4B qualification")
+
+    authority = _mapping(payload.get("authority"), label="I5.4B authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.4B authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.4B authority")
+    for key in (
+        "authoritative_sfm_modified", "provider_selected", "provider_promoted", "auto_policy_implemented",
+        "hybrid_authorized", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(authority, key, False, label="I5.4B authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.4B decision")
+    for key in (
+        "i4_closed", "i5_authorized", "i5_1_complete", "i5_2_complete", "i5_3_complete",
+        "i5_4_started", "i5_4a_complete", "i5_4b_complete", "i5_4c_qualification_closure_authorized",
+    ):
+        _require(decision, key, True, label="I5.4B decision")
+    for key in (
+        "i5_4c_complete", "i5_4_complete", "i5_5_authorized", "provider_specific_robustness_started",
+        "mp_sfm_authorized", "provider_selected", "provider_promoted", "provider_ranking_created",
+        "universal_provider_winner_declared", "global_scalar_score_created", "auto_policy_implemented",
+        "hybrid_authorized", "threshold_relaxation_authorized", "production_default_modified",
+        "metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.4B decision")
+    if payload.get("next") != "I5.4C forward-motion / KITTI robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.4B next-step boundary does not authorize I5.4C.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_4c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    _require(payload, "schema_version", 1, label="I5.4C receipt")
+    _require(payload, "phase", I54C_RECEIPT_PHASE, label="I5.4C receipt")
+    _require(payload, "status", "pass", label="I5.4C receipt")
+    _require(payload, "pass", True, label="I5.4C receipt")
+    scope = _mapping(payload.get("scope"), label="I5.4C receipt scope")
+    for key in (
+        "focused_i5_4c_tests", "predecessor_i5_4b_regression", "predecessor_i5_4a_regression",
+        "evidence_only_closure_contract_regression", "negative_quality_preservation_regression",
+        "authority_guard_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.4C receipt scope")
+    for key in (
+        "real_sfm_executed_by_test_receipt", "source_rematerialized", "dense_provider_rerun",
+        "thresholds_modified", "production_default_modified", "mp_sfm_started",
+        "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.4C receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.4C receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(v, int) and v >= 0 for v in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.4C receipt counts must be non-negative integers.")
+    if focused < 12 or predecessor < 20 or combined < 32 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.4C receipt coverage is below the required closure floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.4C receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.4C receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def build_i5_4c_forward_motion_kitti_closure(
+    *, i5_4b_result: Mapping[str, Any], i5_4b_binding: I51EvidenceBinding,
+    closure_receipt: Mapping[str, Any], closure_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    replay = validate_i5_4b_for_i5_4c(i5_4b_result)
+    receipt = validate_i5_4c_receipt(closure_receipt)
+    if not _valid_sha256(i5_4b_binding.sha256) or not str(i5_4b_binding.path).strip():
+        raise ReconstructionValidationError("I5.4C requires a valid frozen I5.4B evidence binding.")
+    if not _valid_sha256(closure_receipt_binding.sha256) or not str(closure_receipt_binding.path).strip():
+        raise ReconstructionValidationError("I5.4C requires a valid closure-receipt binding.")
+
+    authority = deepcopy(dict(_mapping(replay.get("authority"), label="I5.4B authority")))
+    return {
+        "schema_version": I54C_SCHEMA_VERSION,
+        "phase": I54C_PHASE,
+        "status": "forward_motion_kitti_robustness_qualified_and_closed",
+        "pass": True,
+        "quality_status": "rejected",
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "i5_4b_real_evidence_reused": True,
+            "negative_quality_result_preserved": True,
+            "sfm_rerun": False,
+            "source_rematerialized": False,
+            "window_retuned": False,
+            "quality_replay_rerun": False,
+            "dense_provider_rerun": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_4b_real_replay": i5_4b_binding.as_dict(),
+            "i5_4c_closure_receipt": closure_receipt_binding.as_dict(),
+        },
+        "qualification": {
+            "quality_status": "rejected",
+            "operating_envelope": "outside_current_production_sparse_sfm_envelope_on_admitted_kitti_style_forward_motion_case",
+            "primary_bottleneck": "incremental_mapping_no_sparse_model",
+            "rejection_stage": "incremental_mapping",
+            "registered_images": 0,
+            "input_images": 60,
+            "mapping_produced_sparse_model": False,
+            "registration_attempted": True,
+            "sfm_executed": True,
+            "forward_motion_geometry_revalidation_status": "unavailable_no_sparse_model",
+            "authoritative_forward_motion_geometry_proven": False,
+            "i2_4_geometry_available": False,
+            "retry_until_quality_pass": False,
+            "result_driven_window_tuning": False,
+            "universal_forward_motion_robustness_claimed": False,
+            "kitti_dataset_universal_robustness_claimed": False,
+            "dense_reconstruction_robustness_claimed": False,
+            "provider_robustness_claimed": False,
+            "metric_scale_claimed": False,
+            "closure_interpretation": (
+                "The current frozen production-native PyCOLMAP sparse-SfM foundation did not produce a sparse model "
+                "on the admitted 60-frame KITTI-style source case. Because zero cameras registered, reconstructed "
+                "camera geometry could not revalidate the forward-motion proxy; the negative sparse-SfM operating-envelope "
+                "result is preserved without upgrading it to a universal forward-motion geometry claim."
+            ),
+        },
+        "regression_summary": {
+            "focused_i5_4c_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_complete": True,
+            "i5_2_complete": True,
+            "i5_3_complete": True,
+            "i5_4_started": True,
+            "i5_4a_complete": True,
+            "i5_4b_complete": True,
+            "i5_4c_complete": True,
+            "i5_4_complete": True,
+            "i5_5_authorized": True,
+            "i5_5_started": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "production_default_modified": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_5_dynamic_scene_authorized_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_deferred_to_i5_10": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.5 dynamic-scene handling robustness.",
+    }
+
+
 __all__ = [
     "I54A_SCHEMA_VERSION",
     "I54A_PHASE",
@@ -994,6 +1267,9 @@ __all__ = [
     "I54B_SCHEMA_VERSION",
     "I54B_PHASE",
     "I54B_RECEIPT_PHASE",
+    "I54C_SCHEMA_VERSION",
+    "I54C_PHASE",
+    "I54C_RECEIPT_PHASE",
     "I54AAdmissionPolicy",
     "validate_i5_3c_for_i5_4",
     "build_i5_4a_source_identity",
@@ -1007,4 +1283,7 @@ __all__ = [
     "analyze_i5_4b_pre_sfm_ingestion_rejection",
     "analyze_i5_4b_mapping_no_sparse_model_rejection",
     "build_i5_4b_forward_motion_kitti_replay",
+    "validate_i5_4b_for_i5_4c",
+    "validate_i5_4c_receipt",
+    "build_i5_4c_forward_motion_kitti_closure",
 ]
