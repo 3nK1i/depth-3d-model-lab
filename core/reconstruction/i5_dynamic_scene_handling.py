@@ -1311,6 +1311,426 @@ def build_i5_5b_dynamic_scene_replay(
     }
 
 
+# ---------------------------------------------------------------------------
+# I5.5C - dynamic-scene handling robustness qualification + closure
+# ---------------------------------------------------------------------------
+
+I55C_SCHEMA_VERSION = 1
+I55C_PHASE = "I5.5C"
+I55C_RECEIPT_PHASE = "I5.5C_QUALIFICATION_RECEIPT"
+
+
+def _i55c_registration_string(scenario: Mapping[str, Any], *, label: str) -> str:
+    input_images = scenario.get("input_images")
+    registered_images = scenario.get("registered_images")
+    if not isinstance(input_images, int) or input_images <= 0:
+        raise ReconstructionValidationError(f"I5.5C {label} input_images is invalid.")
+    if not isinstance(registered_images, int) or registered_images < 0 or registered_images > input_images:
+        raise ReconstructionValidationError(f"I5.5C {label} registered_images is invalid.")
+    ratio = scenario.get("registration_ratio")
+    expected = registered_images / input_images
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not isfinite(float(ratio)) or abs(float(ratio) - expected) > 1e-9:
+        raise ReconstructionValidationError(f"I5.5C {label} registration ratio is inconsistent with image counts.")
+    if scenario.get("full_input_scope_registered") is not (registered_images == input_images):
+        raise ReconstructionValidationError(f"I5.5C {label} full-input registration flag is inconsistent.")
+    if scenario.get("partial_registration_preserved") is not (0 < registered_images < input_images):
+        raise ReconstructionValidationError(f"I5.5C {label} partial-registration flag is inconsistent.")
+    return f"{registered_images}/{input_images}"
+
+
+def validate_i5_5b_for_i5_5c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact evidence-complete I5.5B replay being closed by I5.5C."""
+
+    _require(payload, "schema_version", I55B_SCHEMA_VERSION, label="I5.5B replay")
+    _require(payload, "phase", I55B_PHASE, label="I5.5B replay")
+    _require(payload, "status", "current_frozen_foundation_dynamic_scene_replayed", label="I5.5B replay")
+    _require(payload, "pass", True, label="I5.5B replay")
+    quality_status = str(payload.get("quality_status", ""))
+    if quality_status not in {"pass", "degraded", "rejected"}:
+        raise ReconstructionValidationError("I5.5C I5.5B quality status is invalid.")
+
+    scope = _mapping(payload.get("scope"), label="I5.5B scope")
+    for key in (
+        "current_frozen_foundation_real_replay", "paired_control_dynamic_proxy_replay",
+        "stress_images_materialized", "control_replay_attempted", "dynamic_proxy_replay_attempted",
+    ):
+        _require(scope, key, True, label="I5.5B scope")
+    for key in ("control_sfm_rerun", "dynamic_proxy_sfm_rerun"):
+        if not isinstance(scope.get(key), bool):
+            raise ReconstructionValidationError(f"I5.5B scope {key} must be boolean.")
+    for key in (
+        "dense_provider_rerun", "dynamic_masking_added", "semantic_segmentation_added",
+        "motion_outlier_filter_added", "provider_specific_robustness_started",
+        "mp_sfm_strategy_evaluation_started", "thresholds_modified", "production_default_modified",
+        "auto_policy_work_started", "hybrid_experiment_started",
+    ):
+        _require(scope, key, False, label="I5.5B scope")
+
+    bindings = _mapping(payload.get("evidence_bindings"), label="I5.5B evidence_bindings")
+    a_binding = _mapping(bindings.get("i5_5a_admission"), label="I5.5B I5.5A binding")
+    if not _valid_sha256(a_binding.get("sha256")):
+        raise ReconstructionValidationError("I5.5C I5.5B predecessor I5.5A SHA256 binding is malformed.")
+
+    provenance = _mapping(payload.get("provenance"), label="I5.5B provenance")
+    for key in (
+        "source_reverified_before_replay", "source_reverified_after_replay",
+        "staged_inputs_reverified_after_replay", "same_production_native_sfm_runner_control_and_stress",
+    ):
+        _require(provenance, key, True, label="I5.5B provenance")
+    _require(provenance, "same_matching_policy_control_and_stress", "exhaustive", label="I5.5B provenance")
+    _require(provenance, "same_max_keyframes_control_and_stress", 19, label="I5.5B provenance")
+    for key in ("result_driven_recipe_tuning", "retry_until_quality_pass", "historical_result_overwritten"):
+        _require(provenance, key, False, label="I5.5B provenance")
+    for key in ("frozen_source_asset_set_sha256", "frozen_dynamic_proxy_recipe_sha256"):
+        if not _valid_sha256(provenance.get(key)):
+            raise ReconstructionValidationError(f"I5.5C I5.5B provenance {key} is malformed.")
+
+    materialization = _mapping(payload.get("materialization_revalidation"), label="I5.5B materialization revalidation")
+    for key in (
+        "same_decoded_source_pixels_for_control_and_stress", "control_pixel_values_preserved",
+        "donor_patch_pixel_identity_preserved", "target_centroid_trajectory_matches_frozen_recipe",
+        "changed_pixels_confined_to_frozen_target_boxes", "source_dimensions_constant",
+        "controlled_independent_foreground_motion_proxy",
+    ):
+        _require(materialization, key, True, label="I5.5B materialization revalidation")
+    _require(materialization, "natural_dynamic_scene_ground_truth", False, label="I5.5B materialization revalidation")
+
+    scenarios = _mapping(payload.get("scenarios"), label="I5.5B scenarios")
+    scenario_quality: dict[str, str] = {}
+    registrations: dict[str, str] = {}
+    for key in ("control", "dynamic_proxy"):
+        scenario = _mapping(scenarios.get(key), label=f"I5.5B {key} scenario")
+        registrations[key] = _i55c_registration_string(scenario, label=key)
+        status = str(scenario.get("quality_status", ""))
+        if status not in {"accepted", "degraded", "rejected"}:
+            raise ReconstructionValidationError(f"I5.5C {key} scenario quality status is invalid.")
+        scenario_quality[key] = status
+        components = scenario.get("sparse_component_count")
+        if not isinstance(components, int) or components < 0:
+            raise ReconstructionValidationError(f"I5.5C {key} sparse component count is invalid.")
+        authority = _mapping(scenario.get("authority"), label=f"I5.5B {key} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.5B {key} authority")
+        _require(authority, "per_scenario_gauge", "arbitrary", label=f"I5.5B {key} authority")
+        for flag in ("metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated"):
+            _require(authority, flag, False, label=f"I5.5B {key} authority")
+
+    comparison = _mapping(payload.get("paired_comparison"), label="I5.5B paired comparison")
+    _require(comparison, "control_quality_status", scenario_quality["control"], label="I5.5B paired comparison")
+    _require(comparison, "dynamic_proxy_quality_status", scenario_quality["dynamic_proxy"], label="I5.5B paired comparison")
+    _require(comparison, "cross_run_absolute_geometry_comparison_permitted", False, label="I5.5B paired comparison")
+    _require(comparison, "cross_run_absolute_translation_comparison_permitted", False, label="I5.5B paired comparison")
+    _require(comparison, "per_scenario_sfm_gauge_remains_arbitrary", True, label="I5.5B paired comparison")
+    _require(comparison, "natural_dynamic_scene_ground_truth", False, label="I5.5B paired comparison")
+    _require(comparison, "threshold_relaxation_used", False, label="I5.5B paired comparison")
+    if not isinstance(comparison.get("controlled_dynamic_proxy_revalidated"), bool):
+        raise ReconstructionValidationError("I5.5C I5.5B controlled proxy revalidation flag is invalid.")
+
+    qualification = _mapping(payload.get("qualification"), label="I5.5B qualification")
+    _require(qualification, "quality_status", quality_status, label="I5.5B qualification")
+    _require(qualification, "controlled_dynamic_foreground_proxy_revalidated", comparison["controlled_dynamic_proxy_revalidated"], label="I5.5B qualification")
+    _require(qualification, "control_quality_status", scenario_quality["control"], label="I5.5B qualification")
+    _require(qualification, "dynamic_proxy_quality_status", scenario_quality["dynamic_proxy"], label="I5.5B qualification")
+    for key in (
+        "natural_dynamic_scene_ground_truth", "real_world_dynamic_scene_robustness_claimed",
+        "universal_dynamic_scene_robustness_claimed", "dense_reconstruction_robustness_claimed",
+        "provider_robustness_claimed", "metric_scale_claimed",
+    ):
+        _require(qualification, key, False, label="I5.5B qualification")
+    conclusion = str(qualification.get("dynamic_scene_robustness_conclusion", ""))
+    if quality_status == "pass":
+        if scenario_quality != {"control": "accepted", "dynamic_proxy": "accepted"}:
+            raise ReconstructionValidationError("I5.5C PASS replay must retain accepted control and dynamic-proxy quality states.")
+        _require(comparison, "controlled_dynamic_proxy_revalidated", True, label="I5.5B paired comparison")
+        if conclusion != "pass_on_admitted_controlled_dynamic_foreground_proxy":
+            raise ReconstructionValidationError("I5.5C PASS replay conclusion drifted.")
+    elif quality_status == "degraded":
+        if conclusion not in {
+            "degraded_on_admitted_controlled_dynamic_foreground_proxy",
+            "inconclusive_controlled_dynamic_proxy_not_revalidated",
+        }:
+            raise ReconstructionValidationError("I5.5C degraded replay conclusion drifted.")
+    else:
+        if conclusion not in {
+            "rejected_on_admitted_controlled_dynamic_foreground_proxy",
+            "scenario_control_not_qualified_for_dynamic_robustness_conclusion",
+        }:
+            raise ReconstructionValidationError("I5.5C rejected replay conclusion drifted.")
+
+    authority = _mapping(payload.get("authority"), label="I5.5B authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.5B authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.5B authority")
+    for key in (
+        "authoritative_sfm_modified", "provider_selected", "provider_promoted", "auto_policy_implemented",
+        "hybrid_authorized", "metric_scale_claimed", "measurement_authoritative", "certified_metrology",
+        "surface_mesh_generated",
+    ):
+        _require(authority, key, False, label="I5.5B authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.5B decision")
+    for key in (
+        "i4_closed", "i5_authorized", "i5_1_complete", "i5_2_complete", "i5_3_complete", "i5_4_complete",
+        "i5_5_started", "i5_5a_complete", "i5_5b_complete", "i5_5c_qualification_closure_authorized",
+    ):
+        _require(decision, key, True, label="I5.5B decision")
+    for key in (
+        "i5_5c_complete", "i5_5_complete", "i5_6_authorized", "provider_specific_robustness_started",
+        "mp_sfm_authorized", "provider_selected", "provider_promoted", "provider_ranking_created",
+        "universal_provider_winner_declared", "global_scalar_score_created", "auto_policy_implemented",
+        "hybrid_authorized", "threshold_relaxation_authorized", "production_default_modified",
+        "metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated",
+    ):
+        _require(decision, key, False, label="I5.5B decision")
+    if payload.get("next") != "I5.5C dynamic-scene handling robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.5C predecessor next-boundary contract drifted.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_5c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    _require(payload, "schema_version", I55C_SCHEMA_VERSION, label="I5.5C receipt")
+    _require(payload, "phase", I55C_RECEIPT_PHASE, label="I5.5C receipt")
+    _require(payload, "status", "pass", label="I5.5C receipt")
+    _require(payload, "pass", True, label="I5.5C receipt")
+    scope = _mapping(payload.get("scope"), label="I5.5C receipt scope")
+    for key in (
+        "focused_i5_5c_tests", "predecessor_i5_5b_regression", "predecessor_i5_5a_regression",
+        "evidence_only_closure_contract_regression", "dynamic_quality_penalty_preservation_regression",
+        "authority_guard_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.5C receipt scope")
+    for key in (
+        "sfm_rerun", "source_rematerialized", "stress_images_rematerialized", "dense_provider_rerun",
+        "dynamic_masking_added", "semantic_segmentation_added", "motion_outlier_filter_added",
+        "thresholds_modified", "production_default_modified", "mp_sfm_started",
+        "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.5C receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.5C receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.5C receipt test counts must be non-negative integers.")
+    if focused < 15 or predecessor < 40 or combined < 70 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.5C receipt coverage is below the required closure floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.5C receipt return_codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.5C receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def _i55c_ratio(numerator: Any, denominator: Any) -> float | None:
+    if numerator is None or denominator is None:
+        return None
+    if isinstance(numerator, bool) or isinstance(denominator, bool):
+        return None
+    if not isinstance(numerator, (int, float)) or not isinstance(denominator, (int, float)):
+        return None
+    if not isfinite(float(numerator)) or not isfinite(float(denominator)) or float(denominator) == 0.0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _i55c_directional_quality_evidence(comparison: Mapping[str, Any]) -> dict[str, Any]:
+    c_landmarks = comparison.get("landmarks_control")
+    s_landmarks = comparison.get("landmarks_dynamic_proxy")
+    c_obs = comparison.get("observations_control")
+    s_obs = comparison.get("observations_dynamic_proxy")
+    c_repr = comparison.get("mean_reprojection_error_px_control")
+    s_repr = comparison.get("mean_reprojection_error_px_dynamic_proxy")
+    c_track = comparison.get("mean_track_length_control")
+    s_track = comparison.get("mean_track_length_dynamic_proxy")
+
+    def less(a: Any, b: Any) -> bool:
+        return isinstance(a, (int, float)) and not isinstance(a, bool) and isinstance(b, (int, float)) and not isinstance(b, bool) and float(a) < float(b)
+
+    def greater(a: Any, b: Any) -> bool:
+        return isinstance(a, (int, float)) and not isinstance(a, bool) and isinstance(b, (int, float)) and not isinstance(b, bool) and float(a) > float(b)
+
+    landmark_reduced = less(s_landmarks, c_landmarks)
+    observation_reduced = less(s_obs, c_obs)
+    reprojection_increased = greater(s_repr, c_repr)
+    track_reduced = less(s_track, c_track)
+    return {
+        "landmark_support_reduced": landmark_reduced,
+        "observation_support_reduced": observation_reduced,
+        "reprojection_error_increased": reprojection_increased,
+        "mean_track_length_reduced": track_reduced,
+        "directional_sparse_quality_penalty_observed": bool(
+            landmark_reduced or observation_reduced or reprojection_increased or track_reduced
+        ),
+        "landmark_retention_ratio": _i55c_ratio(s_landmarks, c_landmarks),
+        "observation_retention_ratio": _i55c_ratio(s_obs, c_obs),
+        "reprojection_error_stress_to_control_ratio": _i55c_ratio(s_repr, c_repr),
+        "mean_track_length_stress_to_control_ratio": _i55c_ratio(s_track, c_track),
+        "classification_threshold_used": None,
+        "directional_comparison_only": True,
+        "cross_run_absolute_geometry_comparison_permitted": False,
+    }
+
+
+def build_i5_5c_dynamic_scene_closure(
+    *,
+    i5_5a_result: Mapping[str, Any],
+    i5_5a_binding: I51EvidenceBinding,
+    i5_5b_result: Mapping[str, Any],
+    i5_5b_binding: I51EvidenceBinding,
+    qualification_receipt: Mapping[str, Any],
+    qualification_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    admission = validate_i5_5a_for_i5_5b(i5_5a_result)
+    replay = validate_i5_5b_for_i5_5c(i5_5b_result)
+    receipt = validate_i5_5c_receipt(qualification_receipt)
+    for binding, label in (
+        (i5_5a_binding, "I5.5C I5.5A"),
+        (i5_5b_binding, "I5.5C I5.5B"),
+        (qualification_receipt_binding, "I5.5C receipt"),
+    ):
+        _validate_binding(binding, label=label)
+
+    replay_bindings = _mapping(replay.get("evidence_bindings"), label="I5.5B evidence_bindings")
+    replay_a_binding = _mapping(replay_bindings.get("i5_5a_admission"), label="I5.5B I5.5A binding")
+    if str(replay_a_binding.get("sha256", "")).lower() != i5_5a_binding.sha256.lower():
+        raise ReconstructionValidationError("I5.5C I5.5B predecessor SHA does not match the independently verified I5.5A artifact.")
+    if str(replay["provenance"]["frozen_source_asset_set_sha256"]).lower() != str(admission["source_identity"]["asset_set_sha256"]).lower():
+        raise ReconstructionValidationError("I5.5C I5.5A/I5.5B source asset identity drifted.")
+    if str(replay["provenance"]["frozen_dynamic_proxy_recipe_sha256"]).lower() != str(admission["stress_plan"]["dynamic_foreground_proxy"]["recipe_sha256"]).lower():
+        raise ReconstructionValidationError("I5.5C I5.5A/I5.5B dynamic proxy recipe identity drifted.")
+    if replay["authority"]["camera_pose_authority_owner"] != admission["authority"]["camera_pose_authority_owner"]:
+        raise ReconstructionValidationError("I5.5C authority drifted between I5.5A and I5.5B.")
+
+    comparison = deepcopy(dict(_mapping(replay.get("paired_comparison"), label="I5.5B paired comparison")))
+    directional = _i55c_directional_quality_evidence(comparison)
+    quality_status = str(replay["quality_status"])
+    conclusion = str(replay["qualification"]["dynamic_scene_robustness_conclusion"])
+    if quality_status == "pass":
+        operating_envelope = (
+            "qualified_on_admitted_controlled_dynamic_foreground_proxy_with_observed_sparse_quality_penalty"
+            if directional["directional_sparse_quality_penalty_observed"]
+            else "qualified_on_admitted_controlled_dynamic_foreground_proxy"
+        )
+    elif quality_status == "degraded":
+        operating_envelope = (
+            "inconclusive_on_admitted_controlled_dynamic_foreground_proxy"
+            if conclusion == "inconclusive_controlled_dynamic_proxy_not_revalidated"
+            else "degraded_on_admitted_controlled_dynamic_foreground_proxy"
+        )
+    else:
+        operating_envelope = "rejected_on_admitted_controlled_dynamic_foreground_proxy"
+
+    scenarios = _mapping(replay.get("scenarios"), label="I5.5B scenarios")
+    control = _mapping(scenarios.get("control"), label="I5.5B control")
+    stress = _mapping(scenarios.get("dynamic_proxy"), label="I5.5B dynamic proxy")
+    authority = deepcopy(dict(_mapping(replay.get("authority"), label="I5.5B authority")))
+
+    return {
+        "schema_version": I55C_SCHEMA_VERSION,
+        "phase": I55C_PHASE,
+        "status": "dynamic_scene_handling_robustness_qualified_and_closed",
+        "pass": True,
+        "quality_status": quality_status,
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "i5_5a_admission_reused": True,
+            "i5_5b_real_replay_reused": True,
+            "sfm_rerun": False,
+            "source_rematerialized": False,
+            "stress_images_rematerialized": False,
+            "dense_provider_rerun": False,
+            "dynamic_masking_added": False,
+            "semantic_segmentation_added": False,
+            "motion_outlier_filter_added": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_strategy_evaluation_started": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "auto_policy_work_started": False,
+            "hybrid_experiment_started": False,
+        },
+        "evidence_bindings": {
+            "i5_5a_admission": i5_5a_binding.as_dict(),
+            "i5_5b_real_replay": i5_5b_binding.as_dict(),
+            "i5_5c_qualification_receipt": qualification_receipt_binding.as_dict(),
+        },
+        "provenance": {
+            "frozen_source_asset_set_sha256": replay["provenance"]["frozen_source_asset_set_sha256"],
+            "frozen_dynamic_proxy_recipe_sha256": replay["provenance"]["frozen_dynamic_proxy_recipe_sha256"],
+            "i5_5b_quality_status_preserved": True,
+            "i5_5b_dynamic_scene_conclusion_preserved": True,
+            "historical_result_overwritten": False,
+            "result_driven_recipe_tuning": False,
+            "retry_until_quality_pass": False,
+        },
+        "qualification": {
+            "quality_status": quality_status,
+            "operating_envelope": operating_envelope,
+            "dynamic_scene_robustness_conclusion": conclusion,
+            "control_registration": _i55c_registration_string(control, label="control"),
+            "dynamic_proxy_registration": _i55c_registration_string(stress, label="dynamic_proxy"),
+            "control_sparse_component_count": int(control["sparse_component_count"]),
+            "dynamic_proxy_sparse_component_count": int(stress["sparse_component_count"]),
+            "controlled_dynamic_foreground_proxy_revalidated": bool(replay["qualification"]["controlled_dynamic_foreground_proxy_revalidated"]),
+            "natural_dynamic_scene_ground_truth": False,
+            "real_world_dynamic_scene_robustness_claimed": False,
+            "universal_dynamic_scene_robustness_claimed": False,
+            "dense_reconstruction_robustness_claimed": False,
+            "provider_robustness_claimed": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+        },
+        "directional_quality_evidence": directional,
+        "paired_comparison": comparison,
+        "materialization_revalidation": deepcopy(dict(_mapping(replay.get("materialization_revalidation"), label="I5.5B materialization revalidation"))),
+        "regression_summary": {
+            "focused_i5_5c_tests": receipt["counts"]["focused_tests"],
+            "predecessor_tests": receipt["counts"]["predecessor_total_tests"],
+            "combined_exercised_tests": receipt["counts"]["combined_exercised_tests"],
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": authority,
+        "decision": {
+            "i4_closed": True,
+            "i5_authorized": True,
+            "i5_1_complete": True,
+            "i5_2_complete": True,
+            "i5_3_complete": True,
+            "i5_4_complete": True,
+            "i5_5_started": True,
+            "i5_5a_complete": True,
+            "i5_5b_complete": True,
+            "i5_5c_complete": True,
+            "i5_5_complete": True,
+            "i5_6_authorized": True,
+            "i5_6_started": False,
+            "provider_specific_robustness_started": False,
+            "mp_sfm_authorized": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "production_default_modified": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+        },
+        "roadmap_guard": {
+            "i5_6_mvs_robustness_authorized_not_started": True,
+            "provider_specific_robustness_not_started": True,
+            "mp_sfm_deferred_to_i5_10": True,
+            "hybrid_deferred_to_i5_12_if_justified": True,
+            "auto_policy_deferred_to_i5_13": True,
+        },
+        "next": "I5.6 MVS robustness envelope.",
+    }
+
+
 __all__ = [
     "I55A_SCHEMA_VERSION", "I55A_PHASE", "I55A_RECEIPT_PHASE", "I55AAdmissionPolicy",
     "validate_i5_4c_for_i5_5", "build_i5_5a_source_identity", "validate_i5_5a_source_identity",
@@ -1320,4 +1740,6 @@ __all__ = [
     "analyze_i5_5b_sfm_report", "analyze_i5_5b_pre_sfm_ingestion_rejection",
     "analyze_i5_5b_mapping_no_sparse_model_rejection", "compare_i5_5b_sfm_outcomes",
     "build_i5_5b_dynamic_scene_replay",
+    "I55C_SCHEMA_VERSION", "I55C_PHASE", "I55C_RECEIPT_PHASE",
+    "validate_i5_5b_for_i5_5c", "validate_i5_5c_receipt", "build_i5_5c_dynamic_scene_closure",
 ]
