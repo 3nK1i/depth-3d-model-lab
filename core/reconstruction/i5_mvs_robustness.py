@@ -1194,6 +1194,480 @@ def build_i5_6b_mvs_robustness_replay(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# I5.6C - MVS robustness qualification + closure
+# ---------------------------------------------------------------------------
+
+I56C_SCHEMA_VERSION = 1
+I56C_PHASE = "I5.6C"
+I56C_RECEIPT_PHASE = "I5.6C_QUALIFICATION_RECEIPT"
+
+
+def _i56c_nonnegative_number(value: Any, *, label: str, allow_none: bool = False) -> float | None:
+    if value is None and allow_none:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ReconstructionValidationError(f"{label} must be a non-negative number.")
+    number = float(value)
+    if number < 0.0 or number != number or number in (float("inf"), float("-inf")):
+        raise ReconstructionValidationError(f"{label} must be a finite non-negative number.")
+    return number
+
+
+def _i56c_validate_recovery_provenance(payload: Mapping[str, Any]) -> dict[str, Any]:
+    recovery = deepcopy(dict(_mapping(payload, label="I5.6B recovery provenance")))
+    _require(recovery, "schema_version", I56B_RECOVERY_SCHEMA_VERSION, label="I5.6B recovery provenance")
+    _require(recovery, "phase", I56B_RECOVERY_PHASE, label="I5.6B recovery provenance")
+    _require(recovery, "recovery_required", True, label="I5.6B recovery provenance")
+    _require(recovery, "interrupted_parent_exit_code", 130, label="I5.6B recovery provenance")
+    _require(recovery, "recovered_scenario_id", I56B_RECOVERY_SCENARIO_ID, label="I5.6B recovery provenance")
+    for key in (
+        "scenarios_1_through_5_reused_without_rerun",
+        "scenario_6_native_artifacts_reused_without_rerun",
+        "worker_result_missing",
+        "normal_provider_summary_missing",
+        "native_fusion_structurally_validated",
+        "authoritative_inputs_revalidated",
+    ):
+        _require(recovery, key, True, label="I5.6B recovery provenance")
+    for key in (
+        "sfm_rerun", "patch_match_rerun", "stereo_fusion_rerun", "mvs_rerun",
+        "thresholds_modified", "production_default_modified", "retry_until_pass",
+    ):
+        _require(recovery, key, False, label="I5.6B recovery provenance")
+    cause = str(recovery.get("worker_termination_cause", "")).strip()
+    if not cause:
+        raise ReconstructionValidationError("I5.6C requires the interrupted-worker termination cause provenance to be preserved.")
+    bindings = _mapping(recovery.get("artifact_bindings"), label="I5.6B recovery artifact bindings")
+    for key in (
+        "runtime_preflight", "original_replay_receipt", "recovery_validation_receipt",
+        "recovered_scenario_record", "recovery_provider_summary", "recovered_native_manifest",
+    ):
+        binding = _mapping(bindings.get(key), label=f"I5.6B recovery binding {key}")
+        if not str(binding.get("path", "")).strip() or not _valid_sha(binding.get("sha256")):
+            raise ReconstructionValidationError(f"I5.6C recovery binding {key} is malformed.")
+    return recovery
+
+
+def validate_i5_6b_for_i5_6c(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact evidence-complete I5.6B replay being closed by I5.6C."""
+
+    _require(payload, "schema_version", I56B_SCHEMA_VERSION, label="I5.6B replay")
+    _require(payload, "phase", I56B_PHASE, label="I5.6B replay")
+    _require(payload, "status", "current_frozen_foundation_mvs_robustness_replayed", label="I5.6B replay")
+    _require(payload, "pass", True, label="I5.6B replay")
+    quality_status = str(payload.get("quality_status", ""))
+    if quality_status not in {"pass", "degraded", "rejected"}:
+        raise ReconstructionValidationError("I5.6C I5.6B quality status is invalid.")
+
+    scope = _mapping(payload.get("scope"), label="I5.6B scope")
+    for key in ("real_production_mvs_replay", "six_admitted_castle_scenarios_attempted", "sequential_execution"):
+        _require(scope, key, True, label="I5.6B scope")
+    for key in (
+        "sfm_rerun", "bundle_adjustment_rerun", "source_rematerialized", "provider_comparison_started",
+        "da3_rerun", "thresholds_modified", "production_default_modified", "result_driven_retuning",
+        "retry_until_pass", "mp_sfm_started", "auto_policy_implemented", "hybrid_authorized",
+        "mvs_rerun_during_recovery",
+    ):
+        _require(scope, key, False, label="I5.6B scope")
+    recovery_used = scope.get("interrupted_parent_recovery_finalization")
+    if not isinstance(recovery_used, bool):
+        raise ReconstructionValidationError("I5.6C I5.6B recovery-finalization flag must be boolean.")
+    recovery_raw = payload.get("recovery_provenance")
+    recovery = None
+    if recovery_used:
+        recovery = _i56c_validate_recovery_provenance(_mapping(recovery_raw, label="I5.6B recovery provenance"))
+    elif recovery_raw is not None:
+        raise ReconstructionValidationError("I5.6C I5.6B non-recovery replay cannot carry recovery provenance.")
+
+    bindings = _mapping(payload.get("evidence_bindings"), label="I5.6B evidence bindings")
+    for key in ("i5_6a_admission", "i5_6b_receipt"):
+        binding = _mapping(bindings.get(key), label=f"I5.6B binding {key}")
+        if not str(binding.get("path", "")).strip() or not _valid_sha(binding.get("sha256")):
+            raise ReconstructionValidationError(f"I5.6C I5.6B binding {key} is malformed.")
+
+    preflight = _mapping(payload.get("runtime_preflight"), label="I5.6B runtime preflight")
+    _require(preflight, "mvs_runtime_ready", True, label="I5.6B runtime preflight")
+    if int(preflight.get("cuda_devices", 0)) < 1:
+        raise ReconstructionValidationError("I5.6C I5.6B runtime preflight must preserve a CUDA-capable MVS runtime.")
+
+    policy = _mapping(payload.get("execution_policy"), label="I5.6B execution policy")
+    frozen_policy = I56BReplayPolicy().as_dict()
+    for key, expected in frozen_policy.items():
+        _require(policy, key, expected, label="I5.6B execution policy")
+
+    records = _mapping(payload.get("scenario_records"), label="I5.6B scenario records")
+    if len(records) != len(I56B_SCENARIO_IDS) or set(records) != set(I56B_SCENARIO_IDS):
+        raise ReconstructionValidationError("I5.6C requires exactly the six admitted I5.6B scenario records.")
+    runtime_statuses: dict[str, str] = {}
+    for sid in I56B_SCENARIO_IDS:
+        record = _mapping(records.get(sid), label=f"I5.6B {sid} record")
+        _require(record, "scenario_id", sid, label=f"I5.6B {sid} record")
+        status = str(record.get("runtime_status", ""))
+        if status not in {"pass", "rejected"}:
+            raise ReconstructionValidationError(f"I5.6C {sid} runtime status is invalid.")
+        runtime_statuses[sid] = status
+        source_views = record.get("source_registered_views")
+        selected_views = record.get("selected_views")
+        if not isinstance(source_views, int) or source_views < 2 or not isinstance(selected_views, int) or not (2 <= selected_views <= source_views):
+            raise ReconstructionValidationError(f"I5.6C {sid} selected/source view counts are invalid.")
+        _require(record, "adaptive_selection", True, label=f"I5.6B {sid} record")
+        authority = _mapping(record.get("authority"), label=f"I5.6B {sid} authority")
+        _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label=f"I5.6B {sid} authority")
+        _require(authority, "authoritative_sfm_modified", False, label=f"I5.6B {sid} authority")
+        _require(authority, "permanent_global_view_cap", None, label=f"I5.6B {sid} authority")
+        for key in ("metric_scale_claimed", "measurement_authoritative", "certified_metrology"):
+            _require(authority, key, False, label=f"I5.6B {sid} authority")
+        metrics = _mapping(record.get("native_metrics"), label=f"I5.6B {sid} native metrics")
+        if status == "pass":
+            if int(metrics.get("geometric_depth_maps", -1)) != selected_views or int(metrics.get("geometric_normal_maps", -1)) != selected_views:
+                raise ReconstructionValidationError(f"I5.6C {sid} must preserve one geometric depth/normal map per selected view.")
+            points = metrics.get("fused_point_count")
+            visibility = metrics.get("visibility_point_count")
+            if not isinstance(points, int) or points <= 0 or visibility != points:
+                raise ReconstructionValidationError(f"I5.6C {sid} fused point/visibility evidence is invalid.")
+            support = _i56c_nonnegative_number(metrics.get("visibility_support_mean"), label=f"I5.6C {sid} visibility support")
+            if support is None or support <= 0.0:
+                raise ReconstructionValidationError(f"I5.6C {sid} visibility support must be positive.")
+        recovered = record.get("recovered_from_existing_native_artifacts") is True
+        if recovered:
+            if sid != I56B_RECOVERY_SCENARIO_ID or not recovery_used:
+                raise ReconstructionValidationError("I5.6C recovery provenance is only admitted for the frozen dynamic-proxy scenario.")
+            _require(record, "provider_adapter_returned", False, label=f"I5.6B {sid} recovery record")
+            rp = _mapping(record.get("recovery_provenance"), label=f"I5.6B {sid} recovery provenance")
+            for key in ("native_patchmatch_outputs_recovered", "native_stereo_fusion_artifacts_recovered", "native_fusion_structurally_validated", "authoritative_inputs_revalidated"):
+                _require(rp, key, True, label=f"I5.6B {sid} recovery provenance")
+            for key in ("sfm_rerun", "patch_match_rerun", "stereo_fusion_rerun", "mvs_rerun", "thresholds_modified", "production_default_modified", "retry_until_pass"):
+                _require(rp, key, False, label=f"I5.6B {sid} recovery provenance")
+            _require(metrics, "wall_time_unavailable_due_interrupted_parent_finalization", True, label=f"I5.6B {sid} native metrics")
+            _require(metrics, "peak_resource_metrics_incomplete_due_missing_worker_result", True, label=f"I5.6B {sid} native metrics")
+            if metrics.get("wall_time_s") is not None:
+                raise ReconstructionValidationError("I5.6C recovered scenario cannot invent the interrupted parent wall time.")
+
+    expected_quality = (
+        "rejected" if runtime_statuses["castle_control"] != "pass"
+        else "degraded" if any(runtime_statuses[sid] != "pass" for sid in I56B_SCENARIO_IDS if sid != "castle_control")
+        else "pass"
+    )
+    if quality_status != expected_quality:
+        raise ReconstructionValidationError("I5.6C I5.6B quality status does not match the six preserved runtime outcomes.")
+
+    comparisons = _mapping(payload.get("control_relative_comparisons"), label="I5.6B comparisons")
+    if len(comparisons) != len(I56B_SCENARIO_IDS) or set(comparisons) != set(I56B_SCENARIO_IDS):
+        raise ReconstructionValidationError("I5.6C requires the complete I5.6B control-relative comparison set.")
+    independently_reduced: list[str] = []
+    for sid in I56B_SCENARIO_IDS:
+        item = _mapping(comparisons.get(sid), label=f"I5.6B {sid} comparison")
+        _require(item, "runtime_status", runtime_statuses[sid], label=f"I5.6B {sid} comparison")
+        _require(item, "cross_run_absolute_geometry_comparison", False, label=f"I5.6B {sid} comparison")
+        _require(item, "cross_run_scale_normalization_performed", False, label=f"I5.6B {sid} comparison")
+        _require(item, "classification_threshold_used", None, label=f"I5.6B {sid} comparison")
+        _require(item, "global_scalar_score_created", False, label=f"I5.6B {sid} comparison")
+        if sid != "castle_control" and item.get("directional_native_support_reduction_observed") is True:
+            independently_reduced.append(sid)
+
+    observations = _mapping(payload.get("observations"), label="I5.6B observations")
+    recorded_reduced = observations.get("directional_native_support_reduction_scenarios")
+    if not isinstance(recorded_reduced, list) or recorded_reduced != independently_reduced:
+        raise ReconstructionValidationError("I5.6C I5.6B directional support-reduction scenario list drifted.")
+    _require(observations, "directional_native_support_reduction_observed", bool(independently_reduced), label="I5.6B observations")
+    _require(observations, "cross_run_absolute_geometry_comparison", False, label="I5.6B observations")
+    _require(observations, "cross_run_scale_normalization_performed", False, label="I5.6B observations")
+    _require(observations, "ground_truth_surface_accuracy_available", False, label="I5.6B observations")
+    _require(observations, "classification_threshold_used", None, label="I5.6B observations")
+    _require(observations, "global_scalar_score_created", False, label="I5.6B observations")
+    _require(observations, "quality_penalty_interpretation_deferred_to_i5_6c", True, label="I5.6B observations")
+
+    anchor = _mapping(payload.get("historical_positive_anchor_preserved"), label="I5.6B historical anchor")
+    _require(anchor, "reference_views", 47, label="I5.6B historical anchor")
+    _require(anchor, "evidence_only", True, label="I5.6B historical anchor")
+    _require(anchor, "rerun_authorized", False, label="I5.6B historical anchor")
+
+    authority = _mapping(payload.get("authority"), label="I5.6B authority")
+    _require(authority, "camera_pose_authority_owner", "pycolmap_sfm", label="I5.6B authority")
+    _require(authority, "authoritative_sfm_modified", False, label="I5.6B authority")
+    _require(authority, "permanent_global_view_cap", None, label="I5.6B authority")
+    for key in ("provider_selected", "provider_promoted", "provider_ranking_created", "metric_scale_claimed", "measurement_authoritative", "certified_metrology", "surface_mesh_generated"):
+        _require(authority, key, False, label="I5.6B authority")
+
+    decision = _mapping(payload.get("decision"), label="I5.6B decision")
+    for key in ("i5_6_started", "i5_6a_complete", "i5_6b_complete", "i5_6c_authorized"):
+        _require(decision, key, True, label="I5.6B decision")
+    _require(decision, "i5_6c_started", False, label="I5.6B decision")
+    for key in (
+        "provider_selected", "provider_promoted", "provider_ranking_created", "universal_provider_winner_declared",
+        "global_scalar_score_created", "auto_policy_implemented", "hybrid_authorized", "mp_sfm_authorized",
+        "threshold_relaxation_authorized", "production_default_modified",
+    ):
+        _require(decision, key, False, label="I5.6B decision")
+    roadmap = _mapping(payload.get("roadmap_guard"), label="I5.6B roadmap guard")
+    _require(roadmap, "i5_6c_evidence_only_qualification_authorized", True, label="I5.6B roadmap guard")
+    _require(roadmap, "i5_7_not_authorized_until_i5_6c_closure", True, label="I5.6B roadmap guard")
+    _require(roadmap, "mp_sfm_deferred_to_i5_10", True, label="I5.6B roadmap guard")
+    _require(roadmap, "hybrid_deferred_to_i5_12_if_justified", True, label="I5.6B roadmap guard")
+    _require(roadmap, "auto_deferred_to_i5_13", True, label="I5.6B roadmap guard")
+    if str(payload.get("next", "")) != "I5.6C MVS robustness qualification and closure.":
+        raise ReconstructionValidationError("I5.6C predecessor next-boundary contract drifted.")
+    return deepcopy(dict(payload))
+
+
+def validate_i5_6c_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
+    _require(payload, "schema_version", I56C_SCHEMA_VERSION, label="I5.6C receipt")
+    _require(payload, "phase", I56C_RECEIPT_PHASE, label="I5.6C receipt")
+    _require(payload, "status", "pass", label="I5.6C receipt")
+    _require(payload, "pass", True, label="I5.6C receipt")
+    scope = _mapping(payload.get("scope"), label="I5.6C receipt scope")
+    for key in (
+        "focused_i5_6c_tests", "predecessor_i5_6b_regression", "predecessor_i5_6a_regression",
+        "evidence_only_closure_contract_regression", "interrupted_recovery_provenance_regression",
+        "directional_native_support_preservation_regression", "authority_guard_regression",
+        "roadmap_guard_regression", "import_probe", "runner_help_probe",
+    ):
+        _require(scope, key, True, label="I5.6C receipt scope")
+    for key in (
+        "sfm_rerun", "mvs_rerun", "patch_match_rerun", "stereo_fusion_rerun",
+        "provider_comparison_started", "da3_rerun", "thresholds_modified", "production_default_modified",
+        "retry_until_pass", "mp_sfm_started", "auto_policy_implemented", "hybrid_authorized",
+    ):
+        _require(scope, key, False, label="I5.6C receipt scope")
+    counts = _mapping(payload.get("counts"), label="I5.6C receipt counts")
+    focused = counts.get("focused_tests")
+    predecessor = counts.get("predecessor_total_tests")
+    combined = counts.get("combined_exercised_tests")
+    if not all(isinstance(value, int) and value >= 0 for value in (focused, predecessor, combined)):
+        raise ReconstructionValidationError("I5.6C receipt test counts must be non-negative integers.")
+    if focused < 15 or predecessor < 40 or combined < 60 or combined != focused + predecessor:
+        raise ReconstructionValidationError("I5.6C receipt coverage is below the required closure floor.")
+    rcs = _mapping(payload.get("return_codes"), label="I5.6C receipt return codes")
+    for key in ("focused", "predecessor_unit", "predecessor_integration", "predecessor_stress", "import_probe", "runner_help_probe"):
+        if rcs.get(key) != 0:
+            raise ReconstructionValidationError(f"I5.6C receipt {key} return code is not zero.")
+    return deepcopy(dict(payload))
+
+
+def _i56c_directional_native_support(payload: Mapping[str, Any]) -> dict[str, Any]:
+    comparisons = _mapping(payload.get("control_relative_comparisons"), label="I5.6B comparisons")
+    scenarios: dict[str, Any] = {}
+    reductions: list[str] = []
+    native_complete = True
+    performance_complete = True
+    resource_complete = True
+    for sid in I56B_SCENARIO_IDS:
+        item = _mapping(comparisons.get(sid), label=f"I5.6B {sid} comparison")
+        row = {
+            "runtime_status": item.get("runtime_status"),
+            "selected_view_ratio_to_control": item.get("selected_view_ratio_to_control"),
+            "fused_point_ratio_to_control": item.get("fused_point_ratio_to_control"),
+            "visibility_support_mean_ratio_to_control": item.get("visibility_support_mean_ratio_to_control"),
+            "wall_time_ratio_to_control": item.get("wall_time_ratio_to_control"),
+            "peak_vram_ratio_to_control": item.get("peak_vram_ratio_to_control"),
+            "directional_native_support_reduction_observed": item.get("directional_native_support_reduction_observed"),
+        }
+        scenarios[sid] = row
+        if sid != "castle_control" and row["directional_native_support_reduction_observed"] is True:
+            reductions.append(sid)
+        if row["runtime_status"] == "pass":
+            if row["fused_point_ratio_to_control"] is None or row["visibility_support_mean_ratio_to_control"] is None:
+                native_complete = False
+            if row["wall_time_ratio_to_control"] is None:
+                performance_complete = False
+            if row["peak_vram_ratio_to_control"] is None:
+                resource_complete = False
+    return {
+        "scenario_comparisons": scenarios,
+        "directional_native_support_reduction_scenarios": reductions,
+        "directional_native_support_reduction_observed": bool(reductions),
+        "native_support_comparison_complete_for_passing_scenarios": native_complete,
+        "runtime_performance_comparison_complete_for_passing_scenarios": performance_complete,
+        "resource_comparison_complete_for_passing_scenarios": resource_complete,
+        "classification_threshold_used": None,
+        "global_scalar_score_created": False,
+        "directional_comparison_only": True,
+        "cross_run_absolute_geometry_comparison": False,
+        "cross_run_scale_normalization_performed": False,
+    }
+
+
+def build_i5_6c_mvs_robustness_closure(
+    *,
+    i5_6a_result: Mapping[str, Any],
+    i5_6a_binding: I51EvidenceBinding,
+    i5_6b_result: Mapping[str, Any],
+    i5_6b_binding: I51EvidenceBinding,
+    qualification_receipt: Mapping[str, Any],
+    qualification_receipt_binding: I51EvidenceBinding,
+) -> dict[str, Any]:
+    admission = validate_i5_6a_for_i5_6b(i5_6a_result)
+    replay = validate_i5_6b_for_i5_6c(i5_6b_result)
+    receipt = validate_i5_6c_receipt(qualification_receipt)
+    for binding, label in (
+        (i5_6a_binding, "I5.6C I5.6A"),
+        (i5_6b_binding, "I5.6C I5.6B"),
+        (qualification_receipt_binding, "I5.6C receipt"),
+    ):
+        _validate_binding(binding, label=label)
+
+    replay_bindings = _mapping(replay.get("evidence_bindings"), label="I5.6B evidence bindings")
+    replay_a = _mapping(replay_bindings.get("i5_6a_admission"), label="I5.6B I5.6A binding")
+    if str(replay_a.get("sha256", "")).lower() != i5_6a_binding.sha256.lower():
+        raise ReconstructionValidationError("I5.6C I5.6B predecessor SHA does not match the independently verified I5.6A artifact.")
+    if dict(_mapping(replay.get("execution_policy"), label="I5.6B execution policy")) != dict(_mapping(admission.get("execution_policy"), label="I5.6A execution policy")):
+        raise ReconstructionValidationError("I5.6C I5.6A/I5.6B frozen MVS execution policy drifted.")
+
+    quality_status = str(replay["quality_status"])
+    records = _mapping(replay.get("scenario_records"), label="I5.6B scenario records")
+    passed = [sid for sid in I56B_SCENARIO_IDS if records[sid].get("runtime_status") == "pass"]
+    rejected = [sid for sid in I56B_SCENARIO_IDS if records[sid].get("runtime_status") != "pass"]
+    directional = _i56c_directional_native_support(replay)
+    reduction = directional["directional_native_support_reduction_observed"]
+
+    if quality_status == "pass":
+        operating_envelope = (
+            "qualified_on_all_six_admitted_castle_mvs_scenarios_with_directional_native_support_reductions"
+            if reduction else "qualified_on_all_six_admitted_castle_mvs_scenarios"
+        )
+    elif quality_status == "degraded":
+        operating_envelope = "degraded_on_admitted_castle_mvs_envelope"
+    else:
+        operating_envelope = "rejected_on_admitted_castle_mvs_envelope"
+
+    recovery_used = replay["scope"]["interrupted_parent_recovery_finalization"] is True
+    recovery = deepcopy(dict(replay["recovery_provenance"])) if recovery_used else None
+    recovery_cause = str(recovery.get("worker_termination_cause")) if recovery is not None else None
+
+    return {
+        "schema_version": I56C_SCHEMA_VERSION,
+        "phase": I56C_PHASE,
+        "status": "mvs_robustness_qualified_and_closed",
+        "pass": True,
+        "quality_status": quality_status,
+        "scope": {
+            "evidence_only_qualification_and_closure": True,
+            "i5_6a_admission_reused": True,
+            "i5_6b_real_replay_reused": True,
+            "interrupted_recovery_evidence_reused": recovery_used,
+            "sfm_rerun": False,
+            "bundle_adjustment_rerun": False,
+            "mvs_rerun": False,
+            "patch_match_rerun": False,
+            "stereo_fusion_rerun": False,
+            "source_rematerialized": False,
+            "provider_comparison_started": False,
+            "da3_rerun": False,
+            "thresholds_modified": False,
+            "production_default_modified": False,
+            "result_driven_retuning": False,
+            "retry_until_pass": False,
+            "mp_sfm_started": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+        },
+        "evidence_bindings": {
+            "i5_6a_admission": i5_6a_binding.as_dict(),
+            "i5_6b_real_replay": i5_6b_binding.as_dict(),
+            "i5_6c_qualification_receipt": qualification_receipt_binding.as_dict(),
+        },
+        "provenance": {
+            "i5_6b_quality_status_preserved": True,
+            "i5_6b_scenario_runtime_outcomes_preserved": True,
+            "i5_6b_control_relative_native_metrics_preserved": True,
+            "i5_6b_recovery_provenance_preserved": recovery_used,
+            "historical_result_overwritten": False,
+            "result_driven_retuning": False,
+            "retry_until_pass": False,
+            "worker_termination_cause": recovery_cause,
+            "worker_termination_cause_resolved": False if recovery_used and "unresolved" in (recovery_cause or "") else None,
+        },
+        "qualification": {
+            "quality_status": quality_status,
+            "operating_envelope": operating_envelope,
+            "admitted_scenario_count": len(I56B_SCENARIO_IDS),
+            "runtime_pass_scenario_count": len(passed),
+            "runtime_rejected_scenario_count": len(rejected),
+            "runtime_pass_scenarios": passed,
+            "runtime_rejected_scenarios": rejected,
+            "all_six_admitted_scenarios_runtime_pass": len(passed) == len(I56B_SCENARIO_IDS),
+            "current_production_colmap_mvs_path_qualified_within_admitted_envelope": quality_status == "pass",
+            "directional_native_support_reduction_observed": reduction,
+            "directional_native_support_reduction_scenarios": list(directional["directional_native_support_reduction_scenarios"]),
+            "native_support_comparison_complete_for_passing_scenarios": directional["native_support_comparison_complete_for_passing_scenarios"],
+            "runtime_performance_qualification_claimed": False,
+            "resource_robustness_qualification_claimed": False,
+            "ground_truth_surface_accuracy_available": False,
+            "ground_truth_surface_accuracy_claimed": False,
+            "cross_run_absolute_geometry_comparison_performed": False,
+            "cross_run_scale_normalization_performed": False,
+            "classification_threshold_used": None,
+            "global_scalar_score_created": False,
+            "universal_mvs_robustness_claimed": False,
+            "universal_provider_winner_claimed": False,
+            "provider_ranking_claimed": False,
+            "metric_scale_claimed": False,
+        },
+        "directional_native_support_evidence": directional,
+        "recovery_provenance": recovery,
+        "limitations": {
+            "recovered_dynamic_proxy_parent_wall_time_unavailable": bool(
+                recovery_used and records[I56B_RECOVERY_SCENARIO_ID]["native_metrics"].get("wall_time_s") is None
+            ),
+            "recovered_dynamic_proxy_peak_resource_metrics_incomplete": bool(
+                recovery_used and records[I56B_RECOVERY_SCENARIO_ID]["native_metrics"].get("peak_resource_metrics_incomplete_due_missing_worker_result") is True
+            ),
+            "runtime_performance_envelope_complete": directional["runtime_performance_comparison_complete_for_passing_scenarios"],
+            "resource_envelope_complete": directional["resource_comparison_complete_for_passing_scenarios"],
+            "upstream_excluded_scenarios_are_not_reclassified_as_mvs_failures": True,
+            "historical_temple_ring_anchor_is_evidence_only": True,
+            "castle_suite_is_not_universal_mvs_ground_truth": True,
+            "arbitrary_sfm_gauge_preserved": True,
+        },
+        "upstream_exclusions_preserved": deepcopy(dict(_mapping(replay.get("upstream_exclusions_preserved"), label="I5.6B exclusions"))),
+        "historical_positive_anchor_preserved": deepcopy(dict(_mapping(replay.get("historical_positive_anchor_preserved"), label="I5.6B historical anchor"))),
+        "regression_summary": {
+            "focused_i5_6c_tests": receipt["counts"].get("focused_tests"),
+            "predecessor_tests": receipt["counts"].get("predecessor_total_tests"),
+            "combined_exercised_tests": receipt["counts"].get("combined_exercised_tests"),
+            "all_required_suites_passed": True,
+            "test_counts_are_not_runtime_quality_scores": True,
+        },
+        "authority": {
+            "camera_pose_authority_owner": "pycolmap_sfm",
+            "authoritative_sfm_modified": False,
+            "single_authoritative_sfm_frame_preserved": True,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "metric_scale_claimed": False,
+            "measurement_authoritative": False,
+            "certified_metrology": False,
+            "surface_mesh_generated": False,
+            "permanent_global_view_cap": None,
+        },
+        "decision": {
+            "i5_6_complete": True,
+            "i5_7_authorized": True,
+            "i5_7_started": False,
+            "provider_selected": False,
+            "provider_promoted": False,
+            "provider_ranking_created": False,
+            "universal_provider_winner_declared": False,
+            "global_scalar_score_created": False,
+            "auto_policy_implemented": False,
+            "hybrid_authorized": False,
+            "mp_sfm_authorized": False,
+            "threshold_relaxation_authorized": False,
+            "production_default_modified": False,
+        },
+        "roadmap_guard": {
+            "i5_7_rollingdepth_authorized": True,
+            "i5_8_video_depth_anything_not_started": True,
+            "i5_10_mp_sfm_deferred": True,
+            "i5_12_hybrid_deferred_if_justified": True,
+            "i5_13_auto_deferred": True,
+        },
+        "next": "I5.7 RollingDepth integration and robustness envelope.",
+    }
+
 __all__ = [
     "I56A_SCHEMA_VERSION", "I56A_PHASE", "I56A_RECEIPT_PHASE", "I56A_SCENARIO_IDS", "I56AAdmissionPolicy",
     "validate_i5_5c_for_i5_6", "validate_i5_6a_receipt", "analyze_i5_6a_sfm_report",
@@ -1203,4 +1677,6 @@ __all__ = [
     "analyze_i5_6b_provider_summary", "validate_i5_6b_existing_scenario_record",
     "recover_i5_6b_interrupted_native_scenario", "compare_i5_6b_scenarios", "build_i5_6b_mvs_robustness_replay",
     "I56B_RECOVERY_SCHEMA_VERSION", "I56B_RECOVERY_PHASE", "I56B_RECOVERY_SCENARIO_ID",
+    "I56C_SCHEMA_VERSION", "I56C_PHASE", "I56C_RECEIPT_PHASE",
+    "validate_i5_6b_for_i5_6c", "validate_i5_6c_receipt", "build_i5_6c_mvs_robustness_closure",
 ]
