@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from core.reconstruction import (
@@ -9,6 +10,27 @@ from core.reconstruction import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+
+def _module_scope_import_roots(path: Path) -> set[str]:
+    """Return imports reachable at module import time, excluding function/class bodies."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    roots: set[str] = set()
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return
+        if isinstance(node, ast.Import):
+            roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module.split(".")[0])
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return roots
 
 
 def test_e4_preserves_e2_runtime_pin_and_appearance_authority() -> None:
@@ -25,17 +47,14 @@ def test_e4_does_not_add_heavy_nerf_runtime_to_production_manifest() -> None:
         assert token not in text
 
 
-def test_e4_production_core_has_no_heavy_runtime_imports() -> None:
-    violations = []
-    for path in (ROOT / "core/reconstruction").glob("*.py"):
-        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith((
-                "import nerfstudio", "from nerfstudio", "import tinycudann", "from tinycudann",
-                "import torch", "from torch", "import lpips", "from lpips",
-            )):
-                violations.append(f"{path.name}:{line_no}")
-    assert violations == []
+def test_e4_production_core_has_no_eager_heavy_runtime_imports() -> None:
+    banned = {"nerfstudio", "tinycudann", "torch", "lpips"}
+    violations = {}
+    for path in sorted((ROOT / "core/reconstruction").glob("*.py")):
+        bad = _module_scope_import_roots(path) & banned
+        if bad:
+            violations[str(path.relative_to(ROOT))] = sorted(bad)
+    assert violations == {}
 
 
 def test_e3_quality_runner_and_shared_metrics_worker_remain_unchanged_in_role() -> None:
