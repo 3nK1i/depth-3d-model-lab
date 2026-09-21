@@ -317,6 +317,7 @@ from app.reconstruction_frame_view_plan_presentation import present_reconstructi
 from app.reconstruction_progressive_sfm_viewer import build_progressive_sfm_viewer_frame
 from app.reconstruction_progressive_dense_viewer import build_progressive_dense_viewer_frame
 from app.reconstruction_dense_job_controller import DenseJobState
+from app.reconstruction_job_telemetry_presentation import JobTelemetryPanelState
 from core.reconstruction.reconstruction_progressive_dense_transport import (
     ProgressiveDenseSnapshotBuffer,
     ProgressiveDenseTransportBinding,
@@ -357,6 +358,7 @@ from app.reconstruction_status import (
     present_offline_state,
 )
 from app.theme import (
+    PALETTE,
     PAGE_MARGIN_BOTTOM,
     PAGE_MARGIN_H,
     PAGE_MARGIN_TOP,
@@ -463,6 +465,7 @@ class ReconstructionPage(QWidget):
         self._offline_workspace_snapshot: OfflineReconstructionWorkspaceSnapshot | None = None
         self._offline_result_handoff: OfflineReconstructionResultHandoff | None = None
         self._dense_job_state = DenseJobState.IDLE
+        self._job_telemetry_panel_state = JobTelemetryPanelState()
         self._dense_admission = None
         self._dense_preview_bound = False
         self._dense_started_at: float | None = None
@@ -883,7 +886,19 @@ class ReconstructionPage(QWidget):
         self._dense_progress_label = QLabel('Dense reconstruction • idle')
         self._dense_progress_label.setObjectName('reconstructionDenseProgressLabel')
         self._dense_progress_label.setWordWrap(True)
-        layout.addWidget(self._dense_progress_label)
+        # Keep all existing job controls and the complete-cloud button visible
+        # at the supported desktop viewport height. Telemetry gets a small
+        # status/details action in this existing row, not six extra card rows.
+        dense_status_row = QHBoxLayout()
+        dense_status_row.setSpacing(6)
+        dense_status_row.addWidget(self._dense_progress_label, stretch=1)
+        self._job_telemetry_details_button = QPushButton('Telemetry · idle')
+        self._job_telemetry_details_button.setObjectName('reconstructionJobTelemetryDetailsButton')
+        self._job_telemetry_details_button.setMaximumWidth(210)
+        self._job_telemetry_details_button.setToolTip('Open observed job telemetry; no progress or ETA is inferred.')
+        self._job_telemetry_details_button.clicked.connect(self._show_job_telemetry_details)
+        dense_status_row.addWidget(self._job_telemetry_details_button)
+        layout.addLayout(dense_status_row)
         self._dense_progress_bar = QProgressBar()
         self._dense_progress_bar.setObjectName('reconstructionDenseProgressBar')
         self._dense_progress_bar.setRange(0, 100)
@@ -899,7 +914,53 @@ class ReconstructionPage(QWidget):
             'GPU rendering is presentation only; camera poses and physical scale are unchanged.')
         self._dense_full_view_button.clicked.connect(self._toggle_full_dense_view)
         layout.addWidget(self._dense_full_view_button)
+
+        # I6.8E layout correction: read-only, on-demand telemetry details live
+        # in a modeless child dialog. Keeping these labels outside the runtime
+        # card prevents active multi-line samples from squeezing job controls.
+        self._job_telemetry_dialog = QDialog(self)
+        self._job_telemetry_dialog.setObjectName('reconstructionJobTelemetryDialog')
+        self._job_telemetry_dialog.setStyleSheet(
+            f'QDialog#reconstructionJobTelemetryDialog {{ background-color: {PALETTE.bg_panel}; '
+            f'color: {PALETTE.text_primary}; }}')
+        self._job_telemetry_dialog.setWindowTitle('Reconstruction · Job telemetry')
+        self._job_telemetry_dialog.resize(560, 280)
+        detail_layout = QVBoxLayout(self._job_telemetry_dialog)
+        detail_layout.setContentsMargins(16, 14, 16, 14)
+        detail_layout.setSpacing(8)
+        self._job_telemetry_heading = QLabel('JOB TELEMETRY • IDLE')
+        self._job_telemetry_heading.setObjectName('reconstructionJobTelemetryHeading')
+        detail_layout.addWidget(self._job_telemetry_heading)
+        self._job_telemetry_stage = QLabel('No active offline reconstruction')
+        self._job_telemetry_stage.setObjectName('reconstructionJobTelemetryStage')
+        self._job_telemetry_counter = QLabel('Observed work: —')
+        self._job_telemetry_counter.setObjectName('reconstructionJobTelemetryCounter')
+        self._job_telemetry_process = QLabel('Job CPU / RAM: —')
+        self._job_telemetry_process.setObjectName('reconstructionJobTelemetryProcess')
+        self._job_telemetry_host = QLabel('Host RAM / disk: —')
+        self._job_telemetry_host.setObjectName('reconstructionJobTelemetryHost')
+        self._job_telemetry_gpu = QLabel('GPU device: —')
+        self._job_telemetry_gpu.setObjectName('reconstructionJobTelemetryGPU')
+        for label in (self._job_telemetry_stage, self._job_telemetry_counter,
+                      self._job_telemetry_process, self._job_telemetry_host,
+                      self._job_telemetry_gpu):
+            label.setWordWrap(True)
+            detail_layout.addWidget(label)
+        self._job_telemetry_counter.setToolTip(
+            'A counter measures observed stage units, not total job completion or ETA.')
+        self._job_telemetry_gpu.setToolTip(
+            'GPU utilization and VRAM are device-wide readings, not this job’s GPU usage.')
+        close_details = QPushButton('Close')
+        close_details.clicked.connect(self._job_telemetry_dialog.hide)
+        detail_layout.addWidget(close_details, alignment=Qt.AlignmentFlag.AlignRight)
+        self._refresh_job_telemetry_presentation()
         return card
+
+    def _show_job_telemetry_details(self) -> None:
+        self._refresh_job_telemetry_presentation()
+        self._job_telemetry_dialog.show()
+        self._job_telemetry_dialog.raise_()
+        self._job_telemetry_dialog.activateWindow()
 
     def _build_viewport_card(self) -> QFrame:
         card = QFrame()
@@ -7784,6 +7845,7 @@ class ReconstructionPage(QWidget):
         controller.dense_admission_ready.connect(self._on_explicit_dense_admission)
         controller.dense_run_finished.connect(self._on_explicit_dense_finished)
         controller.dense_log_received.connect(self._on_explicit_dense_log)
+        controller.job_telemetry_received.connect(self._on_job_telemetry_received)
         controller.da3_canonical_state_changed.connect(self.set_da3_canonical_state)
         controller.da3_canonical_event_received.connect(self.set_da3_canonical_event)
         controller.da3_canonical_result_ready.connect(self._on_da3_canonical_result_ready)
@@ -10031,6 +10093,7 @@ class ReconstructionPage(QWidget):
 
     def _refresh_runtime_telemetry(self) -> None:
         self._refresh_elapsed_label()
+        self._refresh_job_telemetry_presentation()  # stale samples never appear current
         controller = self._controller
         if controller is None:
             return
@@ -10177,10 +10240,49 @@ class ReconstructionPage(QWidget):
         self._dense_full_view_button.setEnabled(False)  # fail closed; inspect before another attempt
         self.set_error('Complete dense viewer unavailable: ' + error[:350])
 
+    def _refresh_job_telemetry_presentation(self) -> None:
+        if not hasattr(self, '_job_telemetry_heading'):
+            return
+        presentation = self._job_telemetry_panel_state.present()
+        self._job_telemetry_heading.setText(presentation.heading.upper())
+        self._job_telemetry_stage.setText(presentation.stage)
+        self._job_telemetry_counter.setText(presentation.counter)
+        self._job_telemetry_process.setText(presentation.process)
+        self._job_telemetry_host.setText(presentation.host)
+        self._job_telemetry_gpu.setText(presentation.gpu)
+        self._job_telemetry_heading.setToolTip(presentation.detail)
+        self._job_telemetry_stage.setToolTip(presentation.detail)
+        # Only the compact disclosure action lives in the runtime card.
+        # The status and stage remain accessible while the modeless detail
+        # dialog shows all readings, including explicit unavailable/stale ones.
+        if presentation.status == 'idle':
+            short_status = 'idle'
+        elif presentation.status == 'terminal':
+            short_status = presentation.heading.rsplit('•', 1)[-1].strip()
+        else:
+            short_status = presentation.stage.removeprefix('Observed stage: ')
+        if len(short_status) > 20:
+            short_status = short_status[:19] + '…'
+        self._job_telemetry_details_button.setText('Telemetry · ' + short_status)
+        self._job_telemetry_details_button.setToolTip(
+            presentation.heading + '\n' + presentation.stage + '\n' + presentation.detail)
+
+    def _on_job_telemetry_received(self, event: object) -> None:
+        # I6.8D authenticates the source identity and producer sequence. The
+        # page additionally refuses observations outside its current active job.
+        if self._job_telemetry_panel_state.accept(event):
+            self._refresh_job_telemetry_presentation()
+
     def set_explicit_dense_job_state(self, state: DenseJobState) -> None:
         if not isinstance(state, DenseJobState):
             return
         if state is DenseJobState.STARTING:
+            controller = self._controller
+            dense = controller.dense_controller if controller is not None else None
+            self._job_telemetry_panel_state.begin(
+                'post_sparse_dense', dense.sparse_session_id if dense is not None else '',
+                dense.dense_run_id if dense is not None else None)
+            self._refresh_job_telemetry_presentation()
             self._dense_preview_bound = False
             self._dense_admission = None
             self._clear_full_dense_view()
@@ -10190,6 +10292,9 @@ class ReconstructionPage(QWidget):
             self._dense_stage_text = 'Starting COLMAP MVS'
             self._dense_elapsed_timer.start()
         self._dense_job_state = state
+        if state in (DenseJobState.COMPLETED, DenseJobState.CANCELLED, DenseJobState.FAILED):
+            self._job_telemetry_panel_state.end(state.value)
+            self._refresh_job_telemetry_presentation()
         if state in (DenseJobState.STARTING, DenseJobState.RUNNING,
                      DenseJobState.VERIFYING, DenseJobState.CANCELLING):
             self._dense_progress_bar.setVisible(True)
@@ -10475,6 +10580,10 @@ class ReconstructionPage(QWidget):
         }:
             self.clear_progressive_dense_preview()
         if state is OfflineReconstructionRunState.STARTING:
+            controller = self._controller
+            self._job_telemetry_panel_state.begin(
+                'offline_sfm', controller.offline_session_id if controller is not None else '', None)
+            self._refresh_job_telemetry_presentation()
             self._clear_full_dense_view()
             self._dense_admission = None
             self._dense_preview_bound = False
@@ -10486,6 +10595,12 @@ class ReconstructionPage(QWidget):
             self._progressive_sfm_last_snapshot = None
             self._progressive_sfm_viewer_performance = ProgressiveSfmViewerPerformance()
         self._offline_state = state
+        if state in (OfflineReconstructionRunState.COMPLETED,
+                     OfflineReconstructionRunState.CANCELLED,
+                     OfflineReconstructionRunState.FAILED):
+            if self._job_telemetry_panel_state.identity is not None and self._job_telemetry_panel_state.identity[0] == 'offline_sfm':
+                self._job_telemetry_panel_state.end(state.value)
+                self._refresh_job_telemetry_presentation()
         self._offline_value.setText(self._humanize(state))
         self._offline_value.setProperty("statusKind", self._state_kind(state.value))
         self._refresh_style(self._offline_value)
