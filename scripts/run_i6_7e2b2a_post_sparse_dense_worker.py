@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -21,6 +22,7 @@ from core.reconstruction.mvs_provider import I43B_PROVIDER_ID
 from core.reconstruction.reconstruction_job_progress_observer import (
     JobProgressObserver, LatestJobProgressSnapshot,
 )
+from core.reconstruction.reconstruction_job_resource_sampler import JobResourceSampler
 from core.reconstruction.reconstruction_progressive_dense_transport import ProgressiveDenseTransportLineSink
 
 PROTOCOL = 'eia.reconstruction.dense.post_sparse.v1'
@@ -66,12 +68,27 @@ def main(argv: list[str] | None = None) -> int:
         observer = None
         observation_sink = None
 
+    sampler = None
+    if observer is not None:
+        try:
+            sampler = JobResourceSampler(
+                job_kind='post_sparse_dense', source_session_id=args.session_id,
+                dense_run_id=args.dense_run_id, root_pid=os.getpid(),
+                workspace=args.offline_output_dir / 'dense_runs' / args.dense_run_id,
+            )
+            sampler.start()
+        except Exception:
+            sampler = None  # resources are diagnostic; dense execution must continue
+
     class _ObservingSnapshotSink:
         def publish(self, snapshot):
             original_sink.publish(snapshot)  # preserve frozen I6.7C transport
             if observer is not None and observation_sink is not None:
                 try:
-                    observation_sink.publish(observer.from_dense_snapshot(snapshot))
+                    observation = observer.from_dense_snapshot(snapshot)
+                    observation_sink.publish(observation)
+                    if sampler is not None and observation is not None:
+                        sampler.set_stage(observation.stage)
                 except Exception:
                     pass  # telemetry must never fail an MVS run or promote geometry
 
@@ -80,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _emit('dense_starting', session_id=args.session_id, dense_run_id=args.dense_run_id,
               provider_id=I43B_PROVIDER_ID, provisional_only=True)
+        if sampler is not None:
+            try:
+                sampler.set_stage('dense_preparing')
+            except Exception:
+                pass
         admitted = execute_explicit_colmap_dense_after_sparse(
             sparse_output_dir=args.offline_output_dir, sparse_session_id=args.session_id,
             pycolmap_python=args.pycolmap_python, mvs_worker_script=args.mvs_worker_script,
@@ -92,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
         _emit('dense_failed', session_id=args.session_id, dense_run_id=args.dense_run_id,
               error_type=type(exc).__name__, detail=str(exc), final_dense_result_admitted=False)
         return 2
+    finally:
+        if sampler is not None:
+            try:
+                sampler.stop()
+            except Exception:
+                pass
     _emit('dense_completed', session_id=args.session_id, dense_run_id=args.dense_run_id,
           admission=admitted.as_dict(), final_dense_result_admitted=True,
           persistent_dense_scene_created=False, full_density_gpu_viewer_enabled=False,

@@ -71,6 +71,7 @@ from core.reconstruction.reconstruction_progressive_sfm_transport import (
 from core.reconstruction.reconstruction_job_progress_observer import (
     JobProgressObserver, LatestJobProgressSnapshot,
 )
+from core.reconstruction.reconstruction_job_resource_sampler import JobResourceSampler
 from core.reconstruction.sfm_worker_protocol import (
     SFM_WORKER_SCHEMA_VERSION,
     SfmWorkerEvent,
@@ -506,9 +507,13 @@ class ExternalPycolmapSfmBackend:
         sink = getattr(self, '_i68b_progress_sink', None)
         if observer is not None and sink is not None:
             try:
-                sink.publish(observer.from_sfm_worker_event(event))
+                observation = observer.from_sfm_worker_event(event)
+                sink.publish(observation)
+                sampler = getattr(self, '_i68c_resource_sampler', None)
+                if observation is not None and sampler is not None:
+                    sampler.set_stage(observation.stage)
             except Exception:
-                pass
+                pass  # the original SfM event was already forwarded
 
 
     def prepare(self, context: BackendOperationContext) -> None:
@@ -637,6 +642,20 @@ class ExternalPycolmapSfmBackend:
         )
         with self._process_lock:
             self._active_process = process
+        # Optional sidecar observes the isolated worker's PID and descendants,
+        # never the Qt process; its sensor failures cannot affect SfM.
+        self._i68c_resource_sampler = None
+        if self._i68b_progress_observer is not None:
+            try:
+                sampler = JobResourceSampler(
+                    job_kind='offline_sfm', source_session_id=request.session_id,
+                    dense_run_id=None, root_pid=process.pid,
+                    workspace=root.parent,
+                )
+                sampler.start()
+                self._i68c_resource_sampler = sampler
+            except Exception:
+                pass
 
         def read_stdout() -> None:
             assert process.stdout is not None
@@ -807,6 +826,13 @@ class ExternalPycolmapSfmBackend:
                     pass  # observational failure cannot invalidate a valid SfM result
             return result
         finally:
+            sampler = getattr(self, '_i68c_resource_sampler', None)
+            if sampler is not None:
+                try:
+                    sampler.stop()
+                except Exception:
+                    pass
+            self._i68c_resource_sampler = None
             with self._process_lock:
                 self._active_process = None
             if process.poll() is None:
