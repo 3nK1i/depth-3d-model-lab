@@ -61,6 +61,7 @@ from app.offline_reconstruction_controller import (
     build_offline_reconstruction_command,
 )
 from app.reconstruction_dense_job_controller import DenseJobState, ExplicitDenseJobController
+from app.reconstruction_job_telemetry_relay import JobTelemetryQtRelay
 from core.reconstruction.mvs_provider import I43B_PROVIDER_ID
 from app.reconstruction_session_model import (
     ReconstructionSessionIdentityStatus,
@@ -292,6 +293,7 @@ class ReconstructionController(QObject):
     dense_admission_ready = pyqtSignal(object)
     dense_run_finished = pyqtSignal(object)
     dense_log_received = pyqtSignal(str)
+    job_telemetry_received = pyqtSignal(object)  # passive I6.8D; no admission authority
     da3_canonical_state_changed = pyqtSignal(object)
     da3_canonical_event_received = pyqtSignal(object)
     da3_canonical_log_received = pyqtSignal(str)
@@ -407,6 +409,10 @@ class ReconstructionController(QObject):
         self._offline_controller.progressive_sparse_snapshot_received.connect(
             self._on_progressive_sparse_snapshot_received
         )
+        # I6.8D observes the frozen I6.7F offline controller from outside it.
+        self._offline_telemetry_relay = JobTelemetryQtRelay(self)
+        self._offline_telemetry_relay.observation_received.connect(
+            self.job_telemetry_received.emit)
         self._offline_controller.log_received.connect(self.offline_log_received.emit)
         self._offline_controller.result_ready.connect(self._on_offline_result_ready)
         self._offline_controller.run_finished.connect(self.offline_run_finished.emit)
@@ -420,6 +426,7 @@ class ReconstructionController(QObject):
         )
         self._dense_controller.admission_ready.connect(self.dense_admission_ready.emit)
         self._dense_controller.run_finished.connect(self.dense_run_finished.emit)
+        self._dense_controller.telemetry_received.connect(self.job_telemetry_received.emit)
         self._dense_controller.log_received.connect(self.dense_log_received.emit)
         self._dense_controller.error_occurred.connect(self.error_occurred.emit)
 
@@ -1748,6 +1755,9 @@ class ReconstructionController(QObject):
         # from a previous run. Clear only passive product-layer caches; runtime
         # ownership remains with OfflineReconstructionController.
         if state is OfflineReconstructionRunState.STARTING:
+            self._offline_telemetry_relay.begin(
+                'offline_sfm', self._offline_controller.session_id, None,
+                self._offline_controller.output_dir)
             self._latest_offline_workspace_event = None
             self._last_offline_result_handoff = None
             self._clear_progressive_sparse_snapshot()
@@ -1756,6 +1766,8 @@ class ReconstructionController(QObject):
             OfflineReconstructionRunState.FAILED,
             OfflineReconstructionRunState.CANCELLED,
         }:
+            self._offline_telemetry_relay.poll()
+            self._offline_telemetry_relay.close()
             self._clear_progressive_sparse_snapshot()
         self.offline_state_changed.emit(state)
 
@@ -2001,6 +2013,7 @@ class ReconstructionController(QObject):
         self._dense_controller.shutdown()
         self._da3_canonical_controller.shutdown()
         self._offline_controller.shutdown()
+        self._offline_telemetry_relay.close()
         self._live_slam_controller.shutdown()
         self._persistence_controller.shutdown()
 

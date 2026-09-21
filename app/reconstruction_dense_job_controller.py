@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSignal
 
+from app.reconstruction_job_telemetry_relay import JobTelemetryQtRelay
 from app.reconstruction_offline_result_handoff import (
     OfflineReconstructionResultHandoff, OfflineResultHandoffAvailability,
 )
@@ -49,6 +50,7 @@ class ExplicitDenseJobController(QObject):
     """One admitted sparse session -> one explicit dense run -> independently verified artifact."""
     state_changed = pyqtSignal(object)
     provisional_snapshot_received = pyqtSignal(object)
+    telemetry_received = pyqtSignal(object)  # passive; never completion or admission
     log_received = pyqtSignal(str)
     admission_ready = pyqtSignal(object)  # E2B1-verified compact dict, *not* geometry
     run_finished = pyqtSignal(object)
@@ -67,6 +69,8 @@ class ExplicitDenseJobController(QObject):
         self._kill_timer = QTimer(self)
         self._kill_timer.setSingleShot(True)
         self._kill_timer.timeout.connect(self._force_kill_group)
+        self._telemetry_relay = JobTelemetryQtRelay(self)
+        self._telemetry_relay.observation_received.connect(self.telemetry_received.emit)
         self._state = DenseJobState.IDLE
         self._phase = ''
         self._line_buffer = b''
@@ -154,6 +158,8 @@ class ExplicitDenseJobController(QObject):
             self._finalized = True
             self._state_to(DenseJobState.FAILED)
             raise
+        self._telemetry_relay.begin('post_sparse_dense', self._session_id,
+                                    run_id, root / 'dense_runs' / run_id)
         self._state_to(DenseJobState.RUNNING)
         return run_id
 
@@ -325,6 +331,9 @@ class ExplicitDenseJobController(QObject):
             self._complete(DenseJobState.FAILED)
 
     def _finished(self, code: int, status: QProcess.ExitStatus) -> None:
+        if self._phase == 'worker':
+            self._telemetry_relay.poll()
+            self._telemetry_relay.close()  # verifier is a separate process, not this worker
         self._kill_timer.stop()
         # Qt can deliver finished() before the final readyRead notification.
         # Never discard the terminal dense_completed/verified line on that race.
@@ -388,6 +397,7 @@ class ExplicitDenseJobController(QObject):
     def _complete(self, state: DenseJobState) -> None:
         if self._finalized:
             return
+        self._telemetry_relay.close()
         self._kill_timer.stop()
         self._finalized = True
         self._state_to(state)
@@ -400,6 +410,7 @@ class ExplicitDenseJobController(QObject):
     def shutdown(self) -> None:
         if self._shutdown:
             return
+        self._telemetry_relay.close()
         if self.is_active:
             self.cancel()
             if self._process.state() != QProcess.ProcessState.NotRunning:
