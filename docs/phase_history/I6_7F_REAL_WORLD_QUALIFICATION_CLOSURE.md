@@ -41,3 +41,33 @@ reported 25 passing tests.
 
 These results do not replace final manual main-application UI acceptance
 or establish a successful South Building dense admission.
+
+## Final manual GPU-viewer acceptance — 2026-09-21
+
+Result: PASS for the dedicated I6.7F complete-cloud viewer.
+
+The original, independently admitted TempleRing session was reopened
+without rerunning SfM or MVS.
+
+- Verified points: 163,827
+- Displayed points: 163,827
+- Geometry submissions: 1
+- CPU preparation: 1292.326 ms
+- Qt marker submission: 13.858 ms
+
+The operator visually confirmed the complete RGB cloud and successfully
+tested orbit, pan, zoom, and Fit complete cloud. The fit control was
+confirmed by deliberately moving away from the fitted view and returning.
+
+Qualification boundaries:
+- Sustained rendering FPS was not measured.
+- No persistent scene was created.
+- No metric scale was claimed.
+- Reopening an existing admitted cloud in the main Reconstruction page
+  remains unqualified.
+- The preserved TempleRing copy cannot currently be replayed from its
+  relocated path without resolving the original sparse-SfM path binding.
+- South Building did not produce an admitted final dense artifact.
+
+These limitations do not invalidate the successful dedicated full-cloud
+viewer acceptance.
