@@ -68,6 +68,9 @@ from core.reconstruction.reconstruction_progressive_sfm_contract import (
 from core.reconstruction.reconstruction_progressive_sfm_transport import (
     parse_progressive_sfm_worker_line,
 )
+from core.reconstruction.reconstruction_job_progress_observer import (
+    JobProgressObserver, LatestJobProgressSnapshot,
+)
 from core.reconstruction.sfm_worker_protocol import (
     SFM_WORKER_SCHEMA_VERSION,
     SfmWorkerEvent,
@@ -497,6 +500,16 @@ class ExternalPycolmapSfmBackend:
             severity=severity,
             metadata={"worker_stage": event.stage, **dict(event.metadata)},
         )
+        # I6.8B: passive worker stage source, entirely outside result/admission.
+        # Never allow diagnostic observation to alter the existing worker path.
+        observer = getattr(self, '_i68b_progress_observer', None)
+        sink = getattr(self, '_i68b_progress_sink', None)
+        if observer is not None and sink is not None:
+            try:
+                sink.publish(observer.from_sfm_worker_event(event))
+            except Exception:
+                pass
+
 
     def prepare(self, context: BackendOperationContext) -> None:
         if context.control.cancellation_requested:
@@ -567,6 +580,18 @@ class ExternalPycolmapSfmBackend:
 
         validate_sfm_workspace_integrity(request.workspace)
         root = Path(request.workspace.workspace_root).expanduser().resolve()
+        # Optional diagnostic sidecar for the normal One Start session layout.
+        # Other callers and test workspaces do not get new output files.
+        self._i68b_progress_observer = None
+        self._i68b_progress_sink = None
+        if root.name == 'sfm_workspace' and root.parent.name == request.session_id:
+            try:
+                self._i68b_progress_observer = JobProgressObserver('offline_sfm', request.session_id)
+                self._i68b_progress_sink = LatestJobProgressSnapshot(
+                    root.parent / 'job_progress_observation.txt')
+            except ValueError:
+                pass
+
         checkpoints_dir = _safe_workspace_child(root, request.workspace.checkpoints_directory)
         logs_dir = _safe_workspace_child(root, request.workspace.logs_directory)
         checkpoints_dir.mkdir(parents=True, exist_ok=True)
@@ -770,6 +795,16 @@ class ExternalPycolmapSfmBackend:
                     "landmarks": result.statistics.landmarks,
                 },
             )
+            # The returned typed SfM result supplies actual distinct registered
+            # views; mapping callback counts are never used as that statistic.
+            observer = getattr(self, '_i68b_progress_observer', None)
+            sink = getattr(self, '_i68b_progress_sink', None)
+            if observer is not None and sink is not None:
+                try:
+                    sink.publish(observer.from_confirmed_sparse_view_count(
+                        result.statistics.registered_keyframes, len(request.workspace.images)))
+                except Exception:
+                    pass  # observational failure cannot invalidate a valid SfM result
             return result
         finally:
             with self._process_lock:

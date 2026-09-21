@@ -18,6 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.reconstruction_dense_production_worker import execute_explicit_colmap_dense_after_sparse
 from core.reconstruction.mvs_provider import I43B_PROVIDER_ID
+from core.reconstruction.reconstruction_job_progress_observer import (
+    JobProgressObserver, LatestJobProgressSnapshot,
+)
 from core.reconstruction.reconstruction_progressive_dense_transport import ProgressiveDenseTransportLineSink
 
 PROTOCOL = 'eia.reconstruction.dense.post_sparse.v1'
@@ -50,7 +53,29 @@ def _emit(event: str, **fields: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    sink = ProgressiveDenseTransportLineSink(lambda line: print(line, flush=True))
+    original_sink = ProgressiveDenseTransportLineSink(lambda line: print(line, flush=True))
+    # I6.8B: reuse actual provider snapshots; the new observational sidecar
+    # is run-scoped, latest-only and not read by any admission/scene verifier.
+    try:
+        observer = JobProgressObserver('post_sparse_dense', args.session_id, args.dense_run_id)
+        observation_sink = LatestJobProgressSnapshot(
+            args.offline_output_dir / 'dense_runs' / args.dense_run_id / 'job_progress_observation.txt')
+    except ValueError:
+        # Invalid job arguments still reach the original production validator,
+        # which owns the terminal error. Diagnostic telemetry is fail-soft.
+        observer = None
+        observation_sink = None
+
+    class _ObservingSnapshotSink:
+        def publish(self, snapshot):
+            original_sink.publish(snapshot)  # preserve frozen I6.7C transport
+            if observer is not None and observation_sink is not None:
+                try:
+                    observation_sink.publish(observer.from_dense_snapshot(snapshot))
+                except Exception:
+                    pass  # telemetry must never fail an MVS run or promote geometry
+
+    sink = _ObservingSnapshotSink()
     frame_id = 'i6_7e2b2:pycolmap_sfm:' + args.session_id
     try:
         _emit('dense_starting', session_id=args.session_id, dense_run_id=args.dense_run_id,
