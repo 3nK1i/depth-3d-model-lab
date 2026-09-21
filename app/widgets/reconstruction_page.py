@@ -42,6 +42,16 @@ scene-layer toggle while canonical geometry remains the only picking/measurement
 Phase 9.5G bounds interactive render requests to one in-flight plus one latest-view
 pending request, surfaces isolated-worker CUDA/render diagnostics, retains at most two
 render frames, and releases the external worker on hide/switch/clear/shutdown.
+I6.3D adds presentation-only Reconstruction Advisor guidance over the passive
+I6.3A-C contract/engine/controller state without provider selection or execution.
+I6.4D adds explicit manual provider-intent controls and visible fail-closed Auto
+status over the I6.4A-C contracts; selection remains distinct from activation/execution.
+I6.5D adds professional pre-SfM frame/view-plan controls over the frozen I6.5A-C
+planning state; user intent remains separate from source sampling and PyCOLMAP registration.
+I6.6D binds the validated provisional sparse-SfM stream to the existing VisPy viewport using
+replace-only bounded camera/landmark buffers; final sparse admission remains unchanged.
+I6.6E adds professional progressive-SfM status/telemetry plus bounded UI-update and preview-payload
+performance observations without changing reconstruction execution or authority.
 """
 
 from __future__ import annotations
@@ -56,7 +66,7 @@ import numpy as np
 
 from core.measurement.interactive_distance import InteractiveDistanceEstimate
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -73,6 +83,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QSizePolicy,
     QSplitter,
     QVBoxLayout,
@@ -296,6 +307,32 @@ from app.reconstruction_session_model import (
     ReconstructionSessionIdentityStatus,
     ReconstructionSessionModel,
 )
+from app.reconstruction_offline_result_handoff import OfflineReconstructionResultHandoff
+from app.reconstruction_advisor_state import ReconstructionAdvisorLiveState
+from app.reconstruction_advisor_presentation import present_reconstruction_advisor
+from app.reconstruction_provider_selection_state import ReconstructionProviderSelectionState
+from app.reconstruction_provider_selection_presentation import present_reconstruction_provider_auto
+from app.reconstruction_frame_view_plan_state import ReconstructionFrameViewPlanState
+from app.reconstruction_frame_view_plan_presentation import present_reconstruction_frame_view_plan
+from app.reconstruction_progressive_sfm_viewer import build_progressive_sfm_viewer_frame
+from app.reconstruction_progressive_dense_viewer import build_progressive_dense_viewer_frame
+from app.reconstruction_dense_job_controller import DenseJobState
+from core.reconstruction.reconstruction_progressive_dense_transport import (
+    ProgressiveDenseSnapshotBuffer,
+    ProgressiveDenseTransportBinding,
+    ProgressiveDenseOfferDisposition,
+)
+from app.reconstruction_progressive_sfm_viewer_binding import bind_progressive_sfm_viewer
+from app.reconstruction_progressive_sfm_ux import (
+    ProgressiveSfmViewerPerformance,
+    build_progressive_sfm_ux_presentation,
+    progressive_viewer_payload_bytes,
+)
+from app.reconstruction_offline_workspace import OfflineReconstructionWorkspaceSnapshot
+from app.reconstruction_offline_workspace_presentation import (
+    present_offline_reconstruction_workspace,
+)
+from app.reconstruction_one_start_ux import present_offline_one_start_ux
 from app.reconstruction_session_interaction import (
     ReconstructionSceneInteractionPresentation,
     build_reconstruction_scene_interaction_presentation,
@@ -333,6 +370,7 @@ from app.widgets.reconstruction_orientation_gizmo import ReconstructionOrientati
 from app.widgets.reconstruction_appearance_preview import ReconstructionAppearancePreview
 from app.widgets.reconstruction_nerf_worker_client import ReconstructionNerfWorkerClient
 from app.widgets.viewport.vispy_canvas import ReconstructionCanvas
+from core.reconstruction.reconstruction_frame_view_plan_contract import FrameViewPlanMode
 from core.reconstruction import (
     CanonicalSurfaceMeshExportSource,
     InspectionReportExportSource,
@@ -356,6 +394,27 @@ from core.reconstruction.calibration_profile import (
     CameraCalibrationProfile,
     CameraCalibrationValidationState,
 )
+
+
+class _FullDenseLoadThread(QThread):
+    """Read/verify/prepare full PLY off the Qt/VisPy owner thread."""
+    frame_ready = pyqtSignal(object)
+    load_failed = pyqtSignal(str)
+
+    def __init__(self, admission: dict, session_id: str, parent=None):
+        super().__init__(parent)
+        self._admission = dict(admission)
+        self._session_id = session_id
+
+    def run(self) -> None:
+        from app.reconstruction_full_dense_viewer import prepare_full_dense_viewer_frame
+        try:
+            frame = prepare_full_dense_viewer_frame(
+                self._admission, expected_session_id=self._session_id)
+        except Exception as exc:
+            self.load_failed.emit(str(exc)[:700])
+        else:
+            self.frame_ready.emit(frame)
 
 
 class ReconstructionPage(QWidget):
@@ -390,6 +449,9 @@ class ReconstructionPage(QWidget):
     viewport_fullscreen_requested = pyqtSignal()
     viewport_escape_requested = pyqtSignal()
     camera_calibration_profile_changed = pyqtSignal(object)
+    # Producer threads may emit parsed validated snapshots; Qt queues delivery
+    # to the page thread before touching the I6.7C buffer or any VisPy resource.
+    progressive_dense_snapshot_received = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -398,6 +460,38 @@ class ReconstructionPage(QWidget):
         self._source_buttons: dict[ReconstructionWorkflow, QPushButton] = {}
         self._live_state = LiveCaptureRuntimeState.IDLE
         self._offline_state = OfflineReconstructionRunState.IDLE
+        self._offline_workspace_snapshot: OfflineReconstructionWorkspaceSnapshot | None = None
+        self._offline_result_handoff: OfflineReconstructionResultHandoff | None = None
+        self._dense_job_state = DenseJobState.IDLE
+        self._dense_admission = None
+        self._dense_preview_bound = False
+        self._dense_started_at: float | None = None
+        self._dense_elapsed_seconds = 0
+        self._dense_stage_text = 'Waiting'
+        self._dense_load_thread: _FullDenseLoadThread | None = None
+        self._dense_load_generation = 0
+        self._dense_elapsed_timer = QTimer(self)
+        self._dense_elapsed_timer.setInterval(1000)
+        self._dense_elapsed_timer.timeout.connect(self._update_dense_elapsed)
+        self._reconstruction_advisor_state: ReconstructionAdvisorLiveState | None = None
+        self._reconstruction_provider_selection_state: ReconstructionProviderSelectionState | None = None
+        self._reconstruction_frame_view_plan_state: ReconstructionFrameViewPlanState | None = None
+        self._progressive_sfm_current_snapshot = None
+        self._progressive_sfm_last_snapshot = None
+        self._progressive_sfm_viewer_performance = ProgressiveSfmViewerPerformance()
+        # I6.7D consumes an explicitly bound dense stream. No automatic provider
+        # launch/controller handoff is introduced at this viewer-only boundary.
+        self._progressive_dense_buffer = ProgressiveDenseSnapshotBuffer()
+        self._progressive_dense_timer = QTimer(self)
+        self._progressive_dense_timer.setSingleShot(True)
+        self._progressive_dense_timer.timeout.connect(self._flush_progressive_dense_preview)
+        self.progressive_dense_snapshot_received.connect(
+            self.offer_progressive_dense_snapshot, Qt.ConnectionType.QueuedConnection
+        )
+        self._progressive_dense_applied_updates = 0
+        self._progressive_dense_geometry_uploads = 0
+        self._progressive_dense_latest_apply_ms = 0.0
+        self._progressive_dense_peak_apply_ms = 0.0
         self._da3_canonical_state = DA3CanonicalRunState.IDLE
         self._live_camera: ReconstructionCamera | None = None
         self._live_calibration_path: Path | None = None
@@ -663,9 +757,17 @@ class ReconstructionPage(QWidget):
         self._source_value = self._value_label("No reconstruction source selected")
         self._workflow_value = self._value_label("Choose a workflow")
         self._source_readiness_value = self._status_value()
+        self._workspace_value = self._status_value()
+        self._workspace_value.setText("Offline idle")
+        self._workspace_value.setProperty("statusKind", "neutral")
+        self._workspace_value.setToolTip(
+            "Offline workspace is idle. Select an image sequence or recorded video to use "
+            "the offline reconstruction workflow."
+        )
         self._add_status_row(layout, "Source", self._source_value)
         self._add_status_row(layout, "Workflow", self._workflow_value)
         self._add_status_row(layout, "Readiness", self._source_readiness_value)
+        self._add_status_row(layout, "Workspace", self._workspace_value)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
@@ -694,12 +796,21 @@ class ReconstructionPage(QWidget):
         self._offline_value = self._status_value()
         self._da3_runtime_value = self._status_value()
         self._scene_value = self._status_value()
+        self._workspace_authority_value = self._status_value()
+        self._workspace_authority_value.setText("PyCOLMAP • scale unqualified")
+        self._workspace_authority_value.setProperty("statusKind", "neutral")
+        self._workspace_authority_value.setToolTip(
+            "Canonical camera/global-frame authority: PyCOLMAP SfM. "
+            "Scale qualification: unqualified. Certified metrology: no. "
+            "Production Auto: deferred; the qualified policy remains offline/shadow only."
+        )
         self._stage_value = self._status_value()
         self._elapsed_value = self._value_label("—")
         self._add_status_row(layout, "Live SLAM", self._live_value)
         self._add_status_row(layout, "Offline", self._offline_value)
         self._add_status_row(layout, "DA3", self._da3_runtime_value)
         self._add_status_row(layout, "Scene", self._scene_value)
+        self._add_status_row(layout, "Authority", self._workspace_authority_value)
         self._add_status_row(layout, "Stage", self._stage_value)
 
         self._progress_bar = QProgressBar()
@@ -747,6 +858,47 @@ class ReconstructionPage(QWidget):
         self._stop_button.clicked.connect(self._stop_runtime)
         controls.addWidget(self._stop_button)
         layout.addLayout(controls)
+
+        dense_controls = QHBoxLayout()
+        dense_controls.setSpacing(6)
+        self._dense_build_button = QPushButton('Build dense (COLMAP MVS)')
+        self._dense_build_button.setObjectName('reconstructionExplicitDenseBuildButton')
+        self._dense_build_button.setToolTip(
+            'Explicitly run COLMAP-MVS for the admitted One Start sparse session. '
+            'Auto is not enabled; provisional preview remains limited to 4,096 points.')
+        self._dense_build_button.setEnabled(False)
+        self._dense_build_button.clicked.connect(self._start_explicit_dense)
+        self._dense_cancel_button = QPushButton('Cancel dense')
+        self._dense_cancel_button.setObjectName('reconstructionExplicitDenseCancelButton')
+        self._dense_cancel_button.setEnabled(False)
+        self._dense_cancel_button.clicked.connect(self._cancel_explicit_dense)
+        dense_controls.addWidget(self._dense_build_button, 1)
+        dense_controls.addWidget(self._dense_cancel_button, 0)
+        layout.addLayout(dense_controls)
+        self._dense_job_value = self._status_value()
+        self._dense_job_value.setText('Awaiting completed sparse One Start • explicit provider only')
+        self._add_status_row(layout, 'Dense job', self._dense_job_value)
+        # Distinct from the sparse 0-100% bar above: MVS provides no reliable
+        # overall percentage. Animated busy mode is not a fabricated ETA.
+        self._dense_progress_label = QLabel('Dense reconstruction • idle')
+        self._dense_progress_label.setObjectName('reconstructionDenseProgressLabel')
+        self._dense_progress_label.setWordWrap(True)
+        layout.addWidget(self._dense_progress_label)
+        self._dense_progress_bar = QProgressBar()
+        self._dense_progress_bar.setObjectName('reconstructionDenseProgressBar')
+        self._dense_progress_bar.setRange(0, 100)
+        self._dense_progress_bar.setValue(0)
+        self._dense_progress_bar.setVisible(False)
+        self._dense_progress_bar.setToolTip('Separate from the completed sparse reconstruction progress.')
+        layout.addWidget(self._dense_progress_bar)
+        self._dense_full_view_button = QPushButton('View complete dense points')
+        self._dense_full_view_button.setObjectName('reconstructionFullDenseViewerButton')
+        self._dense_full_view_button.setEnabled(False)
+        self._dense_full_view_button.setToolTip(
+            'Load the independently admitted complete RGB artifact, not the 4,096-point preview. '
+            'GPU rendering is presentation only; camera poses and physical scale are unchanged.')
+        self._dense_full_view_button.clicked.connect(self._toggle_full_dense_view)
+        layout.addWidget(self._dense_full_view_button)
         return card
 
     def _build_viewport_card(self) -> QFrame:
@@ -5137,6 +5289,37 @@ class ReconstructionPage(QWidget):
         self._add_settings_row(workflow_layout, "Appearance", "Deferred")
         layout.addWidget(workflow)
 
+        # I6.3D presents the passive Advisor near the top of the settings stack so
+        # guidance is visible without competing with the two primary runtime cards.
+        # This group has no action controls: recommendation/abstention remains read-only.
+        self._reconstruction_advisor_group = self._settings_group("RECONSTRUCTION ADVISOR")
+        advisor_layout = self._reconstruction_advisor_group.content_layout
+        advisor_hint = QLabel(
+            "Evidence-bound guidance only • never selects a provider or starts reconstruction."
+        )
+        advisor_hint.setObjectName("reconstructionSettingsHint")
+        advisor_hint.setWordWrap(True)
+        advisor_hint.setMinimumWidth(0)
+        advisor_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        advisor_layout.addWidget(advisor_hint)
+        self._advisor_status_value = self._status_value()
+        self._advisor_guidance_value = self._settings_value("Waiting for source")
+        self._advisor_evidence_value = self._settings_value("Insufficient evidence")
+        self._advisor_rationale_value = self._settings_value(
+            "Choose an offline source to begin evidence-bound guidance."
+        )
+        self._advisor_boundary_value = self._settings_value(
+            "Advisory only • no settings changed"
+        )
+        self._advisor_status_value.setText("No recommendation")
+        self._advisor_status_value.setProperty("statusKind", "neutral")
+        self._add_status_row(advisor_layout, "Status", self._advisor_status_value)
+        self._add_status_row(advisor_layout, "Guidance", self._advisor_guidance_value)
+        self._add_status_row(advisor_layout, "Evidence", self._advisor_evidence_value)
+        self._add_status_row(advisor_layout, "Why", self._advisor_rationale_value)
+        self._add_status_row(advisor_layout, "Boundary", self._advisor_boundary_value)
+        layout.addWidget(self._reconstruction_advisor_group)
+
         session = self._settings_group("SESSION & PERSISTENCE")
         self._session_group = session
         session_layout = session.content_layout
@@ -5341,6 +5524,220 @@ class ReconstructionPage(QWidget):
         recovery_actions.addStretch(1)
         session_layout.addLayout(recovery_actions)
         layout.addWidget(session)
+
+        # I6.4D exposes explicit manual provider intent separately from both the
+        # passive Advisor and the legacy persisted-provider inspector.  The combo
+        # contains only providers that I6.4A/B mark available + exact-context
+        # qualified.  Auto is intentionally visible but disabled by the I6.4C gate.
+        self._reconstruction_provider_group = self._settings_group("PROVIDER & AUTO")
+        provider_ui_layout = self._reconstruction_provider_group.content_layout
+        provider_ui_hint = QLabel(
+            "Manual intent only • eligibility requires explicit availability and exact-context qualification."
+        )
+        provider_ui_hint.setObjectName("reconstructionSettingsHint")
+        provider_ui_hint.setWordWrap(True)
+        provider_ui_hint.setMinimumWidth(0)
+        provider_ui_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        provider_ui_layout.addWidget(provider_ui_hint)
+
+        provider_choice_row = QHBoxLayout()
+        provider_choice_row.setSpacing(6)
+        provider_choice_label = QLabel("Provider")
+        provider_choice_label.setObjectName("reconstructionRowLabel")
+        provider_choice_row.addWidget(provider_choice_label)
+        self._reconstruction_provider_combo = QComboBox()
+        self._reconstruction_provider_combo.setObjectName("reconstructionProviderSelectionCombo")
+        self._reconstruction_provider_combo.setMinimumContentsLength(4)
+        self._reconstruction_provider_combo.setMinimumWidth(0)
+        self._reconstruction_provider_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._reconstruction_provider_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self._reconstruction_provider_combo.setToolTip(
+            "Record explicit manual provider intent. Choosing a provider does not activate or execute it."
+        )
+        self._reconstruction_provider_combo.activated.connect(
+            self._on_reconstruction_provider_activated
+        )
+        provider_choice_row.addWidget(self._reconstruction_provider_combo, 1)
+        self._reconstruction_provider_clear_button = QPushButton("Clear")
+        self._reconstruction_provider_clear_button.setObjectName("reconstructionRuntimeAction")
+        self._reconstruction_provider_clear_button.setToolTip(
+            "Clear manual provider intent. This does not stop or change reconstruction execution."
+        )
+        self._reconstruction_provider_clear_button.clicked.connect(
+            self._on_reconstruction_provider_clear_clicked
+        )
+        self._reconstruction_provider_clear_button.setEnabled(False)
+        provider_choice_row.addWidget(self._reconstruction_provider_clear_button)
+        provider_ui_layout.addLayout(provider_choice_row)
+
+        self._provider_selection_status_value = self._status_value()
+        self._provider_selection_value = self._settings_value("No manual provider")
+        self._provider_recommendation_value = self._settings_value("No recommendation")
+        self._provider_eligibility_value = self._settings_value("0 / 10 selectable")
+        self._provider_auto_status_value = self._status_value()
+        self._provider_boundary_value = self._settings_value(
+            "Intent only • no provider activated or started"
+        )
+        self._provider_selection_status_value.setText("Waiting for source")
+        self._provider_selection_status_value.setProperty("statusKind", "neutral")
+        self._provider_auto_status_value.setText("Not qualified")
+        self._provider_auto_status_value.setProperty("statusKind", "warning")
+        self._add_status_row(provider_ui_layout, "Status", self._provider_selection_status_value)
+        self._add_status_row(provider_ui_layout, "Selection", self._provider_selection_value)
+        self._add_status_row(provider_ui_layout, "Advisor", self._provider_recommendation_value)
+        self._add_status_row(provider_ui_layout, "Eligibility", self._provider_eligibility_value)
+        self._add_status_row(provider_ui_layout, "Auto", self._provider_auto_status_value)
+        self._add_status_row(provider_ui_layout, "Boundary", self._provider_boundary_value)
+        self._provider_auto_button = QPushButton("Auto unavailable")
+        self._provider_auto_button.setObjectName("reconstructionRuntimeAction")
+        self._provider_auto_button.setEnabled(False)
+        provider_ui_layout.addWidget(self._provider_auto_button)
+        layout.addWidget(self._reconstruction_provider_group)
+
+        # I6.5D exposes pre-SfM planning intent separately from execution. The
+        # controls update only the I6.5C request state; they do not sample source
+        # frames, configure a worker, start SfM, or claim registered cameras.
+        self._frame_view_plan_group = self._settings_group("FRAME & VIEW PLAN")
+        frame_view_layout = self._frame_view_plan_group.content_layout
+        frame_view_hint = QLabel(
+            "Pre-SfM planning intent • requested and effective view counts remain explicit."
+        )
+        frame_view_hint.setObjectName("reconstructionSettingsHint")
+        frame_view_hint.setWordWrap(True)
+        frame_view_hint.setMinimumWidth(0)
+        frame_view_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        frame_view_layout.addWidget(frame_view_hint)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        mode_label = QLabel("Mode")
+        mode_label.setObjectName("reconstructionRowLabel")
+        mode_row.addWidget(mode_label)
+        self._frame_view_mode_combo = QComboBox()
+        self._frame_view_mode_combo.setObjectName("reconstructionFrameViewModeCombo")
+        self._frame_view_mode_combo.setMinimumWidth(0)
+        self._frame_view_mode_combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        self._frame_view_mode_combo.addItem("Adaptive", FrameViewPlanMode.ADAPTIVE.value)
+        self._frame_view_mode_combo.addItem("All eligible", FrameViewPlanMode.ALL_ELIGIBLE.value)
+        self._frame_view_mode_combo.addItem("Manual limit", FrameViewPlanMode.MANUAL_LIMIT.value)
+        self._frame_view_mode_combo.currentIndexChanged.connect(
+            self._on_reconstruction_frame_view_mode_changed
+        )
+        mode_row.addWidget(self._frame_view_mode_combo, 1)
+        frame_view_layout.addLayout(mode_row)
+
+        manual_row = QHBoxLayout()
+        manual_row.setSpacing(6)
+        manual_label = QLabel("Max views")
+        manual_label.setObjectName("reconstructionRowLabel")
+        manual_row.addWidget(manual_label)
+        self._frame_view_manual_limit = QSpinBox()
+        self._frame_view_manual_limit.setObjectName("reconstructionFrameViewManualLimit")
+        self._frame_view_manual_limit.setRange(3, 1000000)
+        self._frame_view_manual_limit.setValue(64)
+        self._frame_view_manual_limit.setEnabled(False)
+        self._frame_view_manual_limit.setToolTip(
+            "Maximum requested source views for Manual limit mode. The effective plan may be lower after source/resource bounds."
+        )
+        manual_row.addWidget(self._frame_view_manual_limit, 1)
+        frame_view_layout.addLayout(manual_row)
+
+        frame_view_actions = QHBoxLayout()
+        frame_view_actions.setSpacing(6)
+        self._frame_view_apply_button = QPushButton("Apply Plan")
+        self._frame_view_apply_button.setObjectName("reconstructionRuntimeAction")
+        self._frame_view_apply_button.setToolTip(
+            "Record frame/view planning intent only. This does not sample frames or start reconstruction."
+        )
+        self._frame_view_apply_button.clicked.connect(
+            self._on_reconstruction_frame_view_apply_clicked
+        )
+        frame_view_actions.addWidget(self._frame_view_apply_button)
+        self._frame_view_reset_button = QPushButton("Reset")
+        self._frame_view_reset_button.setObjectName("reconstructionRuntimeAction")
+        self._frame_view_reset_button.setToolTip(
+            "Restore the default Adaptive planning request without changing a running worker."
+        )
+        self._frame_view_reset_button.clicked.connect(
+            self._on_reconstruction_frame_view_reset_clicked
+        )
+        self._frame_view_reset_button.setEnabled(False)
+        frame_view_actions.addWidget(self._frame_view_reset_button)
+        frame_view_layout.addLayout(frame_view_actions)
+
+        self._frame_view_status_value = self._status_value()
+        self._frame_view_status_value.setText("Waiting for source")
+        self._frame_view_status_value.setProperty("statusKind", "neutral")
+        self._frame_view_mode_value = self._settings_value("Adaptive")
+        self._frame_view_source_value = self._settings_value("No source")
+        self._frame_view_planned_value = self._settings_value("Not resolved")
+        self._frame_view_resource_value = self._settings_value("Not resolved")
+        self._frame_view_hardware_value = self._settings_value("Startup resources")
+        self._frame_view_provenance_value = self._settings_value("Not available")
+        self._frame_view_boundary_value = self._settings_value(
+            "Pre-SfM intent • no frames sampled or cameras registered"
+        )
+        self._add_status_row(frame_view_layout, "Status", self._frame_view_status_value)
+        self._add_status_row(frame_view_layout, "Request", self._frame_view_mode_value)
+        self._add_status_row(frame_view_layout, "Source", self._frame_view_source_value)
+        self._add_status_row(frame_view_layout, "Planned", self._frame_view_planned_value)
+        self._add_status_row(frame_view_layout, "Resource", self._frame_view_resource_value)
+        self._add_status_row(frame_view_layout, "Hardware", self._frame_view_hardware_value)
+        self._add_status_row(frame_view_layout, "Plan ID", self._frame_view_provenance_value)
+        self._add_status_row(frame_view_layout, "Boundary", self._frame_view_boundary_value)
+        layout.addWidget(self._frame_view_plan_group)
+
+        # I6.6E surfaces the already-qualified progressive sparse pipeline without
+        # adding a new execution path. Counts distinguish total PyCOLMAP state from
+        # bounded preview samples, and viewer timing is UI-thread update cost only.
+        self._progressive_sfm_group = self._settings_group("PROGRESSIVE SFM")
+        progressive_sfm_layout = self._progressive_sfm_group.content_layout
+        progressive_hint = QLabel(
+            "Live sparse mapping telemetry • provisional until the terminal sparse result is admitted."
+        )
+        progressive_hint.setObjectName("reconstructionSettingsHint")
+        progressive_hint.setWordWrap(True)
+        progressive_hint.setMinimumWidth(0)
+        progressive_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        progressive_sfm_layout.addWidget(progressive_hint)
+
+        self._progressive_sfm_status_value = self._status_value()
+        self._progressive_sfm_stage_value = self._settings_value("Not active")
+        self._progressive_sfm_cameras_value = self._settings_value("—")
+        self._progressive_sfm_landmarks_value = self._settings_value("—")
+        self._progressive_sfm_quality_value = self._settings_value("—")
+        self._progressive_sfm_revision_value = self._settings_value("—")
+        self._progressive_sfm_transport_value = self._settings_value(
+            "0 delivered • 0 coalesced • 0 rejected"
+        )
+        self._progressive_sfm_viewer_value = self._settings_value("No viewer update yet")
+        self._progressive_sfm_payload_value = self._settings_value("No preview payload yet")
+        self._progressive_sfm_authority_value = self._settings_value(
+            "PyCOLMAP provisional • arbitrary scale"
+        )
+        self._progressive_sfm_boundary_value = self._settings_value(
+            "Not final • not persistent • not metric"
+        )
+        self._add_status_row(progressive_sfm_layout, "Status", self._progressive_sfm_status_value)
+        self._add_status_row(progressive_sfm_layout, "Stage", self._progressive_sfm_stage_value)
+        self._add_status_row(progressive_sfm_layout, "Cameras", self._progressive_sfm_cameras_value)
+        self._add_status_row(progressive_sfm_layout, "Landmarks", self._progressive_sfm_landmarks_value)
+        self._add_status_row(progressive_sfm_layout, "Quality", self._progressive_sfm_quality_value)
+        self._add_status_row(progressive_sfm_layout, "Revision", self._progressive_sfm_revision_value)
+        self._add_status_row(progressive_sfm_layout, "Transport", self._progressive_sfm_transport_value)
+        self._add_status_row(progressive_sfm_layout, "Viewer", self._progressive_sfm_viewer_value)
+        self._add_status_row(progressive_sfm_layout, "Payload", self._progressive_sfm_payload_value)
+        self._add_status_row(progressive_sfm_layout, "Authority", self._progressive_sfm_authority_value)
+        self._add_status_row(progressive_sfm_layout, "Boundary", self._progressive_sfm_boundary_value)
+        layout.addWidget(self._progressive_sfm_group)
+        self._refresh_progressive_sfm_ux()
+
 
         # Phase 9.6A adds one compact composition/authority summary over the
         # existing qualified Reconstruction presentation paths. It does not
@@ -7283,9 +7680,14 @@ class ReconstructionPage(QWidget):
             self._digital_twin_workspace_group,
             self._digital_twin_processing_group,
             self._canonical_scene_group,
-            # Preserve the Phase 9.6E4 primary-stack compatibility contract.
+            # Preserve the Phase 9.6E4 first-four primary-stack compatibility
+            # contract, then surface I6.3D guidance before dense-scene detail.
             self._estimated_ruler_scale_group,
+            self._reconstruction_advisor_group,
             self._dense_rgb_group,
+            self._reconstruction_provider_group,
+            self._frame_view_plan_group,
+            self._progressive_sfm_group,
         )
         for group in primary_groups:
             layout.removeWidget(group)
@@ -7365,8 +7767,23 @@ class ReconstructionPage(QWidget):
         controller.live_observation_ready.connect(self.set_live_observation)
         controller.offline_state_changed.connect(self.set_offline_state)
         controller.offline_event_received.connect(self.set_offline_event)
+        controller.offline_workspace_changed.connect(self.set_offline_workspace_snapshot)
+        controller.reconstruction_advisor_changed.connect(self.set_reconstruction_advisor_state)
+        controller.reconstruction_provider_selection_changed.connect(
+            self.set_reconstruction_provider_selection_state
+        )
+        controller.reconstruction_frame_view_plan_changed.connect(
+            self.set_reconstruction_frame_view_plan_state
+        )
+        bind_progressive_sfm_viewer(self, controller)
+        controller.offline_result_handoff_ready.connect(self.set_offline_result_handoff)
         controller.offline_result_ready.connect(self._on_offline_result_ready)
         controller.offline_run_finished.connect(self._on_offline_run_finished)
+        controller.dense_state_changed.connect(self.set_explicit_dense_job_state)
+        controller.dense_preview_snapshot_received.connect(self._on_explicit_dense_preview)
+        controller.dense_admission_ready.connect(self._on_explicit_dense_admission)
+        controller.dense_run_finished.connect(self._on_explicit_dense_finished)
+        controller.dense_log_received.connect(self._on_explicit_dense_log)
         controller.da3_canonical_state_changed.connect(self.set_da3_canonical_state)
         controller.da3_canonical_event_received.connect(self.set_da3_canonical_event)
         controller.da3_canonical_result_ready.connect(self._on_da3_canonical_result_ready)
@@ -7385,9 +7802,20 @@ class ReconstructionPage(QWidget):
         self.set_session_model(controller.session_model)
         self.set_live_state(controller.live_state)
         self.set_offline_state(controller.offline_state)
+        self.set_explicit_dense_job_state(controller.dense_state)
         self.set_da3_canonical_state(controller.da3_canonical_state)
         self.set_source_selection(controller.source_selection)
         self.set_scene_availability(controller.scene_availability)
+        self.set_offline_workspace_snapshot(controller.offline_workspace_snapshot)
+        self.set_reconstruction_advisor_state(controller.reconstruction_advisor_state)
+        self.set_reconstruction_provider_selection_state(
+            controller.reconstruction_provider_selection_state
+        )
+        self.set_reconstruction_frame_view_plan_state(
+            controller.reconstruction_frame_view_plan_state
+        )
+        if controller.last_offline_result_handoff is not None:
+            self.set_offline_result_handoff(controller.last_offline_result_handoff)
         self._refresh_source_controls()
         self._refresh_runtime_controls()
         scene = controller.persistent_scene
@@ -7402,6 +7830,265 @@ class ReconstructionPage(QWidget):
         self._refresh_reconstruction_export_controls()
         self._telemetry_timer.start()
         self._refresh_runtime_telemetry()
+
+    def set_offline_workspace_snapshot(
+        self, snapshot: OfflineReconstructionWorkspaceSnapshot
+    ) -> None:
+        """Bind the passive I6 workspace composition to compact product status."""
+
+        if not isinstance(snapshot, OfflineReconstructionWorkspaceSnapshot):
+            raise TypeError("snapshot must be OfflineReconstructionWorkspaceSnapshot.")
+        self._offline_workspace_snapshot = snapshot
+        presentation = present_offline_reconstruction_workspace(snapshot)
+
+        self._workspace_value.setText(presentation.workspace_text)
+        self._workspace_value.setProperty("statusKind", presentation.workspace_status_kind)
+        self._workspace_value.setToolTip(presentation.workspace_tooltip)
+        self._refresh_style(self._workspace_value)
+
+        self._workspace_authority_value.setText(presentation.authority_text)
+        self._workspace_authority_value.setProperty(
+            "statusKind", presentation.authority_status_kind
+        )
+        self._workspace_authority_value.setToolTip(presentation.authority_tooltip)
+        self._refresh_style(self._workspace_authority_value)
+
+    def set_reconstruction_advisor_state(
+        self, state: ReconstructionAdvisorLiveState
+    ) -> None:
+        """Bind passive I6.3 Advisor state without changing reconstruction execution."""
+
+        if not isinstance(state, ReconstructionAdvisorLiveState):
+            raise TypeError("state must be ReconstructionAdvisorLiveState.")
+        self._reconstruction_advisor_state = state
+        presentation = present_reconstruction_advisor(state)
+
+        self._advisor_status_value.setText(presentation.status_text)
+        self._advisor_status_value.setProperty("statusKind", presentation.status_kind)
+        self._advisor_status_value.setToolTip(presentation.guidance_tooltip)
+        self._refresh_style(self._advisor_status_value)
+
+        self._advisor_guidance_value.setText(presentation.guidance_text)
+        self._advisor_guidance_value.setToolTip(presentation.guidance_tooltip)
+        self._advisor_evidence_value.setText(presentation.evidence_text)
+        self._advisor_evidence_value.setToolTip(presentation.evidence_tooltip)
+        self._advisor_rationale_value.setText(presentation.rationale_text)
+        self._advisor_rationale_value.setToolTip(presentation.rationale_tooltip)
+        self._advisor_boundary_value.setText(presentation.boundary_text)
+        self._advisor_boundary_value.setToolTip(presentation.boundary_tooltip)
+
+    @property
+    def reconstruction_advisor_state(self) -> ReconstructionAdvisorLiveState | None:
+        return self._reconstruction_advisor_state
+
+    def set_reconstruction_provider_selection_state(
+        self, state: ReconstructionProviderSelectionState
+    ) -> None:
+        """Bind I6.4 manual-intent/Auto presentation without executing a provider."""
+
+        if not isinstance(state, ReconstructionProviderSelectionState):
+            raise TypeError("state must be ReconstructionProviderSelectionState.")
+        self._reconstruction_provider_selection_state = state
+        controller = self._controller
+        if controller is None:
+            return
+        presentation = present_reconstruction_provider_auto(
+            state, controller.reconstruction_production_auto_gate
+        )
+
+        self._provider_selection_status_value.setText(presentation.status_text)
+        self._provider_selection_status_value.setProperty(
+            "statusKind", presentation.status_kind
+        )
+        self._provider_selection_status_value.setToolTip(presentation.selection_tooltip)
+        self._refresh_style(self._provider_selection_status_value)
+
+        self._provider_selection_value.setText(presentation.selection_text)
+        self._provider_selection_value.setToolTip(presentation.selection_tooltip)
+        self._provider_recommendation_value.setText(presentation.recommendation_text)
+        self._provider_recommendation_value.setToolTip(
+            presentation.recommendation_tooltip
+        )
+        self._provider_eligibility_value.setText(presentation.eligibility_text)
+        self._provider_eligibility_value.setToolTip(presentation.eligibility_tooltip)
+        self._provider_auto_status_value.setText(presentation.auto_text)
+        self._provider_auto_status_value.setProperty(
+            "statusKind", presentation.auto_status_kind
+        )
+        self._provider_auto_status_value.setToolTip(presentation.auto_tooltip)
+        self._refresh_style(self._provider_auto_status_value)
+        self._provider_boundary_value.setText(presentation.boundary_text)
+        self._provider_boundary_value.setToolTip(presentation.boundary_tooltip)
+        self._provider_auto_button.setToolTip(presentation.auto_tooltip)
+        self._provider_auto_button.setEnabled(False)
+
+        combo = self._reconstruction_provider_combo
+        combo.clear()
+        selectable = tuple(option for option in presentation.options if option.selectable)
+        combo.addItem(
+            "Choose qualified provider…" if selectable else "No qualified provider available",
+            "",
+        )
+        selected_index = 0
+        for option in selectable:
+            combo.addItem(option.label, option.provider_id)
+            index = combo.count() - 1
+            combo.setItemData(index, option.tooltip, Qt.ItemDataRole.ToolTipRole)
+            if option.selected:
+                selected_index = index
+        combo.setCurrentIndex(selected_index)
+        combo.setEnabled(presentation.combo_enabled)
+        combo.setToolTip(
+            presentation.eligibility_tooltip
+            if not presentation.combo_enabled
+            else "Choose one explicitly available, exact-context-qualified provider. Selection records intent only."
+        )
+        self._reconstruction_provider_clear_button.setEnabled(
+            presentation.clear_enabled
+        )
+
+    @property
+    def reconstruction_provider_selection_state(
+        self,
+    ) -> ReconstructionProviderSelectionState | None:
+        return self._reconstruction_provider_selection_state
+
+    def _on_reconstruction_provider_activated(self, index: int) -> None:
+        """Record explicit user provider intent; never activate/execute a provider."""
+
+        controller = self._controller
+        if controller is None:
+            return
+        provider_id = str(self._reconstruction_provider_combo.itemData(index) or "").strip()
+        if not provider_id:
+            return
+        try:
+            controller.select_reconstruction_provider(provider_id)
+        except ReconstructionValidationError as exc:
+            QMessageBox.warning(self, "Provider selection unavailable", str(exc))
+            self.set_reconstruction_provider_selection_state(
+                controller.reconstruction_provider_selection_state
+            )
+
+    def _on_reconstruction_provider_clear_clicked(self) -> None:
+        """Clear manual provider intent without changing reconstruction execution."""
+
+        controller = self._controller
+        if controller is None:
+            return
+        controller.clear_reconstruction_provider_selection()
+
+    def set_reconstruction_frame_view_plan_state(
+        self, state: ReconstructionFrameViewPlanState
+    ) -> None:
+        """Present I6.5 planning state without sampling frames or starting SfM."""
+
+        if not isinstance(state, ReconstructionFrameViewPlanState):
+            raise TypeError("state must be ReconstructionFrameViewPlanState.")
+        self._reconstruction_frame_view_plan_state = state
+        presentation = present_reconstruction_frame_view_plan(state)
+
+        self._frame_view_status_value.setText(presentation.status_text)
+        self._frame_view_status_value.setProperty("statusKind", presentation.status_kind)
+        self._frame_view_status_value.setToolTip(presentation.status_tooltip)
+        self._refresh_style(self._frame_view_status_value)
+        self._frame_view_mode_value.setText(presentation.mode_text)
+        self._frame_view_source_value.setText(presentation.source_text)
+        self._frame_view_source_value.setToolTip(presentation.source_tooltip)
+        self._frame_view_planned_value.setText(presentation.planned_text)
+        self._frame_view_planned_value.setToolTip(presentation.planned_tooltip)
+        self._frame_view_resource_value.setText(presentation.resource_text)
+        self._frame_view_resource_value.setToolTip(presentation.resource_tooltip)
+        self._frame_view_hardware_value.setText(presentation.hardware_text)
+        self._frame_view_hardware_value.setToolTip(presentation.hardware_tooltip)
+        self._frame_view_provenance_value.setText(presentation.provenance_text)
+        self._frame_view_provenance_value.setToolTip(presentation.provenance_tooltip)
+        self._frame_view_boundary_value.setText(presentation.boundary_text)
+        self._frame_view_boundary_value.setToolTip(presentation.boundary_tooltip)
+
+        combo = self._frame_view_mode_combo
+        index = combo.findData(state.request.mode.value)
+        combo.blockSignals(True)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+        self._frame_view_manual_limit.setValue(presentation.manual_limit_value)
+        self._frame_view_manual_limit.setEnabled(presentation.manual_limit_enabled)
+        self._frame_view_apply_button.setEnabled(presentation.apply_enabled)
+        self._frame_view_reset_button.setEnabled(presentation.reset_enabled)
+
+    @property
+    def reconstruction_frame_view_plan_state(
+        self,
+    ) -> ReconstructionFrameViewPlanState | None:
+        return self._reconstruction_frame_view_plan_state
+
+    def _on_reconstruction_frame_view_mode_changed(self, _index: int) -> None:
+        mode = str(self._frame_view_mode_combo.currentData() or "")
+        self._frame_view_manual_limit.setEnabled(
+            mode == FrameViewPlanMode.MANUAL_LIMIT.value
+        )
+
+    def _on_reconstruction_frame_view_apply_clicked(self) -> None:
+        """Record explicit pre-SfM planning intent; never execute sampling/SfM."""
+
+        controller = self._controller
+        if controller is None:
+            return
+        raw_mode = str(self._frame_view_mode_combo.currentData() or "").strip()
+        try:
+            mode = FrameViewPlanMode(raw_mode)
+            requested_max_views = (
+                int(self._frame_view_manual_limit.value())
+                if mode is FrameViewPlanMode.MANUAL_LIMIT
+                else None
+            )
+            controller.set_reconstruction_frame_view_plan(
+                mode, requested_max_views=requested_max_views
+            )
+        except (ValueError, ReconstructionValidationError) as exc:
+            QMessageBox.warning(self, "Frame/view plan unavailable", str(exc))
+            self.set_reconstruction_frame_view_plan_state(
+                controller.reconstruction_frame_view_plan_state
+            )
+
+    def _on_reconstruction_frame_view_reset_clicked(self) -> None:
+        """Restore default Adaptive planning intent without starting reconstruction."""
+
+        controller = self._controller
+        if controller is None:
+            return
+        try:
+            controller.reset_reconstruction_frame_view_plan()
+        except ReconstructionValidationError as exc:
+            QMessageBox.warning(self, "Frame/view plan unavailable", str(exc))
+            self.set_reconstruction_frame_view_plan_state(
+                controller.reconstruction_frame_view_plan_state
+            )
+
+    @property
+    def offline_workspace_snapshot(self) -> OfflineReconstructionWorkspaceSnapshot | None:
+        return self._offline_workspace_snapshot
+
+    def set_offline_result_handoff(
+        self, handoff: OfflineReconstructionResultHandoff
+    ) -> None:
+        """Retain the accepted I6.2C handoff for terminal product presentation only."""
+
+        if not isinstance(handoff, OfflineReconstructionResultHandoff):
+            raise TypeError("handoff must be OfflineReconstructionResultHandoff.")
+        self._offline_result_handoff = handoff
+        self._refresh_runtime_controls()
+
+    def _offline_one_start_ux_presentation(self):
+        controller = self._controller
+        source_ready = bool(controller is not None and controller.source_selection.ready)
+        return present_offline_one_start_ux(
+            self._offline_state,
+            source_ready=source_ready,
+            handoff=self._offline_result_handoff,
+            last_error=self._last_runtime_error,
+        )
 
     @property
     def reconstruction_session_model(self) -> ReconstructionSessionModel | None:
@@ -8958,6 +9645,197 @@ class ReconstructionPage(QWidget):
             self._viewport_state.setText("Offline visualization unavailable")
             self._viewport_state.setToolTip(str(exc))
 
+    def _refresh_progressive_sfm_ux(self) -> None:
+        if not hasattr(self, "_progressive_sfm_status_value"):
+            return
+        transport_stats = {}
+        if self._controller is not None:
+            try:
+                transport_stats = self._controller.progressive_sfm_transport_stats
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                transport_stats = {}
+        presentation = build_progressive_sfm_ux_presentation(
+            active_snapshot=self._progressive_sfm_current_snapshot,
+            last_snapshot=self._progressive_sfm_last_snapshot,
+            run_state=self._offline_state,
+            transport_stats=transport_stats,
+            performance=self._progressive_sfm_viewer_performance,
+        )
+        self._progressive_sfm_status_value.setText(presentation.status_text)
+        self._progressive_sfm_status_value.setProperty("statusKind", presentation.status_kind)
+        self._refresh_style(self._progressive_sfm_status_value)
+        self._progressive_sfm_stage_value.setText(presentation.stage_text)
+        self._progressive_sfm_cameras_value.setText(presentation.cameras_text)
+        self._progressive_sfm_landmarks_value.setText(presentation.landmarks_text)
+        self._progressive_sfm_quality_value.setText(presentation.quality_text)
+        self._progressive_sfm_revision_value.setText(presentation.revision_text)
+        self._progressive_sfm_transport_value.setText(presentation.transport_text)
+        self._progressive_sfm_viewer_value.setText(presentation.viewer_text)
+        self._progressive_sfm_payload_value.setText(presentation.payload_text)
+        self._progressive_sfm_authority_value.setText(presentation.authority_text)
+        self._progressive_sfm_boundary_value.setText(presentation.boundary_text)
+
+    def begin_progressive_dense_preview(self, binding: ProgressiveDenseTransportBinding) -> None:
+        """Explicitly bind one provisional dense run (presentation only)."""
+        if self._viewport_shutdown:
+            return
+        if not isinstance(binding, ProgressiveDenseTransportBinding):
+            raise TypeError("I6.7D requires a validated I6.7C transport binding.")
+        if (self._reconstruction_canvas.canonical_mesh_loaded
+                or self._reconstruction_canvas.dense_rgb_points_loaded):
+            raise ValueError("Provisional dense preview cannot overlay a loaded canonical scene.")
+        self.clear_progressive_dense_preview()
+        self._progressive_dense_buffer.reset(binding)
+
+    def offer_progressive_dense_snapshot(self, snapshot):
+        """Preferred already-decoded transport path; invoked via queued Qt signal."""
+        from PyQt6.QtCore import QThread
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Progressive dense snapshots must enter on the Qt thread.")
+        if self._viewport_shutdown:
+            return ProgressiveDenseOfferDisposition.REJECTED
+        disposition = self._progressive_dense_buffer.offer(snapshot)
+        if disposition in (ProgressiveDenseOfferDisposition.ACCEPTED,
+                           ProgressiveDenseOfferDisposition.COALESCED):
+            if not self._progressive_dense_timer.isActive():
+                self._progressive_dense_timer.start(33)
+        return disposition
+
+    def offer_progressive_dense_transport_line(self, line: str):
+        """Consume I6.7C input on the Qt thread; coalesce until the next frame tick.
+
+        QProcess signal/Qt queued receiver must own this invocation. Do not call
+        this method directly from a worker thread; VisPy never leaves Qt's thread.
+        """
+        from PyQt6.QtCore import QThread
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Progressive dense transport must enter through the Qt thread.")
+        if self._viewport_shutdown:
+            return ProgressiveDenseOfferDisposition.REJECTED
+        disposition = self._progressive_dense_buffer.offer_line(line)
+        if disposition in (ProgressiveDenseOfferDisposition.ACCEPTED,
+                           ProgressiveDenseOfferDisposition.COALESCED):
+            if not self._progressive_dense_timer.isActive():
+                self._progressive_dense_timer.start(33)  # upper target 30 fps
+        return disposition
+
+    def _flush_progressive_dense_preview(self) -> None:
+        if self._viewport_shutdown:
+            return
+        snapshot = self._progressive_dense_buffer.take_pending()
+        if snapshot is None:
+            return
+        try:
+            update_started = monotonic()
+            frame = build_progressive_dense_viewer_frame(snapshot)
+            previous_uploads = self._reconstruction_canvas.progressive_dense_gpu_uploads
+            self._reconstruction_canvas.show_progressive_dense_reconstruction(frame)
+            self._progressive_dense_applied_updates += 1
+            self._progressive_dense_geometry_uploads += (
+                self._reconstruction_canvas.progressive_dense_gpu_uploads - previous_uploads
+            )
+            # Includes bounded CPU projection + one VisPy buffer submission,
+            # excludes initial fit and asynchronous GPU rasterization/present.
+            apply_ms = max(0.0, (monotonic() - update_started) * 1000.0)
+            self._progressive_dense_latest_apply_ms = apply_ms
+            self._progressive_dense_peak_apply_ms = max(
+                self._progressive_dense_peak_apply_ms, apply_ms
+            )
+            if frame.has_geometry_update and frame.display_point_count:
+                self._viewport_placeholder.setVisible(False)
+                if not self._visualizer_fitted_once:
+                    self._reconstruction_canvas.fit_scene()
+                    self._visualizer_fitted_once = True
+            self._refresh_viewport_state()
+        except (TypeError, ValueError, RuntimeError) as exc:
+            self.set_error(f"Provisional dense viewer update rejected: {exc}")
+
+    def clear_progressive_dense_preview(self) -> None:
+        self._progressive_dense_timer.stop()
+        self._progressive_dense_buffer.clear()
+        canvas = self._reconstruction_canvas
+        previously_visible = canvas.progressive_dense_display_count > 0
+        canvas.clear_progressive_dense_reconstruction()
+        if previously_visible and not (
+            canvas.has_pose or canvas.has_sparse_map or canvas.has_keyframes
+            or canvas.progressive_sfm_active or canvas.offline_visualization_loaded
+            or canvas.canonical_mesh_loaded or canvas.canonical_camera_loaded
+            or canvas.dense_rgb_points_loaded
+        ):
+            self._viewport_placeholder.setVisible(True)
+        self._refresh_viewport_state()
+
+    def set_progressive_sparse_snapshot(self, snapshot: object | None) -> None:
+        """Render one controller-admitted provisional sparse-SfM revision.
+
+        I6.6D owns bounded replace-style rendering. I6.6E adds only professional
+        status and bounded performance observations around that same update.
+        ``None`` clears only the provisional preview and never erases admitted
+        terminal sparse geometry.
+        """
+
+        if self._viewport_shutdown:
+            return
+        if snapshot is None:
+            self._progressive_sfm_current_snapshot = None
+            self._reconstruction_canvas.clear_progressive_sparse_reconstruction()
+            if not (
+                self._reconstruction_canvas.has_pose
+                or self._reconstruction_canvas.has_sparse_map
+                or self._reconstruction_canvas.has_keyframes
+                or self._reconstruction_canvas.offline_visualization_loaded
+                or self._reconstruction_canvas.canonical_mesh_loaded
+                or self._reconstruction_canvas.canonical_camera_loaded
+                or self._reconstruction_canvas.dense_rgb_points_loaded
+                or self._reconstruction_canvas.progressive_dense_display_count > 0
+            ):
+                self._viewport_placeholder.setVisible(True)
+            self._refresh_progressive_sfm_ux()
+            self._refresh_viewport_state()
+            return
+
+        started = monotonic()
+        try:
+            frame = build_progressive_sfm_viewer_frame(snapshot)
+            self._reconstruction_canvas.show_progressive_sparse_reconstruction(
+                session_id=frame.session_id,
+                revision=frame.revision,
+                stage=frame.stage.value,
+                points_reconstruction=frame.landmark_points_reconstruction,
+                camera_matrices_reconstruction=frame.camera_matrices_reconstruction,
+                camera_ids=frame.camera_ids,
+                landmark_colors_rgb=frame.landmark_colors_rgb,
+                landmark_total=frame.landmark_total,
+                registered_camera_total=frame.registered_camera_total,
+            )
+            # Measure the recurring bounded projection/apply path only. The one-time
+            # initial fit is deliberately excluded from the 50 ms responsiveness
+            # observation because it is not paid on later revisions.
+            elapsed_ms = max(0.0, (monotonic() - started) * 1000.0)
+            self._progressive_sfm_current_snapshot = snapshot
+            self._progressive_sfm_last_snapshot = snapshot
+            self._progressive_sfm_viewer_performance = (
+                self._progressive_sfm_viewer_performance.record_success(
+                    update_ms=elapsed_ms,
+                    payload_bytes=progressive_viewer_payload_bytes(frame),
+                )
+            )
+            if frame.has_geometry:
+                self._viewport_placeholder.setVisible(False)
+                if not self._visualizer_fitted_once:
+                    self._reconstruction_canvas.fit_scene()
+                    self._visualizer_fitted_once = True
+            self._refresh_progressive_sfm_ux()
+            self._refresh_viewport_state()
+        except (TypeError, ValueError) as exc:
+            # A malformed visualization projection must not terminate or mutate
+            # the authoritative offline reconstruction lifecycle.
+            self._progressive_sfm_viewer_performance = (
+                self._progressive_sfm_viewer_performance.record_rejection()
+            )
+            self._refresh_progressive_sfm_ux()
+            self.set_error(f"Progressive sparse viewport update rejected: {exc}")
+
     def set_live_observation(self, observation: object) -> None:
         if self._viewport_shutdown:
             return
@@ -9077,6 +9955,11 @@ class ReconstructionPage(QWidget):
             self.set_error(f"Reconstruction viewport update rejected: {exc}")
 
     def _refresh_viewport_state(self) -> None:
+        if self._reconstruction_canvas.admitted_full_dense_display_count:
+            count = self._reconstruction_canvas.admitted_full_dense_display_count
+            self._viewport_state.setText(
+                f'Complete admitted dense RGB • {count:,} points • non-metric / non-persistent')
+            return
         if self.interactive_gaussian_visible:
             self._viewport_state.setText("Interactive Gaussian appearance • canonical picking")
             return
@@ -9111,6 +9994,17 @@ class ReconstructionPage(QWidget):
             return
         if self._scene_availability is ReconstructionSceneAvailability.READY:
             self._viewport_state.setText("Scene ready")
+            return
+        if self._reconstruction_canvas.progressive_dense_active:
+            stage = (self._reconstruction_canvas.progressive_dense_stage or "preparing").replace("_", " ").title()
+            self._viewport_state.setText(f"Progressive dense preview • {stage} • provisional / non-metric")
+            return
+        if self._reconstruction_canvas.progressive_sfm_active:
+            stage = self._reconstruction_canvas.progressive_sfm_stage or "mapping"
+            label = "Finalizing" if stage == "finalizing" else "Mapping"
+            self._viewport_state.setText(
+                f"Progressive sparse SfM • {label} • provisional"
+            )
             return
         if self._reconstruction_canvas.offline_visualization_loaded:
             self._viewport_state.setText("Offline sparse reconstruction")
@@ -9166,6 +10060,204 @@ class ReconstructionPage(QWidget):
         self._refresh_runtime_telemetry()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
+
+    def _start_explicit_dense(self) -> None:
+        controller = self._controller
+        if controller is None or controller.is_shutdown:
+            return
+        try:
+            self._release_appearance_resources_for_heavy_handoff('Dense reconstruction')
+            controller.start_explicit_post_sparse_dense()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            self.set_error(str(exc))
+        finally:
+            self._refresh_source_controls()
+            self._refresh_runtime_controls()
+
+    def _cancel_explicit_dense(self) -> None:
+        if self._controller is not None:
+            self._controller.cancel_explicit_post_sparse_dense()
+        self._refresh_runtime_controls()
+
+    def _update_dense_elapsed(self) -> None:
+        if self._dense_started_at is None:
+            return
+        self._dense_elapsed_seconds = max(0, int(monotonic() - self._dense_started_at))
+        minutes, seconds = divmod(self._dense_elapsed_seconds, 60)
+        self._dense_progress_label.setText(
+            f'Dense reconstruction • {self._dense_stage_text} • elapsed {minutes:02d}:{seconds:02d}')
+
+    def _stop_dense_clock(self) -> None:
+        self._update_dense_elapsed()
+        self._dense_elapsed_timer.stop()
+        self._dense_started_at = None
+
+    def _clear_full_dense_view(self) -> None:
+        self._dense_load_generation += 1  # late background result cannot bind to a new session
+        if hasattr(self, '_dense_full_view_button'):
+            self._dense_full_view_button.setEnabled(False)
+            self._dense_full_view_button.setText('View complete dense points')
+        if hasattr(self, '_reconstruction_canvas'):
+            self._reconstruction_canvas.clear_admitted_full_dense()
+
+    def _toggle_full_dense_view(self) -> None:
+        if self._reconstruction_canvas.admitted_full_dense_display_count:
+            self._unload_full_dense_view()
+        else:
+            self._load_full_dense_view()
+
+    def _load_full_dense_view(self) -> None:
+        admission = self._dense_admission
+        sparse = self._offline_result_handoff
+        if (self._viewport_shutdown or self._dense_job_state is not DenseJobState.COMPLETED
+                or not isinstance(admission, dict) or sparse is None
+                or admission.get('sparse_session_id') != sparse.session_id
+                or not admission.get('final_dense_result_admitted')
+                or self._dense_load_thread is not None):
+            self.set_error('No verified dense artifact for the active sparse session.')
+            return
+        self._dense_full_view_button.setEnabled(False)
+        self._dense_full_view_button.setText('Preparing complete point cloud…')
+        self._dense_load_generation += 1
+        generation = self._dense_load_generation
+        worker = _FullDenseLoadThread(admission, sparse.session_id, self)
+        self._dense_load_thread = worker
+        worker.frame_ready.connect(lambda frame: self._on_full_dense_frame(frame, generation))
+        worker.load_failed.connect(lambda error: self._on_full_dense_load_error(error, generation))
+        worker.finished.connect(self._full_dense_worker_finished)
+        worker.start()
+
+    def _full_dense_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is self._dense_load_thread:
+            self._dense_load_thread = None
+        worker.deleteLater()
+
+    def _on_full_dense_frame(self, frame, generation: int) -> None:
+        if (self._viewport_shutdown or generation != self._dense_load_generation
+                or self._dense_job_state is not DenseJobState.COMPLETED
+                or not isinstance(self._dense_admission, dict)
+                or frame.session_id != self._dense_admission.get('sparse_session_id')
+                or frame.dense_run_id != self._dense_admission.get('dense_run_id')):
+            return
+        try:
+            start = monotonic()
+            # Invalidate queued provisional UI frames before publishing full geometry.
+            self.clear_progressive_dense_preview()
+            self._reconstruction_canvas.show_admitted_full_dense(frame)
+            submit_ms = (monotonic() - start) * 1000
+        except (RuntimeError, ValueError, TypeError) as exc:
+            self._on_full_dense_load_error(str(exc), generation)
+            return
+        count = self._reconstruction_canvas.admitted_full_dense_display_count
+        self._dense_job_value.setText(f'Complete admitted dense view • {count:,} / {frame.point_count:,} RGB points')
+        self._dense_job_value.setToolTip(
+            f'Complete admitted artifact SHA256: {frame.artifact_sha256} • '
+            f'CPU preparation: {frame.preparation_ms:.1f} ms • '
+            f'Qt marker submission: {submit_ms:.1f} ms • no sustained FPS claim. '
+            'Non-metric, non-persistent display; preview does not grant authority.')
+        self._dense_full_view_button.setText('Unload complete dense view')
+        self._dense_full_view_button.setEnabled(True)
+        # Unload uses a separate explicit action; never redo the verified PLY
+        # scan or submit geometry merely because dense job status changes.
+        self._refresh_viewport_state()
+
+    def _unload_full_dense_view(self) -> None:
+        self._clear_full_dense_view()
+        self._dense_full_view_button.setText('View complete dense points')
+        self._dense_full_view_button.setEnabled(
+            self._dense_job_state is DenseJobState.COMPLETED and isinstance(self._dense_admission, dict))
+        self._refresh_viewport_state()
+
+    def _on_full_dense_load_error(self, error: str, generation: int) -> None:
+        if generation != self._dense_load_generation or self._viewport_shutdown:
+            return
+        self._dense_job_value.setToolTip('Complete dense viewer rejected: ' + error[:500])
+        self._dense_full_view_button.setText('View complete dense points')
+        self._dense_full_view_button.setEnabled(False)  # fail closed; inspect before another attempt
+        self.set_error('Complete dense viewer unavailable: ' + error[:350])
+
+    def set_explicit_dense_job_state(self, state: DenseJobState) -> None:
+        if not isinstance(state, DenseJobState):
+            return
+        if state is DenseJobState.STARTING:
+            self._dense_preview_bound = False
+            self._dense_admission = None
+            self._clear_full_dense_view()
+            self.clear_progressive_dense_preview()
+            self._dense_started_at = monotonic()
+            self._dense_elapsed_seconds = 0
+            self._dense_stage_text = 'Starting COLMAP MVS'
+            self._dense_elapsed_timer.start()
+        self._dense_job_state = state
+        if state in (DenseJobState.STARTING, DenseJobState.RUNNING,
+                     DenseJobState.VERIFYING, DenseJobState.CANCELLING):
+            self._dense_progress_bar.setVisible(True)
+            self._dense_progress_bar.setRange(0, 0)
+            self._dense_stage_text = {
+                DenseJobState.STARTING: 'Starting COLMAP MVS',
+                DenseJobState.RUNNING: 'Provider execution',
+                DenseJobState.VERIFYING: 'Verifying complete dense artifact',
+                DenseJobState.CANCELLING: 'Cancelling dense worker',
+            }[state]
+            self._update_dense_elapsed()
+        else:
+            self._stop_dense_clock()
+            if state is DenseJobState.COMPLETED:
+                self._dense_progress_bar.setVisible(True)
+                self._dense_progress_bar.setRange(0, 100)
+                self._dense_progress_bar.setValue(100)
+                self._dense_stage_text = 'Complete • independently admitted'
+            elif state in (DenseJobState.CANCELLED, DenseJobState.FAILED):
+                self._dense_progress_bar.setVisible(True)
+                self._dense_progress_bar.setRange(0, 100)
+                self._dense_progress_bar.setValue(0)
+                self._dense_stage_text = ('Cancelled' if state is DenseJobState.CANCELLED else 'Failed')
+            minutes, seconds = divmod(self._dense_elapsed_seconds, 60)
+            self._dense_progress_label.setText(
+                f'Dense reconstruction • {self._dense_stage_text} • elapsed {minutes:02d}:{seconds:02d}')
+        if state is DenseJobState.COMPLETED and isinstance(self._dense_admission, dict):
+            self._dense_full_view_button.setEnabled(bool(self._dense_admission.get('manifest_path')))
+        elif state is not DenseJobState.COMPLETED:
+            self._dense_full_view_button.setEnabled(False)
+        if state is DenseJobState.COMPLETED and isinstance(self._dense_admission, dict):
+            count = self._dense_admission.get('complete_geometry_vertex_count', 0)
+            self._dense_job_value.setText(
+                f'Full dense artifact admitted • {count:,} points • full viewer pending')
+        else:
+            self._dense_job_value.setText('Dense ' + state.value.replace('_', ' ')
+                                          + ' • explicit COLMAP MVS • non-metric')
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
+
+    def _on_explicit_dense_preview(self, snapshot: object) -> None:
+        try:
+            if not self._dense_preview_bound:
+                self.begin_progressive_dense_preview(
+                    ProgressiveDenseTransportBinding.from_snapshot(snapshot))
+                self._dense_preview_bound = True
+            self.offer_progressive_dense_snapshot(snapshot)
+            stage = snapshot.stage.value.replace('_', ' ').title()
+            if self._dense_job_state is DenseJobState.RUNNING:
+                self._dense_stage_text = stage
+                self._update_dense_elapsed()
+        except (RuntimeError, TypeError, ValueError) as exc:
+            # Provisional viewer failure is not a final-admission decision.
+            self._dense_job_value.setToolTip('Provisional preview unavailable: ' + str(exc)[:350])
+
+    def _on_explicit_dense_admission(self, admission: object) -> None:
+        if isinstance(admission, dict):
+            self._dense_admission = admission
+            self._dense_job_value.setToolTip(
+                'Full PLY independently reverified off the Qt thread. '
+                'Admission is not persistent-scene, metric-scale or GPU-viewing authority.')
+
+    def _on_explicit_dense_finished(self, _result: object) -> None:
+        self._refresh_source_controls()
+        self._refresh_runtime_controls()
+
+    def _on_explicit_dense_log(self, message: str) -> None:
+        self._dense_job_value.setToolTip(str(message)[:500])
 
     def _refresh_source_controls(self) -> None:
         controller = self._controller
@@ -9236,6 +10328,12 @@ class ReconstructionPage(QWidget):
             and not recovery_owns_retry
         )
         self._start_button.setEnabled(can_start)
+        if hasattr(self, '_dense_build_button'):
+            self._dense_build_button.setEnabled(
+                not busy and controller.dense_ready_for_explicit_start)
+            self._dense_cancel_button.setEnabled(
+                controller.dense_is_active and self._dense_job_state in {
+                    DenseJobState.STARTING, DenseJobState.RUNNING, DenseJobState.VERIFYING})
 
         can_pause = (
             not controller.is_shutdown
@@ -9263,7 +10361,25 @@ class ReconstructionPage(QWidget):
         self._stop_button.setEnabled(
             not controller.is_shutdown and (can_stop_live or can_stop_offline)
         )
-        self._stop_button.setText("Cancel" if offline_busy else "Stop")
+
+        if selection.workflow in {
+            ReconstructionWorkflow.IMAGE_SEQUENCE,
+            ReconstructionWorkflow.RECORDED_VIDEO,
+        }:
+            ux = self._offline_one_start_ux_presentation()
+            self._start_button.setText(ux.start_text)
+            self._start_button.setToolTip(ux.start_tooltip)
+            self._pause_button.setText("Pause")
+            self._pause_button.setToolTip(ux.pause_tooltip)
+            self._stop_button.setText(ux.stop_text)
+            self._stop_button.setToolTip(ux.stop_tooltip)
+        else:
+            self._start_button.setText("Start")
+            self._start_button.setToolTip("Start the selected Reconstruction workflow.")
+            self._pause_button.setToolTip("Pause or resume a running live reconstruction session.")
+            self._stop_button.setText("Stop")
+            self._stop_button.setToolTip("Stop live reconstruction or cancel an offline run.")
+
         self._refresh_scene_interaction_controls()
         self._refresh_checkpoint_resume_controls()
         self._refresh_failure_recovery_controls()
@@ -9352,6 +10468,23 @@ class ReconstructionPage(QWidget):
         self._refresh_digital_twin_resource_coordination()
 
     def set_offline_state(self, state: OfflineReconstructionRunState) -> None:
+        if state in {
+            OfflineReconstructionRunState.STARTING,
+            OfflineReconstructionRunState.CANCELLED,
+            OfflineReconstructionRunState.FAILED,
+        }:
+            self.clear_progressive_dense_preview()
+        if state is OfflineReconstructionRunState.STARTING:
+            self._clear_full_dense_view()
+            self._dense_admission = None
+            self._dense_preview_bound = False
+            # A new admitted run must not inherit terminal-product UX from the
+            # previously completed/rejected session.
+            self._offline_result_handoff = None
+            self._last_runtime_error = ""
+            self._progressive_sfm_current_snapshot = None
+            self._progressive_sfm_last_snapshot = None
+            self._progressive_sfm_viewer_performance = ProgressiveSfmViewerPerformance()
         self._offline_state = state
         self._offline_value.setText(self._humanize(state))
         self._offline_value.setProperty("statusKind", self._state_kind(state.value))
@@ -9371,7 +10504,16 @@ class ReconstructionPage(QWidget):
         # Preserve a richer worker event while RUNNING; state transitions own terminal presentation.
         if state is not OfflineReconstructionRunState.RUNNING:
             presentation = present_offline_state(state)
-            if state is OfflineReconstructionRunState.FAILED and self._last_runtime_error:
+            if state is OfflineReconstructionRunState.COMPLETED:
+                ux = self._offline_one_start_ux_presentation()
+                if ux.terminal_stage_label:
+                    presentation = ReconstructionStatusPresentation(
+                        ux.terminal_stage_label,
+                        ux.terminal_message,
+                        ux.terminal_status_kind,
+                        progress_fraction=ux.terminal_progress_fraction,
+                    )
+            elif state is OfflineReconstructionRunState.FAILED and self._last_runtime_error:
                 presentation = ReconstructionStatusPresentation(
                     presentation.stage_label,
                     self._last_runtime_error,
@@ -9383,6 +10525,7 @@ class ReconstructionPage(QWidget):
         self._refresh_runtime_controls()
         self._refresh_reconstruction_export_controls()
         self._refresh_digital_twin_resource_coordination()
+        self._refresh_progressive_sfm_ux()
 
     def set_scene_availability(self, availability: ReconstructionSceneAvailability) -> None:
         self._scene_availability = availability
@@ -9399,6 +10542,12 @@ class ReconstructionPage(QWidget):
         self._refresh_viewport_state()
 
     def set_persistent_scene(self, scene, manifest_path: str) -> None:
+        # A persistent scene has independent source/camera authority; never
+        # leave an unrelated provisional dense GPU preview over its geometry.
+        if scene is not None and self._reconstruction_canvas.progressive_dense_active:
+            self.clear_progressive_dense_preview()
+        if scene is not None:
+            self._clear_full_dense_view()
         bind_started = monotonic()
         previous_scene_id = (
             str(getattr(self._persistent_scene, "scene_id", "")).strip()
@@ -9611,6 +10760,14 @@ class ReconstructionPage(QWidget):
         if hasattr(self, "_digital_twin_processing_controller"):
             self._digital_twin_processing_controller.shutdown()
         self._visual_pose_timer.stop()
+        self._progressive_dense_timer.stop()
+        self._progressive_dense_buffer.clear()
+        self._dense_elapsed_timer.stop()
+        self._dense_load_generation += 1
+        if self._dense_load_thread is not None and self._dense_load_thread.isRunning():
+            self._dense_load_thread.wait()  # must not destroy a running QThread; no GL work in it
+        self._reconstruction_canvas.clear_admitted_full_dense(update_canvas=False)
+        self._reconstruction_canvas.clear_progressive_dense_reconstruction(update_canvas=False)
         if hasattr(self, "_gaussian_display_update_timer"):
             self._gaussian_display_update_timer.stop()
         self._gaussian_display_update_pending = False

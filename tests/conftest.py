@@ -202,6 +202,28 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_camera_ids = ()
             self._offline_camera_path_visible = False
             self._offline_camera_path_display_count = 0
+            # I6.7D: lightweight *test-only* provisional dense presentation state.
+            # The production VisPy canvas lives in app/widgets/viewport/vispy_canvas.py.
+            self._admitted_dense_run_id = None
+            self._admitted_dense_display_count = 0
+            self._admitted_dense_gpu_submissions = 0
+            self._admitted_dense_points_viewer = None
+            self._admitted_dense_colors_rgba = None
+            self._progressive_dense_run_id = None
+            self._progressive_dense_source_sha = None
+            self._progressive_dense_frame_id = None
+            self._progressive_dense_revision = None
+            self._progressive_dense_stage = None
+            self._progressive_dense_display_count = 0
+            self._progressive_dense_gpu_uploads = 0  # simulated buffer submissions
+            self._progressive_dense_points_viewer = None
+            self._progressive_dense_colors_rgba = None
+            self._progressive_sfm_active = False
+            self._progressive_sfm_session_id = None
+            self._progressive_sfm_revision = None
+            self._progressive_sfm_stage = None
+            self._progressive_camera_path_visible = False
+            self._progressive_camera_path_display_count = 0
             self._offline_sparse_envelope_visible_requested = True
             self._offline_sparse_envelope_available = False
             self._offline_sparse_envelope_min = None
@@ -340,6 +362,13 @@ def _install_fake_vispy_canvas() -> None:
             self._offline_camera_ids = ()
             self._offline_camera_path_visible = False
             self._offline_camera_path_display_count = 0
+            self.clear_progressive_dense_reconstruction(update_canvas=False)
+            self._progressive_sfm_active = False
+            self._progressive_sfm_session_id = None
+            self._progressive_sfm_revision = None
+            self._progressive_sfm_stage = None
+            self._progressive_camera_path_visible = False
+            self._progressive_camera_path_display_count = 0
             self._offline_sparse_envelope_available = False
             self._offline_sparse_envelope_min = None
             self._offline_sparse_envelope_max = None
@@ -369,6 +398,7 @@ def _install_fake_vispy_canvas() -> None:
             colors_rgb=None,
             total_count: int | None = None,
             revision: int | None = None,
+            update_canvas: bool = True,
         ) -> None:
             from app.reconstruction_visualization import (
                 adaptive_world_axis_length,
@@ -984,6 +1014,7 @@ def _install_fake_vispy_canvas() -> None:
             keyframe_ids=(),
             total_count: int | None = None,
             revision: int | None = None,
+            update_canvas: bool = True,
         ) -> None:
             from app.reconstruction_visualization import (
                 adaptive_world_axis_length,
@@ -1021,11 +1052,193 @@ def _install_fake_vispy_canvas() -> None:
             if groups:
                 self._world_axis_length = adaptive_world_axis_length(np.vstack(groups))
 
+        # I6.7D extends the existing headless Qt test double.  Do not import
+        # the real VisPy canvas in pytest: Qt offscreen lacks a safe GL context.
+        @property
+        def admitted_full_dense_display_count(self) -> int:
+            return self._admitted_dense_display_count
+
+        @property
+        def admitted_full_dense_gpu_submissions(self) -> int:
+            return self._admitted_dense_gpu_submissions
+
+        def show_admitted_full_dense(self, frame) -> None:
+            from PyQt6.QtCore import QThread
+            from app.reconstruction_full_dense_viewer import FullDenseViewerFrame
+            if QThread.currentThread() != self.thread():
+                raise RuntimeError('Full dense visual must update on Qt owner thread.')
+            if not isinstance(frame, FullDenseViewerFrame) or frame.provisional:
+                raise ValueError('Requires completed dense frame.')
+            if self._admitted_dense_run_id is not None or self._canonical_mesh_loaded or self._dense_rgb_loaded:
+                raise ValueError('Another or canonical scene is already visible.')
+            self.clear_progressive_dense_reconstruction(update_canvas=False)
+            self._admitted_dense_run_id = frame.dense_run_id
+            self._admitted_dense_points_viewer = frame.points_viewer
+            self._admitted_dense_colors_rgba = frame.colors_rgba
+            self._admitted_dense_display_count = frame.point_count
+            self._admitted_dense_gpu_submissions += 1
+
+        def clear_admitted_full_dense(self, *, update_canvas: bool = True) -> None:
+            self._admitted_dense_run_id = None
+            self._admitted_dense_display_count = 0
+            self._admitted_dense_points_viewer = None
+            self._admitted_dense_colors_rgba = None
+
+        def fit_admitted_full_dense(self) -> None:
+            return
+
+        @property
+        def progressive_dense_active(self) -> bool:
+            return self._progressive_dense_run_id is not None
+
+        @property
+        def progressive_dense_revision(self) -> int | None:
+            return self._progressive_dense_revision
+
+        @property
+        def progressive_dense_stage(self) -> str | None:
+            return self._progressive_dense_stage
+
+        @property
+        def progressive_dense_display_count(self) -> int:
+            return self._progressive_dense_display_count
+
+        @property
+        def progressive_dense_gpu_uploads(self) -> int:
+            return self._progressive_dense_gpu_uploads
+
+        def show_progressive_dense_reconstruction(self, frame) -> None:
+            """Mirror the production run, bounds, revision and update contract.
+
+            Count *simulated* marker submissions, not actual GPU transfers.
+            Real GPU rendering is qualified separately with the desktop demo.
+            """
+            from PyQt6.QtCore import QThread
+            from app.reconstruction_progressive_dense_viewer import (
+                I67D_MAX_DISPLAY_POINTS, ProgressiveDenseViewerFrame,
+            )
+
+            if QThread.currentThread() != self.thread():
+                raise RuntimeError("Provisional dense preview must update on its owning Qt thread.")
+            if not isinstance(frame, ProgressiveDenseViewerFrame) or not frame.provisional:
+                raise TypeError("I6.7D requires a provisional ProgressiveDenseViewerFrame.")
+            if self._canonical_mesh_loaded or self._dense_rgb_loaded:
+                raise ValueError("Provisional dense geometry must not overlap canonical geometry.")
+            if self._progressive_dense_run_id is not None:
+                if (self._progressive_dense_run_id != frame.dense_run_id
+                        or self._progressive_dense_source_sha != frame.source_sparse_result_sha256
+                        or self._progressive_dense_frame_id != frame.reconstruction_frame_id):
+                    raise ValueError("Provisional dense preview cannot cross run/source/frame identity.")
+                if frame.revision <= self._progressive_dense_revision:
+                    raise ValueError("Provisional dense preview revision must increase.")
+            points, colors = frame.points_viewer, frame.colors_rgba
+            if points is not None:
+                if (colors is None or points.dtype != np.float32 or colors.dtype != np.float32
+                        or points.ndim != 2 or points.shape[1:] != (3,)
+                        or colors.shape != (points.shape[0], 4)
+                        or points.shape[0] > I67D_MAX_DISPLAY_POINTS
+                        or not points.flags.c_contiguous or not colors.flags.c_contiguous
+                        or not np.isfinite(points).all() or not np.isfinite(colors).all()):
+                    raise ValueError("Invalid bounded I6.7D preview buffers.")
+            self._progressive_dense_run_id = frame.dense_run_id
+            self._progressive_dense_source_sha = frame.source_sparse_result_sha256
+            self._progressive_dense_frame_id = frame.reconstruction_frame_id
+            self._progressive_dense_revision = frame.revision
+            self._progressive_dense_stage = frame.stage.value
+            if points is None:
+                return  # status-only update: no synthetic geometry submission
+            self._progressive_dense_points_viewer = points
+            self._progressive_dense_colors_rgba = colors
+            self._progressive_dense_display_count = int(points.shape[0])
+            self._progressive_dense_gpu_uploads += 1
+
+        def clear_progressive_dense_reconstruction(self, *, update_canvas: bool = True) -> None:
+            """Clear only provisional state, never persistent/canonical visuals."""
+            self._progressive_dense_run_id = None
+            self._progressive_dense_source_sha = None
+            self._progressive_dense_frame_id = None
+            self._progressive_dense_revision = None
+            self._progressive_dense_stage = None
+            self._progressive_dense_display_count = 0
+            self._progressive_dense_points_viewer = None
+            self._progressive_dense_colors_rgba = None
+
+        def show_progressive_sparse_reconstruction(
+            self,
+            *,
+            session_id: str,
+            revision: int,
+            stage: str,
+            points_reconstruction,
+            camera_matrices_reconstruction,
+            camera_ids,
+            landmark_colors_rgb=None,
+            landmark_total: int | None = None,
+            registered_camera_total: int | None = None,
+        ) -> None:
+            sid = str(session_id).strip()
+            rev = int(revision)
+            stage_value = str(stage).strip().lower()
+            if not sid or rev < 1 or stage_value not in {"mapping", "finalizing"}:
+                raise ValueError("Invalid progressive sparse viewer identity.")
+            if self._progressive_sfm_active:
+                if sid != self._progressive_sfm_session_id:
+                    raise ValueError("Progressive sparse viewer cannot cross session identity.")
+                if self._progressive_sfm_revision is not None and rev <= self._progressive_sfm_revision:
+                    raise ValueError("Progressive sparse viewer revision must strictly increase.")
+            self.update_sparse_landmarks(
+                points_reconstruction,
+                colors_rgb=landmark_colors_rgb,
+                total_count=landmark_total,
+                revision=rev,
+                update_canvas=False,
+            )
+            self.update_keyframe_poses(
+                camera_matrices_reconstruction,
+                keyframe_ids=camera_ids,
+                total_count=registered_camera_total,
+                revision=rev,
+                update_canvas=False,
+            )
+            self._progressive_sfm_active = True
+            self._progressive_sfm_session_id = sid
+            self._progressive_sfm_revision = rev
+            self._progressive_sfm_stage = stage_value
+            self._progressive_camera_path_display_count = int(self._keyframe_positions.shape[0])
+            self._progressive_camera_path_visible = bool(
+                self._keyframes_visible and self._progressive_camera_path_display_count >= 2
+            )
+
+        def clear_progressive_sparse_reconstruction(self, *, update_canvas: bool = True) -> None:
+            was_active = self._progressive_sfm_active
+            self._progressive_sfm_active = False
+            self._progressive_sfm_session_id = None
+            self._progressive_sfm_revision = None
+            self._progressive_sfm_stage = None
+            self._progressive_camera_path_visible = False
+            self._progressive_camera_path_display_count = 0
+            if was_active and not self._offline_visualization_loaded:
+                self._sparse_landmark_positions = np.zeros((0, 3), dtype=np.float32)
+                self._sparse_landmark_total_count = 0
+                self._sparse_landmark_display_count = 0
+                self._sparse_map_revision = None
+                self._sparse_landmark_colors = None
+                self._keyframe_matrices = np.zeros((0, 4, 4), dtype=np.float64)
+                self._keyframe_positions = np.zeros((0, 3), dtype=np.float32)
+                self._keyframe_ids = ()
+                self._keyframe_total_count = 0
+                self._keyframe_display_count = 0
+                self._keyframe_map_revision = None
+
         def set_keyframes_visible(self, visible: bool) -> None:
             self._keyframes_visible = bool(visible)
             self._offline_camera_path_visible = bool(
                 self._keyframes_visible and self._offline_visualization_loaded
                 and self._offline_camera_positions.shape[0] >= 2
+            )
+            self._progressive_camera_path_visible = bool(
+                self._keyframes_visible and self._progressive_sfm_active
+                and self._progressive_camera_path_display_count >= 2
             )
             self._selected_offline_camera_visible = bool(
                 self._keyframes_visible and self._selected_offline_camera_index is not None
@@ -1164,6 +1377,26 @@ def _install_fake_vispy_canvas() -> None:
             if self._offline_sparse_envelope_min is None or self._offline_sparse_envelope_max is None:
                 return None
             return (self._offline_sparse_envelope_min.copy(), self._offline_sparse_envelope_max.copy())
+
+        @property
+        def progressive_sfm_active(self) -> bool:
+            return bool(self._progressive_sfm_active)
+
+        @property
+        def progressive_sfm_session_id(self):
+            return self._progressive_sfm_session_id
+
+        @property
+        def progressive_sfm_revision(self):
+            return self._progressive_sfm_revision
+
+        @property
+        def progressive_sfm_stage(self):
+            return self._progressive_sfm_stage
+
+        @property
+        def progressive_camera_path_display_count(self) -> int:
+            return int(self._progressive_camera_path_display_count)
 
         @property
         def offline_visualization_loaded(self) -> bool:
@@ -1469,6 +1702,7 @@ def _install_fake_vispy_canvas() -> None:
         def close(self) -> None:
             self.clear_canonical_camera_trajectory(update_canvas=False)
             self.clear_canonical_semantic_objects(update_canvas=False)
+            self.clear_progressive_dense_reconstruction(update_canvas=False)
             self.clear_dense_rgb_points(update_canvas=False)
             self.clear_canonical_mesh(update_canvas=False)
             self.closed = True

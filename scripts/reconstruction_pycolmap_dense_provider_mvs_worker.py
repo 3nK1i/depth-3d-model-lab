@@ -406,8 +406,20 @@ def main() -> int:
         started = time.monotonic()
         fusion_options = pycolmap.StereoFusionOptions()
         fusion_options.cache_size = float(config["stereo_fusion_cache_gib"])
-        fusion_options.use_cache = True
+        # I6.7B qualification showed COLMAP CachedWorkspace serializes Stereo
+        # Fusion to one effective worker on the supported baseline host.  Keep
+        # scientific fusion parameters unchanged, but use the non-cached
+        # workspace so num_threads=-1 resolves to the host's effective CPU
+        # parallelism.  Hardware-adaptive policy remains I6.11 scope.
+        fusion_options.use_cache = False
+        fusion_options.num_threads = -1
         fusion_options.max_image_size = max_image_size
+        result["stereo_fusion_execution_policy"] = {
+            "use_cache": False,
+            "num_threads": -1,
+            "cache_size_gib": float(config["stereo_fusion_cache_gib"]),
+            "scientific_fusion_parameters_changed": False,
+        }
         fused = pycolmap.stereo_fusion(
             output_path=fused_ply,
             workspace_path=dense,

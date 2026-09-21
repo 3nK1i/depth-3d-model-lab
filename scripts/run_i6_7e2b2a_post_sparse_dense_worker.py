@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Explicit post-sparse COLMAP-MVS worker, for later supervised Qt QProcess wiring.
+
+NOT a standalone full application workflow: production cancellation, UI process
+ownership, and full-density GPU display require separate qualification. Never
+rerun a failed run ID or treat provisional snapshots as final admission.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.reconstruction_dense_production_worker import execute_explicit_colmap_dense_after_sparse
+from core.reconstruction.mvs_provider import I43B_PROVIDER_ID
+from core.reconstruction.reconstruction_progressive_dense_transport import ProgressiveDenseTransportLineSink
+
+PROTOCOL = 'eia.reconstruction.dense.post_sparse.v1'
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--enable-explicit-colmap-mvs', action='store_true',
+                        help='Required affirmative selection: Auto is not authorized.')
+    parser.add_argument('--provider-id', required=True, help='Concrete COLMAP-MVS provider ID only.')
+    parser.add_argument('--offline-output-dir', type=Path, required=True)
+    parser.add_argument('--session-id', required=True)
+    parser.add_argument('--pycolmap-python', type=Path, required=True)
+    parser.add_argument('--dense-run-id', required=True)
+    parser.add_argument('--timeout-minutes', type=float, default=120.0)
+    parser.add_argument('--mvs-worker-script', type=Path,
+                        default=PROJECT_ROOT / 'scripts/reconstruction_pycolmap_dense_provider_mvs_worker.py')
+    args = parser.parse_args(argv)
+    if not args.enable_explicit_colmap_mvs or args.provider_id != I43B_PROVIDER_ID:
+        parser.error('This worker requires affirmative explicit COLMAP-MVS selection; Auto is not supported.')
+    if not 0.0 < args.timeout_minutes <= 720.0:
+        parser.error('timeout-minutes must be in (0, 720].')
+    return args
+
+
+def _emit(event: str, **fields: object) -> None:
+    print(json.dumps(dict(protocol=PROTOCOL, event=event, **fields),
+                     sort_keys=True, allow_nan=False, separators=(',', ':')), flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    sink = ProgressiveDenseTransportLineSink(lambda line: print(line, flush=True))
+    frame_id = 'i6_7e2b2:pycolmap_sfm:' + args.session_id
+    try:
+        _emit('dense_starting', session_id=args.session_id, dense_run_id=args.dense_run_id,
+              provider_id=I43B_PROVIDER_ID, provisional_only=True)
+        admitted = execute_explicit_colmap_dense_after_sparse(
+            sparse_output_dir=args.offline_output_dir, sparse_session_id=args.session_id,
+            pycolmap_python=args.pycolmap_python, mvs_worker_script=args.mvs_worker_script,
+            reconstruction_frame_id=frame_id, dense_run_id=args.dense_run_id,
+            snapshot_sink=sink, provider_id=args.provider_id,
+            timeout_minutes=args.timeout_minutes)
+    except Exception as exc:
+        # Worker process reports *failure* without pretending partial artifacts
+        # were admitted. A supervisor must preserve this run and its evidence.
+        _emit('dense_failed', session_id=args.session_id, dense_run_id=args.dense_run_id,
+              error_type=type(exc).__name__, detail=str(exc), final_dense_result_admitted=False)
+        return 2
+    _emit('dense_completed', session_id=args.session_id, dense_run_id=args.dense_run_id,
+          admission=admitted.as_dict(), final_dense_result_admitted=True,
+          persistent_dense_scene_created=False, full_density_gpu_viewer_enabled=False,
+          metric_scale_claimed=False, production_auto_activated=False)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

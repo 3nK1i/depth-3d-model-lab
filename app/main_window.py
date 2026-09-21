@@ -32,6 +32,9 @@ from app.application_controller import ApplicationController
 from app.auto_segment_controller import AutoSegmentController, AutoSegmentControllerState
 from app.dialogs.auto_segment_workspace_dialog import AutoSegmentWorkspaceDialog
 from app.reconstruction_controller import ReconstructionController
+from app.reconstruction_frame_view_resources import (
+    build_startup_frame_view_resource_snapshot,
+)
 from app.benchmark_controller import (
     BenchmarkController,
     BenchmarkRunConfiguration,
@@ -140,6 +143,13 @@ class MainWindow(QMainWindow):
         # compatibility alias for the already-qualified Phase 8.4 boundary.
         self._reconstruction_controller = ReconstructionController(self._controller, self)
         self._live_slam_controller = self._reconstruction_controller.live_slam_controller
+        # I6.5D keeps ReconstructionController probe-free: the application layer
+        # converts the already-detected startup hardware snapshot plus host
+        # MemAvailable into an explicit planning-resource input. This affects only
+        # passive frame/view planning state; it does not configure or start a worker.
+        self._reconstruction_controller.set_reconstruction_frame_view_resource_snapshot(
+            build_startup_frame_view_resource_snapshot(self._settings_panel.hardware_info)
+        )
         # The page remains passive on construction: navigation alone never starts
         # a backend. Runtime actions continue to flow through the hardened
         # ReconstructionController boundary.

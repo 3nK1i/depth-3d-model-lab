@@ -638,6 +638,10 @@ class MvsProductionProviderAdapter:
                 generic_stage = DenseProviderProgressStage.FUSION_FILTERING
                 detail = "stereo_fusion"
                 fraction = 0.85
+            elif stage == "complete":
+                generic_stage = DenseProviderProgressStage.FINALIZATION
+                detail = "external_worker_complete"
+                fraction = 0.95
             elif stage == "failed":
                 generic_stage = DenseProviderProgressStage.FINALIZATION
                 detail = "worker_failed"

@@ -9,6 +9,7 @@ PyQt/OpenCV/Torch. Only JSON-safe values cross the process boundary.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -16,6 +17,19 @@ import shutil
 import sys
 import time
 import traceback
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from reconstruction_progressive_sfm_emission import (
+    PROGRESSIVE_MAX_CAMERA_SAMPLES,
+    PROGRESSIVE_MAX_LANDMARK_SAMPLES,
+    ProgressiveSnapshotThrottle,
+    build_progressive_sfm_snapshot_payload,
+    mapping_snapshot_frame_interval,
+    progressive_event_line,
+)
 
 SFM_WORKER_SCHEMA_VERSION = 1
 SFM_WORKER_CHECKPOINT_SCHEMA_VERSION = 1
@@ -39,6 +53,169 @@ def emit(
         "metadata": metadata,
     }
     print(EVENT_PREFIX + json.dumps(payload, sort_keys=True, allow_nan=False), flush=True)
+
+
+def emit_progressive_sfm(payload: dict) -> None:
+    """Emit one dependency-neutral provisional snapshot on a distinct channel."""
+
+    print(progressive_event_line(payload), flush=True)
+
+
+class _ProgressiveSfmWorkerEmitter:
+    """Bounded bridge from native PyCOLMAP snapshots to I6.6A payloads.
+
+    Native reconstruction snapshots are temporary observation artifacts only.
+    They are consumed immediately, converted to bounded JSON preview data, and
+    deleted so I6.6B does not accumulate full sparse models on disk.  Any
+    progressive-preview failure is fail-soft and cannot invalidate the existing
+    final SfM result path.
+    """
+
+    def __init__(
+        self,
+        *,
+        pycolmap,
+        snapshot_root: Path,
+        session_id: str,
+        request_fingerprint: str,
+        input_views: int,
+        started_monotonic: float,
+    ) -> None:
+        self._pycolmap = pycolmap
+        self._snapshot_root = snapshot_root
+        self._session_id = session_id
+        self._request_fingerprint = request_fingerprint
+        self._input_views = int(input_views)
+        self._started_monotonic = float(started_monotonic)
+        self._revision = 0
+        self._throttle = ProgressiveSnapshotThrottle()
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    def _timestamp_utc(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _elapsed_ns(self) -> int:
+        return max(0, int((time.monotonic() - self._started_monotonic) * 1_000_000_000))
+
+    def _native_snapshot_directories(self) -> list[Path]:
+        if not self._snapshot_root.is_dir():
+            return []
+        return sorted(
+            (path for path in self._snapshot_root.iterdir() if path.is_dir()),
+            key=lambda path: path.name,
+        )
+
+    def _cleanup_native_snapshots(self) -> None:
+        for path in self._native_snapshot_directories():
+            shutil.rmtree(path, ignore_errors=True)
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self._snapshot_root, ignore_errors=True)
+
+    def _emit_reconstruction(
+        self,
+        reconstruction,
+        *,
+        token: str,
+        stage: str,
+        stage_detail: str,
+        progress_fraction: float | None,
+        candidate_model_id: str = "",
+        candidate_model_count: int | None = None,
+        warnings: tuple[str, ...] = (),
+        force: bool = False,
+        token_reserved: bool = False,
+    ) -> bool:
+        if not token_reserved:
+            now = time.monotonic()
+            if not self._throttle.should_emit(token, now_s=now, force=force):
+                return False
+        next_revision = self._revision + 1
+        payload = build_progressive_sfm_snapshot_payload(
+            reconstruction,
+            session_id=self._session_id,
+            request_fingerprint_sha256=self._request_fingerprint,
+            revision=next_revision,
+            timestamp_utc=self._timestamp_utc(),
+            elapsed_ns=self._elapsed_ns(),
+            stage=stage,
+            stage_detail=stage_detail,
+            input_views=self._input_views,
+            progress_fraction=progress_fraction,
+            candidate_model_id=candidate_model_id,
+            candidate_model_count=candidate_model_count,
+            warnings=warnings,
+            max_camera_samples=PROGRESSIVE_MAX_CAMERA_SAMPLES,
+            max_landmark_samples=PROGRESSIVE_MAX_LANDMARK_SAMPLES,
+        )
+        emit_progressive_sfm(payload)
+        self._revision = next_revision
+        return True
+
+    def maybe_emit_latest_native_snapshot(self, *, progress_fraction: float | None) -> None:
+        directories = self._native_snapshot_directories()
+        if not directories:
+            return
+        latest = directories[-1]
+        token = f"native:{latest.name}"
+        try:
+            if not self._throttle.should_emit(token, now_s=time.monotonic()):
+                return
+            reconstruction = self._pycolmap.Reconstruction(latest)
+            self._emit_reconstruction(
+                reconstruction,
+                token=token,
+                stage="mapping",
+                stage_detail="registered_image_snapshot",
+                progress_fraction=progress_fraction,
+                token_reserved=True,
+            )
+        except Exception as exc:
+            emit(
+                "warning",
+                "mapping",
+                "Progressive sparse preview snapshot skipped; final SfM continues.",
+                None,
+                progressive_snapshot_error=f"{type(exc).__name__}: {exc}",
+            )
+        finally:
+            self._cleanup_native_snapshots()
+
+    def emit_finalizing_snapshot(
+        self,
+        reconstruction,
+        *,
+        selected_model_id: int,
+        model_count: int,
+    ) -> None:
+        warnings: tuple[str, ...] = ()
+        if int(model_count) > 1:
+            warnings = (
+                "Multiple sparse candidates exist; this is the provisional selected candidate before final-result admission.",
+            )
+        try:
+            self._emit_reconstruction(
+                reconstruction,
+                token=f"finalizing:{selected_model_id}:{self._revision + 1}",
+                stage="finalizing",
+                stage_detail="selected_model_before_final_result_admission",
+                progress_fraction=0.94,
+                candidate_model_id=str(selected_model_id),
+                candidate_model_count=int(model_count),
+                warnings=warnings,
+                force=True,
+            )
+        except Exception as exc:
+            emit(
+                "warning",
+                "conversion",
+                "Finalizing progressive sparse preview skipped; final SfM continues.",
+                None,
+                progressive_snapshot_error=f"{type(exc).__name__}: {exc}",
+            )
 
 
 class _MappingProgressTracker:
@@ -391,6 +568,41 @@ def run(request: dict) -> dict:
     mapping.ba_use_gpu = bool(configuration.get("bundle_adjustment_gpu", False))
     mapping.ba_gpu_index = "0" if mapping.ba_use_gpu else "-1"
 
+    progressive_native_path = checkpoints_path / "pycolmap_progressive_native"
+    shutil.rmtree(progressive_native_path, ignore_errors=True)
+    progressive_native_path.mkdir(parents=True, exist_ok=True)
+    progressive_frame_interval = mapping_snapshot_frame_interval(len(image_names))
+    progressive_native_supported = (
+        hasattr(mapping, "snapshot_path") and hasattr(mapping, "snapshot_frames_freq")
+    )
+    if progressive_native_supported:
+        mapping.snapshot_path = progressive_native_path
+        mapping.snapshot_frames_freq = progressive_frame_interval
+        emit(
+            "status",
+            "mapping",
+            "Bounded progressive sparse preview emission enabled.",
+            None,
+            progressive_snapshot_frame_interval=progressive_frame_interval,
+            progressive_max_camera_samples=PROGRESSIVE_MAX_CAMERA_SAMPLES,
+            progressive_max_landmark_samples=PROGRESSIVE_MAX_LANDMARK_SAMPLES,
+        )
+    else:
+        emit(
+            "warning",
+            "mapping",
+            "PyCOLMAP native snapshot options unavailable; mapping will continue without intermediate previews.",
+            None,
+        )
+
+    progressive_emitter = _ProgressiveSfmWorkerEmitter(
+        pycolmap=pycolmap,
+        snapshot_root=progressive_native_path,
+        session_id=session_id,
+        request_fingerprint=request_fingerprint,
+        input_views=len(image_names),
+        started_monotonic=time.monotonic(),
+    )
     mapping_progress = _MappingProgressTracker(len(image_names))
 
     def initial_callback() -> None:
@@ -414,17 +626,29 @@ def run(request: dict) -> dict:
             registered_callbacks=mapping_progress.registered_callbacks,
             initial_pair_callbacks=mapping_progress.initial_pair_callbacks,
         )
+        if progressive_native_supported:
+            progressive_emitter.maybe_emit_latest_native_snapshot(
+                progress_fraction=fraction
+            )
 
     emit("progress", "mapping", "Starting incremental mapping and bundle adjustment.", 0.64)
-    models = pycolmap.incremental_mapping(
-        database_path=database_path,
-        image_path=image_path,
-        output_path=sparse_path,
-        options=mapping,
-        initial_image_pair_callback=initial_callback,
-        next_image_callback=next_image_callback,
-    )
-    selected_id, reconstruction, model_summaries = select_best_model(models)
+    try:
+        models = pycolmap.incremental_mapping(
+            database_path=database_path,
+            image_path=image_path,
+            output_path=sparse_path,
+            options=mapping,
+            initial_image_pair_callback=initial_callback,
+            next_image_callback=next_image_callback,
+        )
+        selected_id, reconstruction, model_summaries = select_best_model(models)
+        progressive_emitter.emit_finalizing_snapshot(
+            reconstruction,
+            selected_model_id=selected_id,
+            model_count=len(model_summaries),
+        )
+    finally:
+        progressive_emitter.cleanup()
     emit(
         "progress",
         "conversion",

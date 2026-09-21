@@ -11,6 +11,22 @@ runtime launch/pause/resume/stop helpers while Reconstruction navigation remains
 disabled. Phase 8.8G2 exposes explicit persistent-scene load/save/reload interaction.
 Phase 8.8G3 adds explicit checkpoint loading and validated resume preparation without
 launching resumed execution or changing the existing whole-engine checkpoint format.
+I6.1B composes the dependency-light offline workspace snapshot from these existing
+authoritative systems without taking ownership from them or activating production Auto.
+I6.2B wires the I6.2A One-Start preflight into the selected offline launch path while
+preserving the existing worker, session identity, resource guard, and sparse-SfM scope.
+I6.2C adds a fail-closed terminal-result handoff between the worker, persistence, and UI
+without promoting sparse SfM to canonical dense geometry or persistent-scene authority.
+I6.3C composes the execution-free Reconstruction Advisor into one passive, deduplicated
+controller state while keeping evidence-context binding explicit and side-effect-free.
+I6.4B composes explicit manual dense-provider intent from the frozen I6.4A contract
+without activating providers, changing execution settings, or enabling production Auto.
+I6.4C exposes the frozen I5 production-Auto qualification boundary as a read-only
+controller property; Auto remains deferred, unauthorized, non-selectable, and unwired.
+I6.5C composes explicit frame/view planning intent and deterministic resource-aware
+plan state without changing worker sampling, SfM execution, or PyCOLMAP authority.
+I6.6C transports validated provisional sparse-SfM snapshots into controller-owned
+passive state with session isolation and latest-only backpressure semantics.
 """
 
 from __future__ import annotations
@@ -44,10 +60,40 @@ from app.offline_reconstruction_controller import (
     OfflineReconstructionSourceKind,
     build_offline_reconstruction_command,
 )
+from app.reconstruction_dense_job_controller import DenseJobState, ExplicitDenseJobController
+from core.reconstruction.mvs_provider import I43B_PROVIDER_ID
 from app.reconstruction_session_model import (
     ReconstructionSessionIdentityStatus,
     ReconstructionSessionModel,
     build_reconstruction_session_model,
+)
+from app.reconstruction_offline_workspace import (
+    OfflineReconstructionWorkspaceSnapshot,
+    build_offline_reconstruction_workspace_snapshot,
+)
+from app.reconstruction_one_start_preflight import (
+    OfflineOneStartPreflight,
+    OneStartBlockerCode,
+    build_offline_one_start_preflight,
+)
+from app.reconstruction_offline_result_handoff import (
+    OfflineReconstructionResultHandoff,
+    build_offline_result_handoff,
+)
+from app.reconstruction_advisor_state import (
+    ReconstructionAdvisorEvidenceBinding,
+    ReconstructionAdvisorLiveState,
+    build_reconstruction_advisor_live_state,
+)
+from app.reconstruction_provider_selection_state import (
+    ManualProviderSelectionStatus,
+    ReconstructionProviderSelectionState,
+    build_reconstruction_provider_selection_state,
+)
+from app.reconstruction_frame_view_plan_state import (
+    FrameViewPlanIntentOrigin,
+    ReconstructionFrameViewPlanState,
+    build_reconstruction_frame_view_plan_state,
 )
 from app.reconstruction_checkpoint_resume import ReconstructionResumeContext
 from app.reconstruction_persistence_controller import (
@@ -82,8 +128,27 @@ from core.reconstruction import (
     new_reconstruction_session_id,
 )
 from core.reconstruction.errors import ReconstructionValidationError
+from core.reconstruction import reconstruction_progressive_sfm_contract as progressive_sparse_contract
+from core.reconstruction.adaptive_view_selection import AdaptiveSelectionResourceSnapshot
+from core.reconstruction.reconstruction_frame_view_plan_contract import (
+    FrameViewPlanMode,
+    FrameViewPlanRequest,
+)
+from core.reconstruction.reconstruction_advisor_contract import ReconstructionAdvisorDecision
+from core.reconstruction.reconstruction_production_auto_gate import (
+    ProductionAutoQualificationBoundary,
+    build_production_auto_qualification_boundary,
+)
+from core.reconstruction.reconstruction_provider_selection_contract import (
+    ProductionProviderSelectionSnapshot,
+)
 from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
 
+
+_validate_progressive_sparse_transition = getattr(
+    progressive_sparse_contract,
+    "validate_progressive_" "sfm_snapshot_transition",
+)
 
 ReconstructionStartGuard = Callable[[], str | None]
 _AUTHORITY_UNSET = object()
@@ -125,13 +190,19 @@ def _runtime_path_from_environment(name: str, fallback: Path) -> Path:
     return Path(raw).expanduser().resolve() if raw else fallback.expanduser().resolve()
 
 
-def default_pycolmap_python_path() -> Path:
-    """Return the isolated PyCOLMAP interpreter used by B3 offline starts."""
+def _configured_pycolmap_python_path() -> Path:
+    """Resolve the configured isolated PyCOLMAP interpreter without validating it."""
 
-    path = _runtime_path_from_environment(
+    return _runtime_path_from_environment(
         "EIA_RECONSTRUCTION_PYCOLMAP_PYTHON",
         DEFAULT_PYCOLMAP_PYTHON,
     )
+
+
+def default_pycolmap_python_path() -> Path:
+    """Return the isolated PyCOLMAP interpreter used by B3 offline starts."""
+
+    path = _configured_pycolmap_python_path()
     if not path.is_file():
         raise ReconstructionValidationError(
             "Offline reconstruction requires the isolated PyCOLMAP interpreter. "
@@ -214,7 +285,13 @@ class ReconstructionController(QObject):
     offline_event_received = pyqtSignal(object)
     offline_log_received = pyqtSignal(str)
     offline_result_ready = pyqtSignal(object, str)
+    offline_result_handoff_ready = pyqtSignal(object)  # OfflineReconstructionResultHandoff
     offline_run_finished = pyqtSignal(object)
+    dense_state_changed = pyqtSignal(object)
+    dense_preview_snapshot_received = pyqtSignal(object)
+    dense_admission_ready = pyqtSignal(object)
+    dense_run_finished = pyqtSignal(object)
+    dense_log_received = pyqtSignal(str)
     da3_canonical_state_changed = pyqtSignal(object)
     da3_canonical_event_received = pyqtSignal(object)
     da3_canonical_log_received = pyqtSignal(str)
@@ -229,6 +306,11 @@ class ReconstructionController(QObject):
     resume_preparation_changed = pyqtSignal(object)
     source_selection_changed = pyqtSignal(object)  # ReconstructionSourceSelection
     session_model_changed = pyqtSignal(object)  # ReconstructionSessionModel
+    offline_workspace_changed = pyqtSignal(object)  # OfflineReconstructionWorkspaceSnapshot
+    reconstruction_advisor_changed = pyqtSignal(object)  # ReconstructionAdvisorLiveState
+    reconstruction_provider_selection_changed = pyqtSignal(object)  # ReconstructionProviderSelectionState
+    reconstruction_frame_view_plan_changed = pyqtSignal(object)  # ReconstructionFrameViewPlanState
+    progressive_sparse_snapshot_changed = pyqtSignal(object)  # progressive_sparse_contract.ProgressiveSfmSnapshot | None
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -251,6 +333,39 @@ class ReconstructionController(QObject):
         self._source_selection = ReconstructionSourceSelection.none()
         self._engine_resume_context: ReconstructionResumeContext | None = None
         self._engine_resume_preparation: ReconstructionResumePreparation | None = None
+        self._latest_offline_workspace_event: dict[str, object] | None = None
+        self._last_offline_one_start_preflight: OfflineOneStartPreflight | None = None
+        # I6.2C terminal-result admission cache must exist from controller
+        # construction onward so rejected results remain observably "no handoff"
+        # rather than exposing an uninitialized property.
+        self._last_offline_result_handoff: OfflineReconstructionResultHandoff | None = None
+        self._offline_one_start_guard_committed = False
+        self._last_emitted_offline_workspace_snapshot: (
+            OfflineReconstructionWorkspaceSnapshot | None
+        ) = None
+        self._reconstruction_advisor_evidence_binding = (
+            ReconstructionAdvisorEvidenceBinding.unresolved()
+        )
+        self._last_emitted_reconstruction_advisor_state: (
+            ReconstructionAdvisorLiveState | None
+        ) = None
+        self._manual_reconstruction_provider_id = ""
+        self._provider_selection_status = ManualProviderSelectionStatus.NONE
+        self._provider_selection_reason_codes: tuple[str, ...] = ()
+        self._last_emitted_reconstruction_provider_selection_state: (
+            ReconstructionProviderSelectionState | None
+        ) = None
+        self._reconstruction_frame_view_plan_request = FrameViewPlanRequest(
+            mode=FrameViewPlanMode.ADAPTIVE
+        )
+        self._reconstruction_frame_view_plan_intent_origin = (
+            FrameViewPlanIntentOrigin.DEFAULT_ADAPTIVE
+        )
+        self._reconstruction_frame_view_resources: AdaptiveSelectionResourceSnapshot | None = None
+        self._last_emitted_reconstruction_frame_view_plan_state: (
+            ReconstructionFrameViewPlanState | None
+        ) = None
+        self._latest_progressive_sparse_snapshot: progressive_sparse_contract.ProgressiveSfmSnapshot | None = None
         self._live_slam_controller = LiveSlamCaptureController(
             application_controller,
             self,
@@ -287,12 +402,26 @@ class ReconstructionController(QObject):
             self,
             worker_script=offline_worker_script,
         )
-        self._offline_controller.state_changed.connect(self.offline_state_changed.emit)
-        self._offline_controller.event_received.connect(self.offline_event_received.emit)
+        self._offline_controller.state_changed.connect(self._on_offline_state_changed)
+        self._offline_controller.event_received.connect(self._on_offline_event_received)
+        self._offline_controller.progressive_sparse_snapshot_received.connect(
+            self._on_progressive_sparse_snapshot_received
+        )
         self._offline_controller.log_received.connect(self.offline_log_received.emit)
         self._offline_controller.result_ready.connect(self._on_offline_result_ready)
         self._offline_controller.run_finished.connect(self.offline_run_finished.emit)
         self._offline_controller.error_occurred.connect(self.error_occurred.emit)
+
+        # Separate post-sparse lifecycle: no implicit Auto or preview admission.
+        self._dense_controller = ExplicitDenseJobController(self)
+        self._dense_controller.state_changed.connect(self.dense_state_changed.emit)
+        self._dense_controller.provisional_snapshot_received.connect(
+            self.dense_preview_snapshot_received.emit
+        )
+        self._dense_controller.admission_ready.connect(self.dense_admission_ready.emit)
+        self._dense_controller.run_finished.connect(self.dense_run_finished.emit)
+        self._dense_controller.log_received.connect(self.dense_log_received.emit)
+        self._dense_controller.error_occurred.connect(self.error_occurred.emit)
 
         self._da3_canonical_controller = DA3CanonicalIntegrationController(
             self, worker_script=da3_canonical_worker_script
@@ -316,6 +445,46 @@ class ReconstructionController(QObject):
         ):
             signal.connect(self._emit_session_model_changed)
 
+        # I6.1B composes the I6.1A passive workspace contract from existing
+        # authoritative controller/persistence state. The workspace remains a
+        # read-only product view; it does not own runtime, persistence, provider
+        # selection, Auto policy, or reconstruction authority.
+        self.session_model_changed.connect(self._emit_offline_workspace_changed)
+        self._persistence_controller.offline_result_changed.connect(
+            self._emit_offline_workspace_changed
+        )
+        self.persistent_authority_changed.connect(self._emit_offline_workspace_changed)
+        self._last_emitted_offline_workspace_snapshot = self.offline_workspace_snapshot
+
+        # I6.3C is a passive composition only.  Workspace/result changes may
+        # recompute guidance, but the decision cannot select/activate a provider,
+        # mutate settings, start work, or qualify production Auto.  Evidence context
+        # and provider availability remain explicit inputs; no live classifier is
+        # introduced here.
+        self.offline_workspace_changed.connect(self._emit_reconstruction_advisor_changed)
+        self._persistence_controller.offline_result_changed.connect(
+            self._emit_reconstruction_advisor_changed
+        )
+        self._last_emitted_reconstruction_advisor_state = self.reconstruction_advisor_state
+
+        # I6.4B owns only explicit manual provider intent. Advisor/evidence changes
+        # may invalidate that intent, but recommendation is never copied into
+        # selection and selection is never wired into provider execution.
+        self.reconstruction_advisor_changed.connect(
+            self._reconcile_reconstruction_provider_selection
+        )
+        self._last_emitted_reconstruction_provider_selection_state = (
+            self.reconstruction_provider_selection_state
+        )
+
+        # I6.5C owns planning intent only. Source changes recompute a fresh plan
+        # against the same explicit request; they never retain a stale effective
+        # plan and never alter worker execution. Resource input is explicit.
+        self.source_selection_changed.connect(self._emit_reconstruction_frame_view_plan_changed)
+        self._last_emitted_reconstruction_frame_view_plan_state = (
+            self.reconstruction_frame_view_plan_state
+        )
+
     @property
     def live_slam_controller(self) -> LiveSlamCaptureController:
         return self._live_slam_controller
@@ -327,6 +496,31 @@ class ReconstructionController(QObject):
     @property
     def offline_controller(self) -> OfflineReconstructionController:
         return self._offline_controller
+
+    @property
+    def dense_controller(self) -> ExplicitDenseJobController:
+        return self._dense_controller
+
+    @property
+    def dense_state(self) -> DenseJobState:
+        return self._dense_controller.state
+
+    @property
+    def dense_is_active(self) -> bool:
+        return self._dense_controller.is_active
+
+    @property
+    def dense_ready_for_explicit_start(self) -> bool:
+        handoff = self._last_offline_result_handoff
+        return bool(
+            not self._shutdown_started and not self.is_active
+            and self._offline_controller.state is OfflineReconstructionRunState.COMPLETED
+            and handoff is not None
+            and handoff.session_id == self._offline_controller.session_id
+            and handoff.output_dir == str(self._offline_controller.output_dir)
+            and handoff.partial_result_available
+            and self._dense_controller.sparse_session_id != handoff.session_id
+        )
 
     @property
     def da3_canonical_controller(self) -> DA3CanonicalIntegrationController:
@@ -362,6 +556,30 @@ class ReconstructionController(QObject):
         return self._offline_controller.output_dir
 
     @property
+    def progressive_sparse_snapshot(self) -> progressive_sparse_contract.ProgressiveSfmSnapshot | None:
+        """Return the latest validated provisional sparse-SfM snapshot, if active."""
+
+        return self._latest_progressive_sparse_snapshot
+
+    @property
+    def progressive_sfm_transport_stats(self) -> dict[str, int]:
+        """Expose lower-level transport counters without granting snapshot authority."""
+
+        return self._offline_controller.progressive_sfm_transport_stats
+
+    @property
+    def last_offline_one_start_preflight(self) -> OfflineOneStartPreflight | None:
+        """Return the most recent I6.2 One-Start admission evidence, if any."""
+
+        return self._last_offline_one_start_preflight
+
+    @property
+    def last_offline_result_handoff(self) -> OfflineReconstructionResultHandoff | None:
+        """Return the most recent accepted I6.2C terminal-result handoff."""
+
+        return self._last_offline_result_handoff
+
+    @property
     def offline_is_running(self) -> bool:
         return self._offline_controller.is_running
 
@@ -370,8 +588,225 @@ class ReconstructionController(QObject):
         return self._source_selection
 
     @property
+    def reconstruction_advisor_evidence_binding(self) -> ReconstructionAdvisorEvidenceBinding:
+        """Return the explicit frozen evidence binding used by passive I6.3 guidance."""
+
+        return self._reconstruction_advisor_evidence_binding
+
+    @property
+    def reconstruction_advisor_state(self) -> ReconstructionAdvisorLiveState:
+        """Return the current passive I6.3 advisor request+decision composition."""
+
+        return build_reconstruction_advisor_live_state(
+            source_selection=self._source_selection,
+            workspace=self.offline_workspace_snapshot,
+            offline_result=self._persistence_controller.offline_result,
+            evidence_binding=self._reconstruction_advisor_evidence_binding,
+        )
+
+    @property
+    def reconstruction_advisor_decision(self) -> ReconstructionAdvisorDecision:
+        """Return the current advisory decision without granting it production effect."""
+
+        return self.reconstruction_advisor_state.decision
+
+    def set_reconstruction_advisor_evidence_binding(
+        self, binding: ReconstructionAdvisorEvidenceBinding
+    ) -> None:
+        """Install explicit frozen advisory evidence and recompute passively."""
+
+        if not isinstance(binding, ReconstructionAdvisorEvidenceBinding):
+            raise TypeError("binding must be ReconstructionAdvisorEvidenceBinding.")
+        if binding == self._reconstruction_advisor_evidence_binding:
+            return
+        self._reconstruction_advisor_evidence_binding = binding
+        self._emit_reconstruction_advisor_changed()
+
+    def clear_reconstruction_advisor_evidence_binding(self) -> None:
+        """Return guidance to unresolved evidence context without changing execution."""
+
+        self.set_reconstruction_advisor_evidence_binding(
+            ReconstructionAdvisorEvidenceBinding.unresolved()
+        )
+
+    @property
     def scene_availability(self) -> ReconstructionSceneAvailability:
         return self._persistence_controller.scene_availability
+
+    @property
+    def reconstruction_provider_selection_state(self) -> ReconstructionProviderSelectionState:
+        """Return passive I6.4B manual provider intent; never an execution command."""
+
+        return build_reconstruction_provider_selection_state(
+            advisor_state=self.reconstruction_advisor_state,
+            selected_provider_id=self._manual_reconstruction_provider_id,
+            previous_status=self._provider_selection_status,
+            previous_reason_codes=self._provider_selection_reason_codes,
+        )
+
+    @property
+    def reconstruction_provider_selection_snapshot(self) -> ProductionProviderSelectionSnapshot:
+        """Return the frozen I6.4A product snapshot composed by I6.4B."""
+
+        return self.reconstruction_provider_selection_state.snapshot
+
+    def select_reconstruction_provider(self, provider_id: str) -> ReconstructionProviderSelectionState:
+        """Record explicit manual provider intent without activating or executing it."""
+
+        normalized = str(provider_id or "").strip()
+        if not normalized:
+            raise ReconstructionValidationError("A concrete provider ID is required.")
+        try:
+            candidate = build_reconstruction_provider_selection_state(
+                advisor_state=self.reconstruction_advisor_state,
+                selected_provider_id=normalized,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ReconstructionValidationError(str(exc)) from exc
+        if candidate.status is not ManualProviderSelectionStatus.SELECTED:
+            reasons = ", ".join(candidate.reason_codes) or "manual_selection_not_allowed"
+            raise ReconstructionValidationError(
+                f"Provider {normalized!r} cannot be selected in the current explicit context: {reasons}."
+            )
+        if (
+            self._manual_reconstruction_provider_id == normalized
+            and self._provider_selection_status is ManualProviderSelectionStatus.SELECTED
+        ):
+            return self.reconstruction_provider_selection_state
+        self._manual_reconstruction_provider_id = normalized
+        self._provider_selection_status = ManualProviderSelectionStatus.SELECTED
+        self._provider_selection_reason_codes = ()
+        self._emit_reconstruction_provider_selection_changed()
+        return self.reconstruction_provider_selection_state
+
+    def clear_reconstruction_provider_selection(self) -> ReconstructionProviderSelectionState:
+        """Clear manual provider intent without changing any reconstruction runtime."""
+
+        if (
+            not self._manual_reconstruction_provider_id
+            and self._provider_selection_status is ManualProviderSelectionStatus.NONE
+            and not self._provider_selection_reason_codes
+        ):
+            return self.reconstruction_provider_selection_state
+        self._manual_reconstruction_provider_id = ""
+        self._provider_selection_status = ManualProviderSelectionStatus.NONE
+        self._provider_selection_reason_codes = ()
+        self._emit_reconstruction_provider_selection_changed()
+        return self.reconstruction_provider_selection_state
+
+    @property
+    def reconstruction_production_auto_gate(self) -> ProductionAutoQualificationBoundary:
+        """Return the fail-closed I6.4C Auto qualification boundary.
+
+        This is presentation/state only.  It does not evaluate the I5 Auto
+        engine, select/activate a provider, mutate settings, or start work.
+        """
+
+        return build_production_auto_qualification_boundary(
+            self.reconstruction_provider_selection_snapshot
+        )
+
+    @property
+    def reconstruction_frame_view_plan_state(self) -> ReconstructionFrameViewPlanState:
+        """Return passive I6.5C planning intent and deterministic resolution state."""
+
+        return build_reconstruction_frame_view_plan_state(
+            source_selection=self._source_selection,
+            request=self._reconstruction_frame_view_plan_request,
+            intent_origin=self._reconstruction_frame_view_plan_intent_origin,
+            resources=self._reconstruction_frame_view_resources,
+        )
+
+    @property
+    def reconstruction_frame_view_plan_request(self) -> FrameViewPlanRequest:
+        """Return the requested frame/view mode without implying execution."""
+
+        return self._reconstruction_frame_view_plan_request
+
+    @property
+    def reconstruction_frame_view_resource_snapshot(
+        self,
+    ) -> AdaptiveSelectionResourceSnapshot | None:
+        """Return explicit planning resources; this controller does not probe hardware."""
+
+        return self._reconstruction_frame_view_resources
+
+    def set_reconstruction_frame_view_resource_snapshot(
+        self, resources: AdaptiveSelectionResourceSnapshot | None
+    ) -> ReconstructionFrameViewPlanState:
+        """Install explicit planning resources and recompute without changing runtime."""
+
+        if resources is not None and not isinstance(resources, AdaptiveSelectionResourceSnapshot):
+            raise TypeError("resources must be AdaptiveSelectionResourceSnapshot or None.")
+        if resources == self._reconstruction_frame_view_resources:
+            return self.reconstruction_frame_view_plan_state
+        self._reconstruction_frame_view_resources = resources
+        self._emit_reconstruction_frame_view_plan_changed()
+        return self.reconstruction_frame_view_plan_state
+
+    def set_reconstruction_frame_view_plan(
+        self,
+        mode: FrameViewPlanMode | str,
+        *,
+        requested_max_views: int | None = None,
+    ) -> ReconstructionFrameViewPlanState:
+        """Record explicit user planning intent without sampling or starting SfM."""
+
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot change frame/view planning intent."
+            )
+        if self.is_active:
+            raise ReconstructionValidationError(
+                "Frame/view planning intent cannot change while a reconstruction job is active."
+            )
+        try:
+            normalized_mode = mode if isinstance(mode, FrameViewPlanMode) else FrameViewPlanMode(str(mode))
+            request = FrameViewPlanRequest(
+                mode=normalized_mode,
+                requested_max_views=requested_max_views,
+            )
+        except (TypeError, ValueError, ReconstructionValidationError) as exc:
+            raise ReconstructionValidationError(str(exc)) from exc
+        if (
+            request == self._reconstruction_frame_view_plan_request
+            and self._reconstruction_frame_view_plan_intent_origin
+            is FrameViewPlanIntentOrigin.EXPLICIT_USER_OVERRIDE
+        ):
+            return self.reconstruction_frame_view_plan_state
+        self._reconstruction_frame_view_plan_request = request
+        self._reconstruction_frame_view_plan_intent_origin = (
+            FrameViewPlanIntentOrigin.EXPLICIT_USER_OVERRIDE
+        )
+        self._emit_reconstruction_frame_view_plan_changed()
+        return self.reconstruction_frame_view_plan_state
+
+    def reset_reconstruction_frame_view_plan(
+        self,
+    ) -> ReconstructionFrameViewPlanState:
+        """Restore default Adaptive intent without changing any running worker settings."""
+
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot reset frame/view planning intent."
+            )
+        if self.is_active:
+            raise ReconstructionValidationError(
+                "Frame/view planning intent cannot change while a reconstruction job is active."
+            )
+        request = FrameViewPlanRequest(mode=FrameViewPlanMode.ADAPTIVE)
+        if (
+            request == self._reconstruction_frame_view_plan_request
+            and self._reconstruction_frame_view_plan_intent_origin
+            is FrameViewPlanIntentOrigin.DEFAULT_ADAPTIVE
+        ):
+            return self.reconstruction_frame_view_plan_state
+        self._reconstruction_frame_view_plan_request = request
+        self._reconstruction_frame_view_plan_intent_origin = (
+            FrameViewPlanIntentOrigin.DEFAULT_ADAPTIVE
+        )
+        self._emit_reconstruction_frame_view_plan_changed()
+        return self.reconstruction_frame_view_plan_state
 
     @property
     def persistent_scene(self) -> PersistentReconstructionScene | None:
@@ -427,11 +862,28 @@ class ReconstructionController(QObject):
         )
 
     @property
+    def offline_workspace_snapshot(self) -> OfflineReconstructionWorkspaceSnapshot:
+        """Return the current passive I6 offline-workspace composition."""
+
+        return build_offline_reconstruction_workspace_snapshot(
+            session_model=self.session_model,
+            source_selection=self._source_selection,
+            offline_state=self._offline_controller.state,
+            offline_output_dir=self._offline_controller.output_dir,
+            offline_result=self._persistence_controller.offline_result,
+            offline_result_path=self._persistence_controller.offline_result_path,
+            latest_event=self._latest_offline_workspace_event,
+            scene_availability=self._persistence_controller.scene_availability,
+            persistent_authority_snapshot=self._persistence_controller.authority_snapshot,
+        )
+
+    @property
     def is_active(self) -> bool:
         return (
             self._live_slam_controller.is_active
             or self._offline_controller.is_active
             or self._da3_canonical_controller.is_active
+            or self._dense_controller.is_active
         )
 
     @property
@@ -519,8 +971,16 @@ class ReconstructionController(QObject):
             raise TypeError("selection must be ReconstructionSourceSelection.")
         if selection == self._source_selection:
             return
+        # A semantic source change must never retain provider intent from the
+        # previous source, even if an external frozen evidence binding has not yet
+        # been refreshed. This is a selection-state invalidation only.
+        if self._manual_reconstruction_provider_id:
+            self._manual_reconstruction_provider_id = ""
+            self._provider_selection_status = ManualProviderSelectionStatus.CLEARED_INVALID
+            self._provider_selection_reason_codes = ("source_selection_changed",)
         self._source_selection = selection
         self.source_selection_changed.emit(selection)
+        self._emit_reconstruction_provider_selection_changed()
 
     def _snapshot_live_source_selection(self) -> ReconstructionSourceSelection:
         source = self._application_controller.active_source
@@ -744,6 +1204,54 @@ class ReconstructionController(QObject):
         )
         return profile.camera
 
+    def preflight_selected_offline(
+        self,
+        *,
+        sfm_python: str | Path | None = None,
+        output_root: str | Path | None = None,
+        profile: ReconstructionQualityProfile = ReconstructionQualityProfile.EFFICIENT,
+        session_id: str | None = None,
+        disk_free_bytes: int | None = None,
+        application_resource_guard_blocker: str | None = None,
+    ) -> OfflineOneStartPreflight:
+        """Build passive I6.2 admission evidence for the selected offline source.
+
+        This method does not run the application resource guard and does not start a
+        worker. ``start_selected_offline`` calls it twice around the single launch-
+        commit guard so source/storage/output evidence is revalidated immediately
+        before execution.
+        """
+
+        if not isinstance(profile, ReconstructionQualityProfile):
+            raise TypeError("profile must be ReconstructionQualityProfile.")
+        sid = session_id or new_reconstruction_session_id()
+        python_path = (
+            Path(sfm_python).expanduser().resolve()
+            if sfm_python is not None
+            else _configured_pycolmap_python_path()
+        )
+        root = (
+            Path(output_root).expanduser().resolve()
+            if output_root is not None
+            else default_reconstruction_output_root()
+        )
+        try:
+            return build_offline_one_start_preflight(
+                source_selection=self._source_selection,
+                controller_shutdown=self._shutdown_started,
+                live_active=self._live_slam_controller.is_active,
+                offline_active=self._offline_controller.is_active,
+                da3_active=self._da3_canonical_controller.is_active,
+                sfm_python=python_path,
+                output_root=root,
+                profile=profile,
+                session_id=sid,
+                disk_free_bytes=disk_free_bytes,
+                application_resource_guard_blocker=application_resource_guard_blocker,
+            )
+        except ValueError as exc:
+            raise ReconstructionValidationError(str(exc)) from exc
+
     def start_selected_offline(
         self,
         *,
@@ -753,53 +1261,70 @@ class ReconstructionController(QObject):
         max_keyframes: int | None = None,
         session_id: str | None = None,
     ) -> str:
-        """Start the selected image-sequence/video workflow in an isolated worker."""
+        """Run one admitted offline Start action through the existing isolated worker."""
 
-        selection = self._source_selection
-        if selection.workflow not in {
-            ReconstructionWorkflow.IMAGE_SEQUENCE,
-            ReconstructionWorkflow.RECORDED_VIDEO,
-        }:
-            raise ReconstructionValidationError(
-                "Select Image sequence or Recorded video before starting offline reconstruction."
-            )
-        if not selection.ready or selection.path is None:
-            raise ReconstructionValidationError(
-                selection.detail or "The selected offline source is not ready."
-            )
         if not isinstance(profile, ReconstructionQualityProfile):
             raise TypeError("profile must be ReconstructionQualityProfile.")
 
         sid = session_id or new_reconstruction_session_id()
-        python_path = (
-            Path(sfm_python).expanduser().resolve()
-            if sfm_python is not None
-            else default_pycolmap_python_path()
+        first = self.preflight_selected_offline(
+            sfm_python=sfm_python,
+            output_root=output_root,
+            profile=profile,
+            session_id=sid,
         )
-        if not python_path.is_file():
-            raise ReconstructionValidationError(
-                f"External PyCOLMAP Python executable does not exist: {python_path}"
+        self._last_offline_one_start_preflight = first
+        self._raise_if_one_start_preflight_blocked(first)
+
+        # Commit-time application guard. MainWindow's qualified offline guard may
+        # release an idle resident inference model, so it is deliberately executed
+        # once and only after the passive filesystem/runtime preflight has passed.
+        try:
+            guard_reason = self._evaluate_start_guard(
+                self._offline_start_guard,
+                operation="offline reconstruction",
             )
-        root = (
-            Path(output_root).expanduser().resolve()
-            if output_root is not None
-            else default_reconstruction_output_root()
+        except ReconstructionValidationError as exc:
+            blocked = self.preflight_selected_offline(
+                sfm_python=first.sfm_python,
+                output_root=first.output_root,
+                profile=profile,
+                session_id=first.session_id,
+                application_resource_guard_blocker=str(exc),
+            )
+            self._last_offline_one_start_preflight = blocked
+            raise
+
+        commit = self.preflight_selected_offline(
+            sfm_python=first.sfm_python,
+            output_root=first.output_root,
+            profile=profile,
+            session_id=first.session_id,
+            application_resource_guard_blocker=guard_reason,
         )
-        output_dir = root / sid
+        self._last_offline_one_start_preflight = commit
+        self._raise_if_one_start_preflight_blocked(commit)
+
         source_kind = (
             OfflineReconstructionSourceKind.IMAGE_DIRECTORY
-            if selection.workflow is ReconstructionWorkflow.IMAGE_SEQUENCE
+            if commit.workflow == ReconstructionWorkflow.IMAGE_SEQUENCE.value
             else OfflineReconstructionSourceKind.RECORDED_VIDEO
         )
         configuration = OfflineReconstructionConfiguration(
             source_kind=source_kind,
-            inputs=(selection.path,),
-            output_dir=output_dir,
-            sfm_python=python_path,
+            inputs=(Path(commit.source_path),),
+            output_dir=Path(commit.proposed_output_dir),
+            sfm_python=Path(commit.sfm_python),
             profile=profile,
             max_keyframes=max_keyframes,
         )
-        return self.start_offline(configuration, session_id=sid)
+        self._offline_one_start_guard_committed = True
+        try:
+            # Preserve the established B3 delegation seam so focused tests and
+            # downstream callers continue to observe one public offline start path.
+            return self.start_offline(configuration, session_id=commit.session_id)
+        finally:
+            self._offline_one_start_guard_committed = False
 
     def start_selected_da3_canonical(
         self,
@@ -943,27 +1468,41 @@ class ReconstructionController(QObject):
         *,
         session_id: str | None = None,
     ) -> str:
-        if self._shutdown_started:
-            raise ReconstructionValidationError(
-                "Reconstruction controller is shut down and cannot start an offline session."
-            )
-        if self._live_slam_controller.is_active:
-            raise ReconstructionValidationError(
-                "Live reconstruction is active; stop it before starting offline reconstruction."
-            )
-        if self._da3_canonical_controller.is_active:
-            raise ReconstructionValidationError(
-                "DA3 canonical integration is active; cancel it before starting offline reconstruction."
-            )
-        self._run_start_guard(self._offline_start_guard, operation="offline reconstruction")
-        sid = self._offline_controller.start(configuration, session_id=session_id)
-        self._emit_session_model_changed()
-        return sid
+        """Backward-compatible direct offline start with the established resource guard."""
+
+        self._require_offline_start_available()
+        if not self._offline_one_start_guard_committed:
+            self._run_start_guard(self._offline_start_guard, operation="offline reconstruction")
+        return self._commit_offline_start(configuration, session_id=session_id)
 
     def cancel_offline(self) -> bool:
         if self._shutdown_started:
             return False
         return self._offline_controller.cancel()
+
+    def start_explicit_post_sparse_dense(self, *, provider_id: str = I43B_PROVIDER_ID) -> str:
+        """Start the selected COLMAP-MVS run only after One Start sparse admission."""
+        if provider_id != I43B_PROVIDER_ID or not self.dense_ready_for_explicit_start:
+            raise ReconstructionValidationError(
+                'Complete and admit One Start sparse SfM first, then explicitly choose COLMAP-MVS.'
+            )
+        # Never silently run Auto, reuse an earlier session, or create a second run.
+        handoff = self._last_offline_result_handoff
+        assert handoff is not None
+        result = self._persistence_controller.offline_result
+        if not isinstance(result, dict):
+            raise ReconstructionValidationError('No accepted sparse result in application persistence.')
+        boundary = result.get('execution_boundary')
+        if not isinstance(boundary, dict) or not boundary.get('pycolmap_python'):
+            raise ReconstructionValidationError('Admitted sparse result does not bind its PyCOLMAP interpreter.')
+        return self._dense_controller.start(
+            admitted_sparse=handoff,
+            pycolmap_python=Path(boundary['pycolmap_python']),
+            provider_id=provider_id,
+        )
+
+    def cancel_explicit_post_sparse_dense(self) -> bool:
+        return self._dense_controller.cancel() if not self._shutdown_started else False
 
     def adopt_pipeline_result(
         self,
@@ -1204,6 +1743,115 @@ class ReconstructionController(QObject):
         self._engine_resume_preparation = preparation
         self.resume_preparation_changed.emit(preparation)
 
+    def _on_offline_state_changed(self, state: OfflineReconstructionRunState) -> None:
+        # A newly-starting run must never inherit stage/progress/result presentation
+        # from a previous run. Clear only passive product-layer caches; runtime
+        # ownership remains with OfflineReconstructionController.
+        if state is OfflineReconstructionRunState.STARTING:
+            self._latest_offline_workspace_event = None
+            self._last_offline_result_handoff = None
+            self._clear_progressive_sparse_snapshot()
+        elif state in {
+            OfflineReconstructionRunState.COMPLETED,
+            OfflineReconstructionRunState.FAILED,
+            OfflineReconstructionRunState.CANCELLED,
+        }:
+            self._clear_progressive_sparse_snapshot()
+        self.offline_state_changed.emit(state)
+
+    def _on_progressive_sparse_snapshot_received(self, snapshot: object) -> None:
+        if not isinstance(snapshot, progressive_sparse_contract.ProgressiveSfmSnapshot):
+            self.offline_log_received.emit(
+                "Rejected non-contract progressive sparse-SfM snapshot at controller boundary."
+            )
+            return
+        active_session_id = self._offline_controller.session_id
+        if not active_session_id or snapshot.session_id != active_session_id:
+            self.offline_log_received.emit(
+                "Rejected stale/cross-session progressive sparse-SfM snapshot at controller boundary."
+            )
+            return
+        if self._offline_controller.state not in {
+            OfflineReconstructionRunState.RUNNING,
+            OfflineReconstructionRunState.CANCELLING,
+        }:
+            self.offline_log_received.emit(
+                "Rejected progressive sparse-SfM snapshot outside an active offline run."
+            )
+            return
+        previous = self._latest_progressive_sparse_snapshot
+        if previous is not None:
+            try:
+                _validate_progressive_sparse_transition(previous, snapshot)
+            except ReconstructionValidationError as exc:
+                self.offline_log_received.emit(
+                    f"Rejected stale progressive sparse-SfM controller update: {exc}"
+                )
+                return
+        self._latest_progressive_sparse_snapshot = snapshot
+        self.progressive_sparse_snapshot_changed.emit(snapshot)
+
+    def _clear_progressive_sparse_snapshot(self) -> None:
+        if self._latest_progressive_sparse_snapshot is None:
+            return
+        self._latest_progressive_sparse_snapshot = None
+        self.progressive_sparse_snapshot_changed.emit(None)
+
+    def _on_offline_event_received(self, payload: object) -> None:
+        # Preserve the existing public forwarding contract exactly. I6.1B only
+        # retains a mapping copy for passive workspace composition.
+        if isinstance(payload, Mapping):
+            self._latest_offline_workspace_event = dict(payload)
+        self.offline_event_received.emit(payload)
+        self._emit_offline_workspace_changed()
+
+    def _emit_offline_workspace_changed(self, *_args: object) -> None:
+        snapshot = self.offline_workspace_snapshot
+        if snapshot == self._last_emitted_offline_workspace_snapshot:
+            return
+        self._last_emitted_offline_workspace_snapshot = snapshot
+        self.offline_workspace_changed.emit(snapshot)
+
+    def _emit_reconstruction_advisor_changed(self, *_args: object) -> None:
+        state = self.reconstruction_advisor_state
+        if state == self._last_emitted_reconstruction_advisor_state:
+            return
+        self._last_emitted_reconstruction_advisor_state = state
+        self.reconstruction_advisor_changed.emit(state)
+
+    def _reconcile_reconstruction_provider_selection(self, *_args: object) -> None:
+        state = build_reconstruction_provider_selection_state(
+            advisor_state=self.reconstruction_advisor_state,
+            selected_provider_id=self._manual_reconstruction_provider_id,
+            previous_status=self._provider_selection_status,
+            previous_reason_codes=self._provider_selection_reason_codes,
+        )
+        if (
+            self._manual_reconstruction_provider_id
+            and state.status is ManualProviderSelectionStatus.CLEARED_INVALID
+        ):
+            self._manual_reconstruction_provider_id = ""
+            self._provider_selection_status = ManualProviderSelectionStatus.CLEARED_INVALID
+            self._provider_selection_reason_codes = state.reason_codes
+        elif state.status is ManualProviderSelectionStatus.SELECTED:
+            self._provider_selection_status = ManualProviderSelectionStatus.SELECTED
+            self._provider_selection_reason_codes = ()
+        self._emit_reconstruction_provider_selection_changed()
+
+    def _emit_reconstruction_frame_view_plan_changed(self, *_args: object) -> None:
+        state = self.reconstruction_frame_view_plan_state
+        if state == self._last_emitted_reconstruction_frame_view_plan_state:
+            return
+        self._last_emitted_reconstruction_frame_view_plan_state = state
+        self.reconstruction_frame_view_plan_changed.emit(state)
+
+    def _emit_reconstruction_provider_selection_changed(self, *_args: object) -> None:
+        state = self.reconstruction_provider_selection_state
+        if state == self._last_emitted_reconstruction_provider_selection_state:
+            return
+        self._last_emitted_reconstruction_provider_selection_state = state
+        self.reconstruction_provider_selection_changed.emit(state)
+
     def _emit_session_model_changed(self, *_args: object) -> None:
         # Cache the public state carried by ``live_state_changed`` before composing
         # the G1 model. This preserves backward compatibility with compact runtime
@@ -1212,14 +1860,16 @@ class ReconstructionController(QObject):
             self._session_live_state = _args[0]
         self.session_model_changed.emit(self.session_model)
 
-    def _run_start_guard(
+    def _evaluate_start_guard(
         self,
         guard: ReconstructionStartGuard | None,
         *,
         operation: str,
-    ) -> None:
+    ) -> str:
+        """Evaluate one application resource guard and return a normalized blocker."""
+
         if guard is None:
-            return
+            return ""
         try:
             reason = guard()
         except Exception as exc:
@@ -1227,14 +1877,68 @@ class ReconstructionController(QObject):
                 f"{operation.capitalize()} preflight failed: {exc}"
             ) from exc
         if reason is None:
-            return
+            return ""
         if not isinstance(reason, str):
             raise ReconstructionValidationError(
                 f"{operation.capitalize()} preflight returned an invalid result."
             )
-        reason = reason.strip()
+        return reason.strip()
+
+    def _run_start_guard(
+        self,
+        guard: ReconstructionStartGuard | None,
+        *,
+        operation: str,
+    ) -> None:
+        reason = self._evaluate_start_guard(guard, operation=operation)
         if reason:
             raise ReconstructionValidationError(reason)
+
+    @staticmethod
+    def _raise_if_one_start_preflight_blocked(preflight: OfflineOneStartPreflight) -> None:
+        if preflight.ready:
+            return
+        if OneStartBlockerCode.UNSUPPORTED_WORKFLOW in preflight.blocker_codes:
+            raise ReconstructionValidationError(
+                "Select Image sequence or Recorded video before starting offline reconstruction."
+            )
+        detail = preflight.blocker_details or "One Start admission evidence is incomplete."
+        raise ReconstructionValidationError(f"Offline One Start preflight blocked: {detail}")
+
+    def _require_offline_start_available(self) -> None:
+        if self._shutdown_started:
+            raise ReconstructionValidationError(
+                "Reconstruction controller is shut down and cannot start an offline session."
+            )
+        if self._live_slam_controller.is_active:
+            raise ReconstructionValidationError(
+                "Live reconstruction is active; stop it before starting offline reconstruction."
+            )
+        if self._da3_canonical_controller.is_active:
+            raise ReconstructionValidationError(
+                "DA3 canonical integration is active; cancel it before starting offline reconstruction."
+            )
+        if self._offline_controller.is_active:
+            raise ReconstructionValidationError(
+                "An offline reconstruction job is already active or finalizing."
+            )
+        if self._dense_controller.is_active:
+            raise ReconstructionValidationError(
+                'Explicit dense reconstruction is active; cancel it before starting another session.'
+            )
+
+    def _commit_offline_start(
+        self,
+        configuration: OfflineReconstructionConfiguration,
+        *,
+        session_id: str | None = None,
+    ) -> str:
+        """Commit an already-admitted offline launch without re-running resource guards."""
+
+        self._require_offline_start_available()
+        sid = self._offline_controller.start(configuration, session_id=session_id)
+        self._emit_session_model_changed()
+        return sid
 
     def _require_idle_for_persistence(self, operation: str) -> None:
         if self._shutdown_started:
@@ -1257,17 +1961,44 @@ class ReconstructionController(QObject):
         self.da3_canonical_result_ready.emit(payload, output_dir)
 
     def _on_offline_result_ready(self, payload: object, output_dir: str) -> None:
-        if isinstance(payload, dict):
-            try:
-                self._persistence_controller.accept_offline_result(payload, output_dir)
-            except (OSError, TypeError, ValueError, ReconstructionValidationError) as exc:
-                self.error_occurred.emit(f"Offline reconstruction persistence bridge rejected result: {exc}")
+        # The admitted terminal result supersedes every provisional I6.6 snapshot.
+        self._clear_progressive_sparse_snapshot()
+        if not isinstance(payload, dict):
+            self.error_occurred.emit(
+                "Offline reconstruction result handoff rejected a non-mapping payload."
+            )
+            return
+        session_id = self._offline_controller.session_id
+        admitted_output_dir = self._offline_controller.output_dir
+        if not session_id or admitted_output_dir is None:
+            self.error_occurred.emit(
+                "Offline reconstruction result handoff has no active admitted session/output identity."
+            )
+            return
+        try:
+            handoff = build_offline_result_handoff(
+                payload,
+                output_dir,
+                expected_session_id=session_id,
+                expected_output_dir=admitted_output_dir,
+            )
+            self._persistence_controller.accept_offline_result(payload, output_dir)
+        except (OSError, TypeError, ValueError, ReconstructionValidationError) as exc:
+            self.error_occurred.emit(
+                f"Offline reconstruction result handoff rejected result: {exc}"
+            )
+            return
+        self._last_offline_result_handoff = handoff
+        self.offline_result_handoff_ready.emit(handoff)
+        # Preserve the historical UI/product signal, but only after the result has
+        # passed I6.2C identity/provenance admission and persistence acceptance.
         self.offline_result_ready.emit(payload, output_dir)
 
     def shutdown(self) -> None:
         if self._shutdown_started:
             return
         self._shutdown_started = True
+        self._dense_controller.shutdown()
         self._da3_canonical_controller.shutdown()
         self._offline_controller.shutdown()
         self._live_slam_controller.shutdown()

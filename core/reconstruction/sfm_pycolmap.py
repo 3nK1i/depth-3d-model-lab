@@ -61,6 +61,13 @@ from core.reconstruction.sfm_environment import (
     probe_pycolmap_environment,
 )
 from core.reconstruction.sfm_workspace import validate_sfm_workspace_integrity
+from core.reconstruction.reconstruction_progressive_sfm_contract import (
+    ProgressiveSfmSnapshot,
+    validate_progressive_sfm_snapshot_transition,
+)
+from core.reconstruction.reconstruction_progressive_sfm_transport import (
+    parse_progressive_sfm_worker_line,
+)
 from core.reconstruction.sfm_worker_protocol import (
     SFM_WORKER_SCHEMA_VERSION,
     SfmWorkerEvent,
@@ -404,6 +411,7 @@ class ExternalPycolmapSfmBackend:
         worker_script: str | Path | None = None,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         probe_function: Callable[[str], PycolmapEnvironmentProbe] = probe_pycolmap_environment,
+        progressive_snapshot_callback: Callable[[ProgressiveSfmSnapshot], None] | None = None,
     ) -> None:
         self._python_executable = str(python_executable).strip()
         if not self._python_executable:
@@ -414,6 +422,9 @@ class ExternalPycolmapSfmBackend:
             raise ReconstructionValidationError("timeout_s must be positive.")
         self._timeout_s = timeout
         self._probe_function = probe_function
+        if progressive_snapshot_callback is not None and not callable(progressive_snapshot_callback):
+            raise TypeError("progressive_snapshot_callback must be callable or None.")
+        self._progressive_snapshot_callback = progressive_snapshot_callback
         self._probe: PycolmapEnvironmentProbe | None = None
         self._events: ReconstructionEventRecorder | None = None
         self._started_ns = 0
@@ -563,11 +574,13 @@ class ExternalPycolmapSfmBackend:
         request_path = checkpoints_dir / "pycolmap_worker_request.json"
         result_path = checkpoints_dir / "pycolmap_worker_result.json"
         stderr_path = logs_dir / "pycolmap_worker_stderr.log"
+        worker_request_payload = _worker_request_payload(request)
         request_path.write_text(
-            json.dumps(_worker_request_payload(request), indent=2, sort_keys=True, allow_nan=False)
+            json.dumps(worker_request_payload, indent=2, sort_keys=True, allow_nan=False)
             + "\n",
             encoding="utf-8",
         )
+        expected_request_fingerprint = str(worker_request_payload["request_fingerprint"])
         result_path.unlink(missing_ok=True)
         stderr_path.unlink(missing_ok=True)
 
@@ -618,6 +631,76 @@ class ExternalPycolmapSfmBackend:
         stdout_thread.start()
         stderr_thread.start()
         started = monotonic()
+        last_progressive_snapshot: ProgressiveSfmSnapshot | None = None
+
+        def consume_stdout_line(line: str) -> None:
+            nonlocal last_progressive_snapshot
+            event = parse_worker_event_line(line)
+            if event is not None:
+                self._emit_worker_event(context, event)
+                return
+            try:
+                snapshot = parse_progressive_sfm_worker_line(line)
+            except SfmWorkerProtocolError as exc:
+                self._emit(
+                    context,
+                    event_type=ReconstructionEventType.WARNING,
+                    message="Rejected malformed progressive sparse-SfM worker snapshot; final SfM continues.",
+                    severity=EventSeverity.WARNING,
+                    metadata={"progressive_snapshot_rejection": str(exc)},
+                )
+                return
+            if snapshot is None:
+                return
+            if snapshot.session_id != request.session_id:
+                self._emit(
+                    context,
+                    event_type=ReconstructionEventType.WARNING,
+                    message="Rejected cross-session progressive sparse-SfM snapshot; final SfM continues.",
+                    severity=EventSeverity.WARNING,
+                    metadata={"progressive_snapshot_rejection": "session_id_mismatch"},
+                )
+                return
+            if snapshot.request_fingerprint_sha256 != expected_request_fingerprint:
+                self._emit(
+                    context,
+                    event_type=ReconstructionEventType.WARNING,
+                    message="Rejected mismatched-request progressive sparse-SfM snapshot; final SfM continues.",
+                    severity=EventSeverity.WARNING,
+                    metadata={"progressive_snapshot_rejection": "request_fingerprint_mismatch"},
+                )
+                return
+            if last_progressive_snapshot is not None:
+                try:
+                    validate_progressive_sfm_snapshot_transition(
+                        last_progressive_snapshot, snapshot
+                    )
+                except ReconstructionValidationError as exc:
+                    self._emit(
+                        context,
+                        event_type=ReconstructionEventType.WARNING,
+                        message="Rejected stale progressive sparse-SfM snapshot; final SfM continues.",
+                        severity=EventSeverity.WARNING,
+                        metadata={"progressive_snapshot_rejection": str(exc)},
+                    )
+                    return
+            callback = self._progressive_snapshot_callback
+            if callback is not None:
+                try:
+                    callback(snapshot)
+                except Exception as exc:
+                    self._emit(
+                        context,
+                        event_type=ReconstructionEventType.WARNING,
+                        message="Progressive sparse-SfM transport callback failed; final SfM continues.",
+                        severity=EventSeverity.WARNING,
+                        metadata={
+                            "progressive_snapshot_transport_error": f"{type(exc).__name__}: {exc}"
+                        },
+                    )
+                    return
+            last_progressive_snapshot = snapshot
+
         try:
             while process.poll() is None:
                 if context.control.cancellation_requested:
@@ -635,9 +718,7 @@ class ExternalPycolmapSfmBackend:
                         line = stdout_queue.get_nowait()
                     except queue.Empty:
                         break
-                    event = parse_worker_event_line(line)
-                    if event is not None:
-                        self._emit_worker_event(context, event)
+                    consume_stdout_line(line)
                 if monotonic() - started > self._timeout_s:
                     self._terminate_process(process)
                     raise SfmWorkerExecutionError(
@@ -652,9 +733,7 @@ class ExternalPycolmapSfmBackend:
                     line = stdout_queue.get_nowait()
                 except queue.Empty:
                     break
-                event = parse_worker_event_line(line)
-                if event is not None:
-                    self._emit_worker_event(context, event)
+                consume_stdout_line(line)
 
             if process.returncode != 0:
                 detail = "\n".join(stderr_tail).strip()

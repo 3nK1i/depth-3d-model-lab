@@ -19,11 +19,23 @@ from core.reconstruction import (
     SfmMatchingStrategy,
     new_reconstruction_session_id,
 )
-from core.reconstruction.errors import ReconstructionValidationError
+from core.reconstruction.errors import ReconstructionValidationError, SfmWorkerProtocolError
+from core.reconstruction.reconstruction_progressive_sfm_contract import (
+    ProgressiveSfmSnapshot,
+    ProgressiveSfmStage,
+)
+from core.reconstruction.reconstruction_progressive_sfm_transport import (
+    parse_progressive_sfm_worker_line,
+)
+from app.reconstruction_progressive_sfm_state import (
+    ProgressiveSfmOfferDisposition,
+    ProgressiveSfmSnapshotBuffer,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OFFLINE_RECONSTRUCTION_WORKER = PROJECT_ROOT / "scripts" / "run_reconstruction_offline_job.py"
 OFFLINE_EVENT_PROTOCOL = "eia.reconstruction.offline.v1"
+PROGRESSIVE_SFM_COALESCE_INTERVAL_MS = 50
 
 
 class OfflineReconstructionSourceKind(str, Enum):
@@ -205,6 +217,7 @@ class OfflineReconstructionController(QObject):
 
     state_changed = pyqtSignal(object)  # OfflineReconstructionRunState
     event_received = pyqtSignal(object)  # worker protocol mapping
+    progressive_sparse_snapshot_received = pyqtSignal(object)  # ProgressiveSfmSnapshot
     log_received = pyqtSignal(str)
     result_ready = pyqtSignal(object, str)  # result payload, output dir
     run_finished = pyqtSignal(object)
@@ -227,6 +240,12 @@ class OfflineReconstructionController(QObject):
         self._kill_timer.setSingleShot(True)
         self._kill_timer.setInterval(8000)
         self._kill_timer.timeout.connect(self._kill_if_running)
+        self._progressive_sfm_timer = QTimer(self)
+        self._progressive_sfm_timer.setSingleShot(True)
+        self._progressive_sfm_timer.setInterval(PROGRESSIVE_SFM_COALESCE_INTERVAL_MS)
+        self._progressive_sfm_timer.timeout.connect(self._flush_progressive_sparse_snapshot)
+        self._progressive_sfm_buffer = ProgressiveSfmSnapshotBuffer()
+        self._progressive_sfm_parse_rejections = 0
         self._state = OfflineReconstructionRunState.IDLE
         self._buffer = ""
         self._output_dir: Path | None = None
@@ -261,6 +280,20 @@ class OfflineReconstructionController(QObject):
     def is_shutdown(self) -> bool:
         return self._shutdown_started
 
+    @property
+    def progressive_sfm_transport_stats(self) -> dict[str, int]:
+        stats = self._progressive_sfm_buffer.stats
+        return {
+            "accepted": stats.accepted,
+            "coalesced": stats.coalesced,
+            "rejected": stats.rejected + self._progressive_sfm_parse_rejections,
+            "delivered": stats.delivered,
+        }
+
+    @property
+    def latest_progressive_sparse_snapshot(self) -> ProgressiveSfmSnapshot | None:
+        return self._progressive_sfm_buffer.last_delivered
+
     def start(
         self,
         configuration: OfflineReconstructionConfiguration,
@@ -278,6 +311,9 @@ class OfflineReconstructionController(QObject):
                 "The previous offline reconstruction completion is still being finalized."
             )
         sid = self._canonical_session_id(session_id or new_reconstruction_session_id())
+        self._progressive_sfm_timer.stop()
+        self._progressive_sfm_buffer.reset(sid)
+        self._progressive_sfm_parse_rejections = 0
         program, arguments, output_dir = build_offline_reconstruction_command(
             configuration,
             session_id=sid,
@@ -301,6 +337,8 @@ class OfflineReconstructionController(QObject):
         self._process.start()
         if not self._process.waitForStarted(3000):
             self._run_finalized = True
+            self._progressive_sfm_timer.stop()
+            self._progressive_sfm_buffer.clear()
             self._set_state(OfflineReconstructionRunState.FAILED)
             raise ReconstructionValidationError(
                 f"Failed to start offline reconstruction worker: {self._process.errorString()}"
@@ -329,6 +367,8 @@ class OfflineReconstructionController(QObject):
                 self._kill_if_running()
                 self._process.waitForFinished(3000)
         self._kill_timer.stop()
+        self._progressive_sfm_timer.stop()
+        self._progressive_sfm_buffer.clear()
 
     def _set_state(self, state: OfflineReconstructionRunState) -> None:
         if state is self._state:
@@ -349,6 +389,17 @@ class OfflineReconstructionController(QObject):
         if not line:
             return
         try:
+            snapshot = parse_progressive_sfm_worker_line(line)
+        except SfmWorkerProtocolError as exc:
+            self._progressive_sfm_parse_rejections += 1
+            self.log_received.emit(
+                f"Rejected malformed progressive sparse-SfM transport line: {exc}"
+            )
+            return
+        if snapshot is not None:
+            self._offer_progressive_sparse_snapshot(snapshot)
+            return
+        try:
             payload = json.loads(line)
         except json.JSONDecodeError:
             self.log_received.emit(line)
@@ -357,6 +408,26 @@ class OfflineReconstructionController(QObject):
             self.event_received.emit(payload)
             return
         self.log_received.emit(line)
+
+    def _offer_progressive_sparse_snapshot(self, snapshot: ProgressiveSfmSnapshot) -> None:
+        disposition = self._progressive_sfm_buffer.offer(snapshot)
+        if disposition is ProgressiveSfmOfferDisposition.REJECTED:
+            self.log_received.emit(
+                "Rejected progressive sparse-SfM snapshot: "
+                + self._progressive_sfm_buffer.last_rejection_reason
+            )
+            return
+        if snapshot.stage is ProgressiveSfmStage.FINALIZING:
+            self._progressive_sfm_timer.stop()
+            self._flush_progressive_sparse_snapshot()
+            return
+        if not self._progressive_sfm_timer.isActive():
+            self._progressive_sfm_timer.start()
+
+    def _flush_progressive_sparse_snapshot(self) -> None:
+        snapshot = self._progressive_sfm_buffer.take_pending()
+        if snapshot is not None:
+            self.progressive_sparse_snapshot_received.emit(snapshot)
 
     def _load_result(self) -> dict[str, object] | None:
         if self._output_dir is None:
@@ -373,9 +444,11 @@ class OfflineReconstructionController(QObject):
 
     def _finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
         self._kill_timer.stop()
+        self._progressive_sfm_timer.stop()
         if self._buffer.strip():
             self._consume_line(self._buffer.strip())
         self._buffer = ""
+        self._flush_progressive_sparse_snapshot()
         result = self._load_result()
         result_rejection_reason = self._result_rejection_reason(result)
 

@@ -53,6 +53,9 @@ from core.reconstruction.adaptive_view_selection import (
 )
 from core.reconstruction.dense_provider_architecture import dense_provider_implementation_contracts
 from core.reconstruction.errors import ReconstructionValidationError
+from core.reconstruction.reconstruction_progressive_sfm_transport import (
+    progressive_sfm_transport_line,
+)
 
 PROTOCOL = "eia.reconstruction.offline.v1"
 OFFLINE_VISUALIZATION_SCHEMA = "eia.reconstruction.offline.visualization.v1"
@@ -391,9 +394,15 @@ def main() -> int:
                 resume_policy=SfmResumePolicy.REUSE_COMPLETED_STAGES,
             ),
         )
+        def on_progressive_sfm_snapshot(snapshot) -> None:
+            # Dedicated provisional transport channel.  It bypasses the ordinary
+            # offline progress/status stream so pre-I6.6 UI behavior remains unchanged.
+            print(progressive_sfm_transport_line(snapshot), flush=True)
+
         backend = ExternalPycolmapSfmBackend(
             str(args.sfm_python.expanduser().resolve()),
             timeout_s=float(args.timeout_minutes) * 60.0,
+            progressive_snapshot_callback=on_progressive_sfm_snapshot,
         )
 
         def on_sfm_event(event) -> None:
