@@ -4,11 +4,14 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 python -m py_compile \
   scripts/run_i6_8f_telemetry_qualification.py \
-  tests/unit/test_i6_8f_telemetry_qualification.py
+  scripts/run_i6_8f_real_worker_qualification.py \
+  tests/unit/test_i6_8f_telemetry_qualification.py \
+  tests/unit/test_i6_8f_real_worker_qualification.py
 compile_rc=$?
 echo "I6_8F_COMPILE_RC=$compile_rc"
 python -m pytest -q \
   tests/unit/test_i6_8f_telemetry_qualification.py \
+  tests/unit/test_i6_8f_real_worker_qualification.py \
   tests/unit/test_i6_8e_job_telemetry_presentation.py \
   tests/unit/test_i6_8e_page_binding_static.py \
   tests/ui/test_i6_8e_job_telemetry_ui.py \
