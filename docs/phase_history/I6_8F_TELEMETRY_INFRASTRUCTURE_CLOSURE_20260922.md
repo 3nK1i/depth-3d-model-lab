@@ -1,9 +1,9 @@
 # I6.8F — Job telemetry: consolidated qualification and scoped closure
 
-Date: 2026-09-22  
-Repository: `depth_3d_model_lab`  
-Branch: `hotfix/v0.9.0-video-calibration-context` (Gitea)  
-Evidence baseline: committed and pushed `6576a2f` (`test(reconstruction): qualify I6.8F dense telemetry integration`)  
+Date: 2026-09-22
+Repository: `depth_3d_model_lab`
+Branch: `hotfix/v0.9.0-video-calibration-context` (Gitea)
+Evidence baseline: committed and pushed `6576a2f` (`test(reconstruction): qualify I6.8F dense telemetry integration`)
 Change type: documentation-only consolidation; no worker, telemetry, controller, UI, scene, or admission change.
 
 ## Decision: infrastructure closed; actual MVS-runtime acceptance deferred
