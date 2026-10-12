@@ -235,6 +235,12 @@ from app.reconstruction_processing_jobs import (
 )
 from app.reconstruction_processing_job_controller import DigitalTwinProcessingJobController
 from app.reconstruction_da3_full_scene import DA3_FULL_SCENE_PROTOCOL, build_full_scene_da3_job
+from app.reconstruction_method_execution import start_eligible_reconstruction_method
+from core.reconstruction.reconstruction_method_selection_contract import (
+    MethodEligibilityContext,
+    MethodSource,
+    ReconstructionMethod,
+)
 from app.reconstruction_nerf_build import (
     NERF_BUILD_PROTOCOL,
     NERF_BUILD_PRESETS,
@@ -3108,6 +3114,83 @@ class ReconstructionPage(QWidget):
         self._refresh_da3_canonical_controls()
         self._refresh_source_controls()
         self._refresh_runtime_controls()
+
+    def start_selected_reconstruction_method(
+        self,
+        method: ReconstructionMethod,
+        *,
+        runtime_verified_methods: tuple[ReconstructionMethod, ...] = (),
+    ) -> str:
+        """I6.8.5C integration seam; I6.8.5D will own its selection UI.
+
+        The argument is independent, method-specific *runtime qualification
+        evidence* supplied by the invoking workflow, not inferred here from
+        GPU identity or the mere presence of executables. Without evidence the
+        new selector route fails closed; established explicit buttons are
+        intentionally unchanged until the I6.8.5D UI integration.
+        """
+        controller = self._controller
+        if controller is None:
+            raise RuntimeError("Reconstruction controller is unavailable.")
+        selection = controller.source_selection
+        source = MethodSource(selection.workflow.value)
+        path = selection.path
+        source_ready = bool(
+            selection.ready and path is not None and (
+                (source is MethodSource.IMAGE_SEQUENCE and path.is_dir())
+                or (source is MethodSource.RECORDED_VIDEO and path.is_file())
+            )
+        )
+        # Source selection can change after sparse completion. Do not let a
+        # newly selected source inherit a previous source's admitted cameras.
+        preflight = controller.last_offline_one_start_preflight
+        handoff = controller.last_offline_result_handoff
+        sparse_for_selected_source = bool(
+            source_ready
+            and preflight is not None and handoff is not None
+            and preflight.session_id == handoff.session_id
+            and preflight.workflow == source.value
+            and Path(preflight.source_path).resolve() == path.resolve()
+        )
+        # Snapshot real controller/page state at launch, never at selection time.
+        # Backends still perform their own final validation before starting.
+        context = MethodEligibilityContext(
+            source=source,
+            source_ready=source_ready,
+            sparse_admitted=bool(
+                controller.dense_ready_for_explicit_start and sparse_for_selected_source
+            ),
+            canonical_scene_available=controller.persistent_scene is not None,
+            surface_seed_verified=False,  # Gaussian training is not wired in C.
+            active_job=bool(
+                controller.is_shutdown
+                or controller.is_active
+                or self._digital_twin_processing_snapshot.is_active
+                or self._digital_twin_processing_controller.is_running
+            ),
+            runtime_verified_methods=runtime_verified_methods,
+        )
+
+        def start_colmap_mvs() -> str:
+            self._release_appearance_resources_for_heavy_handoff('Dense reconstruction')
+            return controller.start_explicit_post_sparse_dense()
+
+        def start_da3_full_scene() -> str:
+            # Existing Page-owned supervisor retains the source, worker,
+            # coordination, progress, cancellation and admission contracts.
+            spec, command = build_full_scene_da3_job(
+                video_path=selection.path,
+                output_root=default_reconstruction_output_root(),
+            )
+            return self.start_digital_twin_processing_job(spec, command)
+
+        return start_eligible_reconstruction_method(
+            method,
+            context=context,
+            start_colmap_mvs=start_colmap_mvs,
+            start_da3_quick=controller.start_selected_da3_canonical,
+            start_da3_full_scene=start_da3_full_scene,
+        )
 
     def _start_nerf_build(self) -> None:
         controller = self._controller
