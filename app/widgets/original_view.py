@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from app.theme import PALETTE
 from app.widgets.icon_button import IconButton
 from app.widgets.media_canvas import ScalablePixmapLabel
 
@@ -45,7 +46,7 @@ class OriginalSourceView(QFrame):
     def _build_title_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         dot = QLabel("●")
-        dot.setStyleSheet("color: #e0293e; font-size: 9px;")
+        dot.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px;")
         title = QLabel("ORIGINAL SOURCE")
         title.setObjectName("panelTitle")
         row.addWidget(dot)

@@ -11,6 +11,8 @@ from enum import Enum
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QWidget
 
+from app.theme import PALETTE
+
 
 class AppMode(Enum):
     LIVE_3D = "live_3d"
@@ -80,27 +82,27 @@ class ModeTabs(QFrame):
 
     @staticmethod
     def _tab_button_qss() -> str:
-        return """
-            QPushButton {
+        return f"""
+            QPushButton {{
                 background: transparent;
                 border: none;
                 border-bottom: 2px solid transparent;
                 padding: 10px 16px;
-                color: #9a9ba3;
+                color: {PALETTE.text_secondary};
                 font-weight: 700;
                 font-size: 12px;
                 letter-spacing: 0.3px;
-            }
-            QPushButton:checked {
-                color: #e0293e;
-                border-bottom: 2px solid #e0293e;
-            }
-            QPushButton:disabled {
-                color: #5f6169;
-            }
-            QPushButton:hover:!disabled:!checked {
-                color: #e8e8ea;
-            }
+            }}
+            QPushButton:checked {{
+                color: {PALETTE.accent};
+                border-bottom: 2px solid {PALETTE.accent};
+            }}
+            QPushButton:disabled {{
+                color: {PALETTE.text_muted};
+            }}
+            QPushButton:hover:!disabled:!checked {{
+                color: {PALETTE.text_primary};
+            }}
         """
 
     def _on_clicked(self, mode: AppMode) -> None:

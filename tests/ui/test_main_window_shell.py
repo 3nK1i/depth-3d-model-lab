@@ -83,7 +83,7 @@ def _moge_ack() -> Ack:
 
 
 def test_window_launches(window):
-    assert window.windowTitle() == "EIA TECH — Depth & 3D Model Lab"
+    assert window.windowTitle() == "Depth & 3D Model Lab"
 
 
 def test_minimum_resolution_supported(window):

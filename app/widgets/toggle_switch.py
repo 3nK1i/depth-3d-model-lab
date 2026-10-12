@@ -75,7 +75,7 @@ class ToggleSwitch(QAbstractButton):
 
         enabled = self.isEnabled()
         if self.isChecked():
-            track = QColor(PALETTE.accent if enabled else "#5a2027")
+            track = QColor(PALETTE.accent if enabled else PALETTE.accent_disabled)
         else:
             track = QColor(PALETTE.border_light if enabled else PALETTE.border)
 

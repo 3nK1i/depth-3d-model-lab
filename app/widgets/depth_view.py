@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from app.widgets.icon_button import IconButton
 from app.widgets.media_canvas import ScalablePixmapLabel
+from app.theme import PALETTE
 
 _COLORMAPS = ("Turbo", "Inferno", "Magma", "Viridis", "Greyscale")
 _MIN_DEPTH_PRESETS = (0.1, 0.3, 0.5, 1.0, 2.0)
@@ -106,7 +107,7 @@ class _ColorBarColumn(QWidget):
 
         far = QLabel("FAR")
         far.setObjectName("metricLabel")
-        far.setStyleSheet("color: #e0293e; font-size: 9px; font-weight: 700;")
+        far.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px; font-weight: 700;")
         far.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._far_value = QLabel("8.0 m")
@@ -168,7 +169,7 @@ class DepthMapView(QFrame):
     def _build_title_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         dot = QLabel("●")
-        dot.setStyleSheet("color: #e0293e; font-size: 9px;")
+        dot.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px;")
         title = QLabel("DEPTH MAP")
         title.setObjectName("panelTitle")
         row.addWidget(dot)

@@ -1,4 +1,4 @@
-"""Main application window for EIA TECH — Depth & 3D Model Lab.
+"""Main application window for Depth & 3D Model Lab.
 
 Assembles the full visual shell (spec §4). Runtime button enable/disable
 is driven by the real application state machine via
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("EIA TECH — Depth & 3D Model Lab")
+        self.setWindowTitle("Depth & 3D Model Lab")
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
 
         self._settings = AppSettings()

@@ -1,4 +1,4 @@
-"""Dark industrial theme for EIA TECH — Depth & 3D Model Lab.
+"""Dark spatial-computing theme for Depth & 3D Model Lab.
 
 Centralizes color constants and the global stylesheet (QSS) so no widget
 hardcodes a color value. Widgets reference :data:`PALETTE` directly when
@@ -14,27 +14,32 @@ from PyQt6.QtWidgets import QApplication
 
 @dataclass(frozen=True)
 class Palette:
-    """Color constants for the dark industrial theme."""
+    """Color constants for the dark spatial-computing theme."""
 
-    bg_root: str = "#0a0a0c"
-    bg_panel: str = "#131316"
-    bg_panel_alt: str = "#17181b"
-    bg_input: str = "#1c1d21"
-    border: str = "#2a2b30"
-    border_light: str = "#38393f"
+    bg_root: str = "#070b12"
+    bg_panel: str = "#0c1420"
+    bg_panel_alt: str = "#101a28"
+    bg_input: str = "#142131"
+    border: str = "#1b2a3a"
+    border_light: str = "#2a4055"
 
-    text_primary: str = "#e8e8ea"
-    text_secondary: str = "#9a9ba3"
-    text_muted: str = "#5f6169"
+    text_primary: str = "#eaf3fa"
+    text_secondary: str = "#a7b7c7"
+    text_muted: str = "#6f8497"
 
-    accent: str = "#e0293e"
-    accent_hover: str = "#f0384d"
-    accent_pressed: str = "#c11f32"
+    # Product identity: depth / spatial-computing cyan-blue. Keep semantic
+    # danger/error red separate from the brand accent.
+    accent: str = "#22d3ee"
+    accent_hover: str = "#67e8f9"
+    accent_pressed: str = "#0891b2"
+    accent_surface: str = "#0d2a3d"
+    accent_disabled: str = "#17485b"
+    accent_foreground: str = "#041018"
 
-    success: str = "#2ecc71"
-    warning: str = "#e8a83c"
-    error: str = "#e0293e"
-    info_cyan: str = "#3ac6d8"
+    success: str = "#36d981"
+    warning: str = "#f0b44a"
+    error: str = "#e05263"
+    info_cyan: str = "#38d9f0"
 
     badge_recommended_bg: str = "#173a25"
     badge_recommended_fg: str = "#3ecf74"
@@ -43,7 +48,7 @@ class Palette:
     badge_experimental_bg: str = "#3a2f14"
     badge_experimental_fg: str = "#e8a83c"
     badge_not_recommended_bg: str = "#3a1418"
-    badge_not_recommended_fg: str = "#e0293e"
+    badge_not_recommended_fg: str = "#e05263"
     badge_not_installed_bg: str = "transparent"
     badge_not_installed_fg: str = "#8a8b92"
     badge_snapshot_only_bg: str = "#231a3a"
@@ -52,38 +57,38 @@ class Palette:
     badge_reconstruction_only_fg: str = "#3ac6d8"
 
     # 3D viewport surfaces (spec: one continuous dark visual surface).
-    viewport_card_bg: str = "#0d0f12"
-    viewport_canvas_bg: str = "#090b0e"
-    viewport_border: str = "#292d33"
-    viewport_floating_bg: str = "rgba(22, 25, 29, 235)"
-    viewport_text: str = "#e7e9ed"
-    viewport_text_dim: str = "#9298a3"
-    viewport_grid_line: str = "#1b1f25"
+    viewport_card_bg: str = "#09111b"
+    viewport_canvas_bg: str = "#060b12"
+    viewport_border: str = "#1c3042"
+    viewport_floating_bg: str = "rgba(10, 19, 29, 235)"
+    viewport_text: str = "#e8f2fa"
+    viewport_text_dim: str = "#8da3b7"
+    viewport_grid_line: str = "#142131"
 
     # Right settings sidebar
-    settings_sidebar_bg: str = "#090c0f"
-    settings_card_bg: str = "#111519"
-    settings_card_border: str = "#293039"
-    settings_input_bg: str = "#1b1f24"
-    settings_input_border: str = "#343a42"
-    settings_text: str = "#e4e7eb"
-    settings_text_secondary: str = "#aeb4bd"
-    settings_slider_track: str = "#2a2f36"
-    settings_slider_knob: str = "#9aa1ab"
-    settings_slider_knob_border: str = "#454c56"
+    settings_sidebar_bg: str = "#070d15"
+    settings_card_bg: str = "#0c1520"
+    settings_card_border: str = "#1b3043"
+    settings_input_bg: str = "#111e2b"
+    settings_input_border: str = "#294156"
+    settings_text: str = "#e5eef7"
+    settings_text_secondary: str = "#a7b8c8"
+    settings_slider_track: str = "#213143"
+    settings_slider_knob: str = "#9fb3c5"
+    settings_slider_knob_border: str = "#3b5368"
     settings_badge_bg: str = "#14301f"
     settings_badge_fg: str = "#4ad07d"
     settings_badge_border: str = "#245c3a"
 
     # Performance footer
-    footer_bg: str = "#111519"
-    footer_border: str = "#272d34"
-    footer_separator: str = "#252b31"
-    footer_label: str = "#a6abb3"
-    footer_value: str = "#e4e7eb"
+    footer_bg: str = "#0c1520"
+    footer_border: str = "#1b2d3e"
+    footer_separator: str = "#182838"
+    footer_label: str = "#9fb0c0"
+    footer_value: str = "#e5eef7"
     footer_value_positive: str = "#52d66b"
-    footer_value_muted: str = "#c5c9cf"
-    footer_track_bg: str = "#2a2f36"
+    footer_value_muted: str = "#bac8d4"
+    footer_track_bg: str = "#213143"
     footer_status_green_bg: str = "#173a25"
     footer_status_green_fg: str = "#4ad07d"
     footer_status_green_border: str = "#245c3a"
@@ -91,19 +96,19 @@ class Palette:
     footer_status_amber_fg: str = "#e0a83c"
     footer_status_amber_border: str = "#5c4a24"
     footer_status_red_bg: str = "#3a1418"
-    footer_status_red_fg: str = "#e0293e"
+    footer_status_red_fg: str = "#e05263"
     footer_status_red_border: str = "#5c2027"
     footer_status_neutral_bg: str = "#1c1f24"
     footer_status_neutral_fg: str = "#9298a3"
     footer_status_neutral_border: str = "#343a42"
 
     # Source/runtime toolbar group cards
-    toolbar_card_bg: str = "#14181c"
-    toolbar_card_border: str = "#20262d"
-    toolbar_hover_bg: str = "#1c2126"
-    toolbar_active_bg: str = "#2a1417"
-    toolbar_text: str = "#c5c9cf"
-    toolbar_text_muted: str = "#979da6"
+    toolbar_card_bg: str = "#0d1722"
+    toolbar_card_border: str = "#1a2b3c"
+    toolbar_hover_bg: str = "#132233"
+    toolbar_active_bg: str = "#0d2a3d"
+    toolbar_text: str = "#c4d2de"
+    toolbar_text_muted: str = "#8296a8"
     toolbar_green_bg: str = "#153323"
     toolbar_green_border: str = "#2c5c3f"
     toolbar_green_fg: str = "#6fdb92"
@@ -188,7 +193,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
     /* Segmented source-type buttons: near-invisible when inactive, a
-       translucent red fill + bottom accent line when active — not a
+       translucent cyan-blue fill + bottom accent line when active — not a
        full bright rectangular outline. */
     QPushButton#sourceTypeButton {{
         background-color: transparent;
@@ -322,7 +327,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     QLabel#proBadge {{
         background-color: {p.accent};
         border: 1px solid {p.accent_hover};
-        color: white;
+        color: {p.accent_foreground};
         font-size: 11px;
         font-weight: 800;
         letter-spacing: 0.5px;
@@ -382,11 +387,11 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
     QPushButton:hover {{
-        background-color: #232428;
+        background-color: #172434;
     }}
 
     QPushButton:pressed {{
-        background-color: #0f1012;
+        background-color: #0a111a;
     }}
 
     QPushButton:disabled {{
@@ -398,15 +403,15 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     QPushButton#accentButton {{
         background-color: {p.accent};
         border: 1px solid {p.accent};
-        color: white;
-        font-weight: 600;
+        color: {p.accent_foreground};
+        font-weight: 700;
     }}
     QPushButton#accentButton:hover {{ background-color: {p.accent_hover}; }}
     QPushButton#accentButton:pressed {{ background-color: {p.accent_pressed}; }}
     QPushButton#accentButton:disabled {{
-        background-color: #3a1418;
-        border-color: #3a1418;
-        color: #7a5458;
+        background-color: {p.accent_surface};
+        border-color: {p.accent_surface};
+        color: {p.text_muted};
     }}
 
     QPushButton#successButton {{
@@ -434,18 +439,18 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
     QPushButton#stopButton {{
-        background-color: {p.accent};
-        border: 1px solid {p.accent};
+        background-color: {p.error};
+        border: 1px solid {p.error};
         color: white;
         font-weight: 700;
         font-size: 13px;
         padding: 8px 22px;
     }}
-    QPushButton#stopButton:hover {{ background-color: {p.accent_hover}; }}
+    QPushButton#stopButton:hover {{ background-color: #ef6575; }}
     QPushButton#stopButton:disabled {{
-        background-color: #2a1417;
-        border-color: #2a1417;
-        color: #6b4548;
+        background-color: #2b171c;
+        border-color: #2b171c;
+        color: #8a5960;
     }}
 
     QPushButton#sourceTypeButton {{
@@ -458,7 +463,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         background-color: {p.bg_input};
     }}
     QPushButton#sourceTypeButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border: 1px solid {p.accent};
         color: {p.accent};
         font-weight: 600;
@@ -512,7 +517,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     QComboBox QAbstractItemView {{
         background-color: {p.bg_panel_alt};
         border: 1px solid {p.border_light};
-        selection-background-color: #2a1417;
+        selection-background-color: {p.accent_surface};
         selection-color: {p.accent};
         outline: none;
     }}
@@ -635,7 +640,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         border-color: {p.border_light};
     }}
     QToolButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
         color: {p.accent};
     }}
@@ -693,7 +698,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         border-color: rgba(255, 255, 255, 18);
     }}
     QFrame#mediaToolbarCard QPushButton#iconButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
     }}
     QFrame#mediaToolbarCard QPushButton#iconButton:disabled {{
@@ -718,8 +723,8 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         font-size: 11px;
     }}
     QComboBox#depthControlCombo:hover {{
-        border-color: #4a4c53;
-        background-color: #22242a;
+        border-color: #3a566d;
+        background-color: #182737;
     }}
     QComboBox#depthControlCombo::drop-down {{
         border: none;
@@ -748,7 +753,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
 
     QFrame#toolOverlay QPushButton#iconButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border: 1px solid {p.accent};
     }}
 
@@ -845,7 +850,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     QComboBox#settingsCombo QAbstractItemView {{
         background-color: {p.settings_card_bg};
         border: 1px solid {p.settings_input_border};
-        selection-background-color: #2a1417;
+        selection-background-color: {p.accent_surface};
         selection-color: {p.accent};
         outline: none;
     }}
@@ -1127,7 +1132,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
     QListWidget#inspectionObjectList, QTableWidget#inspectionMeasurementTable, QTextEdit#inspectionDetails {{
         background-color: {p.bg_input}; border: 1px solid {p.settings_input_border};
-        border-radius: 5px; color: {p.settings_text}; selection-background-color: #2a1417;
+        border-radius: 5px; color: {p.settings_text}; selection-background-color: {p.accent_surface};
         selection-color: {p.text_primary};
     }}
     QListWidget#inspectionObjectList::item {{ padding: 7px 6px; border-bottom: 1px solid {p.border}; }}
@@ -1208,7 +1213,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
     }}
     QListWidget#autoSegmentObjectList {{
         background-color: {p.bg_input}; border: 1px solid {p.settings_input_border}; border-radius: 5px;
-        color: {p.settings_text}; selection-background-color: #2a1417; selection-color: {p.text_primary};
+        color: {p.settings_text}; selection-background-color: {p.accent_surface}; selection-color: {p.text_primary};
     }}
     QListWidget#autoSegmentObjectList::item {{ padding: 0; border-bottom: 1px solid {p.border}; }}
     QListWidget#autoSegmentObjectList::item:selected {{ border-left: 3px solid {p.accent}; }}
@@ -1336,7 +1341,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.text_primary};
     }}
     QPushButton#reconstructionWorkflowButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
         color: {p.accent};
     }}
@@ -1361,7 +1366,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.text_primary};
     }}
     QPushButton#reconstructionRuntimeAction[actionRole="primary"] {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
         color: {p.accent};
     }}
@@ -1456,7 +1461,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         margin: 8px;
     }}
     QFrame#reconstructionViewportTools QPushButton#iconButton:checked {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
     }}
 
@@ -1597,7 +1602,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
         color: {p.accent};
     }}
     QToolButton#reconstructionSettingsDisclosureToggle:pressed {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         color: {p.accent};
     }}
 
@@ -1735,7 +1740,7 @@ def build_stylesheet(p: Palette = PALETTE) -> str:
 
     QPushButton#cameraCalibrationModeButton:checked,
     QPushButton#cameraCalibrationAction[actionRole="primary"] {{
-        background-color: #2a1417;
+        background-color: {p.accent_surface};
         border-color: {p.accent};
         color: {p.accent};
     }}

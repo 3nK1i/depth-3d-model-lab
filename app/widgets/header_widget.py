@@ -1,7 +1,7 @@
 """Top header bar: branding, GPU/VRAM/CUDA status, and window actions.
 
-Matches the target: a red rounded logo tile, the wordmark + subtitle on
-a single baseline, a red PRO badge and version, the hardware block
+Uses the independent depth/3D mark, product title + release badge on a
+single baseline, plus the hardware block
 (GPU / VRAM / CUDA) grouped toward the right, a status badge, and vector
 icon actions (help / settings / minimize / maximize / close).
 
@@ -31,16 +31,14 @@ APP_VERSION = f"v{__version__}"
 
 
 class _LogoTile(QLabel):
-    """Company logo. Loads assets/logo/logo.png (scaled to the header
-    height); falls back to a small red glyph tile if the file is missing.
+    """Product mark loaded from ``assets/logo/logo.png``.
 
-    The logo replaces the text wordmark, so ``LOGO_MAX_WIDTH`` is wide
-    enough for a full icon+wordmark lockup image. Reduce it if your PNG
-    is just the square mark.
+    The open-source identity uses a compact square depth/point-cloud mark;
+    product text remains a separate, accessible label in the header.
     """
 
     LOGO_HEIGHT = 30
-    LOGO_MAX_WIDTH = 150
+    LOGO_MAX_WIDTH = 34
 
     def __init__(self) -> None:
         super().__init__()
@@ -56,7 +54,7 @@ class _LogoTile(QLabel):
             self.setPixmap(scaled)
             self.setFixedSize(scaled.width(), self.LOGO_HEIGHT)
         else:
-            # Fallback: small red tile with a glyph if logo.png is absent.
+            # Fallback: compact cyan product glyph if logo.png is absent.
             self.setText("◨")
             self.setFixedSize(self.LOGO_HEIGHT, self.LOGO_HEIGHT)
             self.setAlignment(Qt.AlignmentFlag.AlignCenter)

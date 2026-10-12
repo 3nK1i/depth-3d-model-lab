@@ -5,6 +5,8 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QPushButton, QVBoxLayout, QWidget
 
+from app.theme import PALETTE
+
 
 class CollapsibleSection(QFrame):
     """A section with a clickable header that shows/hides its body."""
@@ -25,7 +27,7 @@ class CollapsibleSection(QFrame):
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_btn.setStyleSheet(
             "text-align: left; background: transparent; border: none; "
-            "color: #e0293e; font-weight: 700; font-size: 11px; "
+            f"color: {PALETTE.accent}; font-weight: 700; font-size: 11px; "
             "letter-spacing: 0.5px; padding: 4px 0;"
         )
         self._toggle_btn.clicked.connect(self._on_toggled)
@@ -41,7 +43,7 @@ class CollapsibleSection(QFrame):
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("color: #2a2b30;")
+        divider.setStyleSheet(f"color: {PALETTE.border};")
         outer.addWidget(divider)
 
     def _on_toggled(self) -> None:
