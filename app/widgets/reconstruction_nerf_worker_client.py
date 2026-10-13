@@ -125,8 +125,10 @@ class ReconstructionNerfWorkerClient(QObject):
         env["CONDA_DEFAULT_ENV"] = prefix.name
         env["PYTHONNOUSERSITE"] = "1"
         env.pop("PYTHONPATH", None)
-        env["EIA_NERFSTUDIO_ROOT"] = runtime.nerfstudio_root
-        env["EIA_TCNN_ROOT"] = runtime.tiny_cuda_nn_root
+        env.pop("EIA_NERFSTUDIO_ROOT", None)
+        env.pop("EIA_TCNN_ROOT", None)
+        env["DEPTH3D_NERFSTUDIO_ROOT"] = runtime.nerfstudio_root
+        env["DEPTH3D_TCNN_ROOT"] = runtime.tiny_cuda_nn_root
 
         def prepend(key: str, paths: list[Path]) -> None:
             parts = [str(path) for path in paths if path.is_dir()]

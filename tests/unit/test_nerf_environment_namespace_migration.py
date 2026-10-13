@@ -128,3 +128,46 @@ def test_worker_call_sites_use_public_namespace_with_legacy_fallback() -> None:
         assert "DEPTH3D_TCNN_ROOT" in text
         assert "EIA_NERFSTUDIO_ROOT" in text
         assert "EIA_TCNN_ROOT" in text
+
+def test_nerf_build_producer_emits_public_environment_namespace(
+    tmp_path: Path,
+) -> None:
+    from app.reconstruction_nerf_build import _isolated_environment_overrides
+
+    prefix = tmp_path / "nerf-runtime"
+    python = prefix / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"python")
+
+    nerfstudio_root = tmp_path / "nerfstudio"
+    tcnn_root = tmp_path / "tiny-cuda-nn"
+    nerfstudio_root.mkdir()
+    tcnn_root.mkdir()
+
+    overrides = dict(
+        _isolated_environment_overrides(
+            python,
+            nerfstudio_root=nerfstudio_root,
+            tcnn_root=tcnn_root,
+        )
+    )
+
+    assert overrides["DEPTH3D_NERFSTUDIO_ROOT"] == str(nerfstudio_root)
+    assert overrides["DEPTH3D_TCNN_ROOT"] == str(tcnn_root)
+    assert "EIA_NERFSTUDIO_ROOT" not in overrides
+    assert "EIA_TCNN_ROOT" not in overrides
+
+
+def test_interactive_client_scrubs_legacy_and_emits_public_namespace() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (
+        root / "app/widgets/reconstruction_nerf_worker_client.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'env.pop("EIA_NERFSTUDIO_ROOT", None)' in text
+    assert 'env.pop("EIA_TCNN_ROOT", None)' in text
+    assert 'env["DEPTH3D_NERFSTUDIO_ROOT"]' in text
+    assert 'env["DEPTH3D_TCNN_ROOT"]' in text
+
+    assert 'env["EIA_NERFSTUDIO_ROOT"] =' not in text
+    assert 'env["EIA_TCNN_ROOT"] =' not in text
