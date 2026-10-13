@@ -1737,7 +1737,7 @@ def isolated_qsettings(tmp_path_factory):
         QSettings.Scope.UserScope,
         str(settings_dir),
     )
-    settings = QSettings("EIA Tech", "Depth3DModelLab")
+    settings = QSettings("Depth3DModelLab", "Depth3DModelLab")
     settings.clear()
     settings.sync()
     yield

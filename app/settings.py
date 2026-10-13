@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QByteArray, QSettings
 
-ORG_NAME = "EIA Tech"
+ORG_NAME = "Depth3DModelLab"
 APP_NAME = "Depth3DModelLab"
 
 
