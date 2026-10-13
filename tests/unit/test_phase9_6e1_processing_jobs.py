@@ -75,7 +75,7 @@ def test_e1_command_is_explicit_shell_free_process_input(tmp_path: Path) -> None
             program=Path(sys.executable),
             arguments=("-c", "print('bad')"),
             working_directory=tmp_path,
-            environment_overrides=(("EIA_DIGITAL_TWIN_JOB_ID", "spoofed"),),
+            environment_overrides=(("DEPTH3D_DIGITAL_TWIN_JOB_ID", "spoofed"),),
         )
 
 

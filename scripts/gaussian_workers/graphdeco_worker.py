@@ -166,9 +166,11 @@ def main() -> int:
     request = load_json(request_path)
     dataset, seed = validate_request(request, BACKEND_KIND)
 
-    root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
+    root_text = os.environ.get("DEPTH3D_GRAPHDECO_ROOT", "").strip()
     if not root_text:
-        raise RuntimeError("EIA_GRAPHDECO_ROOT is required for the Graphdeco external worker")
+        root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
+    if not root_text:
+        raise RuntimeError("DEPTH3D_GRAPHDECO_ROOT is required for the Graphdeco external worker")
     graphdeco_root = Path(root_text).resolve()
     _validate_graphdeco_root(graphdeco_root)
     if not torch.cuda.is_available() or torch.cuda.device_count() < 1:

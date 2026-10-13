@@ -116,9 +116,9 @@ class DigitalTwinProcessingJobController(QObject):
 
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
-        environment.insert("EIA_DIGITAL_TWIN_JOB_ID", spec.job_id)
-        environment.insert("EIA_DIGITAL_TWIN_EXPECTED_PROTOCOL", spec.expected_protocol)
-        environment.insert("EIA_DIGITAL_TWIN_OUTPUT_DIR", str(spec.output_dir))
+        environment.insert("DEPTH3D_DIGITAL_TWIN_JOB_ID", spec.job_id)
+        environment.insert("DEPTH3D_DIGITAL_TWIN_EXPECTED_PROTOCOL", spec.expected_protocol)
+        environment.insert("DEPTH3D_DIGITAL_TWIN_OUTPUT_DIR", str(spec.output_dir))
         for key, value in command.environment_overrides:
             environment.insert(key, value)
         self._process.setProcessEnvironment(environment)

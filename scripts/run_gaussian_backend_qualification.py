@@ -252,18 +252,18 @@ def _qualify_one(
             require_isolated_interpreter=True,
         )
 
-        old_graphdeco_root = os.environ.get("EIA_GRAPHDECO_ROOT")
+        old_graphdeco_root = os.environ.get("DEPTH3D_GRAPHDECO_ROOT")
         if backend_kind is GaussianBackendKind.GRAPHDECO_REFERENCE_EXTERNAL:
             assert graphdeco_root is not None
-            os.environ["EIA_GRAPHDECO_ROOT"] = str(graphdeco_root.resolve())
+            os.environ["DEPTH3D_GRAPHDECO_ROOT"] = str(graphdeco_root.resolve())
         try:
             artifact = run_gaussian_external_worker(spec, request)
         finally:
             if backend_kind is GaussianBackendKind.GRAPHDECO_REFERENCE_EXTERNAL:
                 if old_graphdeco_root is None:
-                    os.environ.pop("EIA_GRAPHDECO_ROOT", None)
+                    os.environ.pop("DEPTH3D_GRAPHDECO_ROOT", None)
                 else:
-                    os.environ["EIA_GRAPHDECO_ROOT"] = old_graphdeco_root
+                    os.environ["DEPTH3D_GRAPHDECO_ROOT"] = old_graphdeco_root
 
         metrics_path = Path(artifact.artifact_dir) / "qualification_metrics.json"
         if not metrics_path.is_file():

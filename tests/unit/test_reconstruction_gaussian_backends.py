@@ -363,6 +363,7 @@ def test_external_workers_contain_backend_specific_imports() -> None:
     gsplat_text = (ROOT / "scripts/gaussian_workers/gsplat_worker.py").read_text(encoding="utf-8")
     graphdeco_text = (ROOT / "scripts/gaussian_workers/graphdeco_worker.py").read_text(encoding="utf-8")
     assert "from gsplat.rendering import rasterization" in gsplat_text
+    assert "DEPTH3D_GRAPHDECO_ROOT" in graphdeco_text
     assert "EIA_GRAPHDECO_ROOT" in graphdeco_text
     assert "train.py" in graphdeco_text
     assert "render.py" in graphdeco_text

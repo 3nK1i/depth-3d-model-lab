@@ -257,9 +257,11 @@ def main() -> int:
 
     apply_lifecycle_fault_injection(request=request, result_path=result_path)
 
-    root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
+    root_text = os.environ.get("DEPTH3D_GRAPHDECO_ROOT", "").strip()
     if not root_text:
-        raise RuntimeError("EIA_GRAPHDECO_ROOT is required for the Graphdeco benchmark worker")
+        root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
+    if not root_text:
+        raise RuntimeError("DEPTH3D_GRAPHDECO_ROOT is required for the Graphdeco benchmark worker")
     graphdeco_root = Path(root_text).resolve()
     _validate_graphdeco_root(graphdeco_root)
     _require_explicit_test_split_support(graphdeco_root)

@@ -15,7 +15,7 @@ def test_e1_qprocess_supervisor_is_shell_free_group_isolated_and_bounded() -> No
     assert "shell=True" not in source
     assert "subprocess.Popen" not in source
     assert "A Digital Twin processing job is already active." in source
-    assert "EIA_DIGITAL_TWIN_JOB_ID" in source
+    assert "DEPTH3D_DIGITAL_TWIN_JOB_ID" in source
     assert "rejected stale/mismatched job_id" in source
     assert "outside declared output_dir" in source
 

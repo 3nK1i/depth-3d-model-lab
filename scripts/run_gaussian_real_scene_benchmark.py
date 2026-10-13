@@ -373,7 +373,7 @@ def main() -> int:
         with _isolated_backend_environment(backend_python):
             env = os.environ.copy()
             if graphdeco_root is not None:
-                env["EIA_GRAPHDECO_ROOT"] = str(graphdeco_root)
+                env["DEPTH3D_GRAPHDECO_ROOT"] = str(graphdeco_root)
             _run_process(
                 [str(backend_python), str(worker_script), "--request", str(request_path), "--result", str(backend_result_path)],
                 timeout_s=float(args.timeout_s),

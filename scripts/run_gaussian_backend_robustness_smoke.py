@@ -190,7 +190,7 @@ def main() -> int:
                 env = os.environ.copy()
                 env[LIFECYCLE_FAULT_ENV] = "1"
                 if graphdeco_root is not None:
-                    env["EIA_GRAPHDECO_ROOT"] = str(graphdeco_root)
+                    env["DEPTH3D_GRAPHDECO_ROOT"] = str(graphdeco_root)
                 outcome = run_supervised_process(
                     [str(backend_python), str(worker_script), "--request", str(request_path), "--result", str(fault_result)],
                     timeout_s=(float(args.timeout_s) if scenario is GaussianBackendRobustnessScenario.TIMEOUT else 15.0),
@@ -248,7 +248,7 @@ def main() -> int:
                 recovery_env = os.environ.copy()
                 recovery_env.pop(LIFECYCLE_FAULT_ENV, None)
                 if graphdeco_root is not None:
-                    recovery_env["EIA_GRAPHDECO_ROOT"] = str(graphdeco_root)
+                    recovery_env["DEPTH3D_GRAPHDECO_ROOT"] = str(graphdeco_root)
                 recovery = run_supervised_process(
                     [str(backend_python), str(worker_script), "--request", str(recovery_request_path), "--result", str(recovery_result_path)],
                     timeout_s=1800.0,

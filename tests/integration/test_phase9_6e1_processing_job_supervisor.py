@@ -32,7 +32,7 @@ def _worker(path: Path) -> None:
             mode = sys.argv[1]
             marker = Path(sys.argv[2])
             protocol = {PROTOCOL!r}
-            job_id = os.environ["EIA_DIGITAL_TWIN_JOB_ID"]
+            job_id = os.environ["DEPTH3D_DIGITAL_TWIN_JOB_ID"]
 
             def emit(event, **payload):
                 print(json.dumps({{"protocol": protocol, "job_id": job_id, "event": event, **payload}}), flush=True)
