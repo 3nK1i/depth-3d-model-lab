@@ -89,7 +89,7 @@ def main() -> int:
 
     points, colors = enforce_point_budget(points, colors, int(args.point_budget), seed=0)
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I2.5.2 Local Geometry / Manifold Review")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I2.5.2 Local Geometry / Manifold Review")
     central = QWidget(); layout = QVBoxLayout(central)
     layout.addWidget(QLabel(f"I2.5.2 | {len(points):,} rendered | {args.color_mode} | {args.view} | {args.fit} | {legend} | diagnostic only"))
     canvas = PointCloudCanvas(window); canvas.set_point_size(float(args.point_size)); canvas.set_grid_visible(True); canvas.update_points(points, colors)

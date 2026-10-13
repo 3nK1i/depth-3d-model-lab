@@ -96,7 +96,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — D3.1 Five-View Chain Qualification")
+    window.setWindowTitle("Depth & 3D Model Lab — D3.1 Five-View Chain Qualification")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

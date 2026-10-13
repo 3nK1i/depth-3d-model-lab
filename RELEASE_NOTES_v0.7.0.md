@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab v0.7.0
+# Depth & 3D Model Lab v0.7.0
 
 ## Phase 7 Stable
 

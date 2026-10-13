@@ -77,7 +77,7 @@ def main() -> int:
     points, colors = enforce_point_budget(points, colors, int(a.point_budget), seed=0)
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I4.1.1 Orbit Alignment / Coverage Diagnosis")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I4.1.1 Orbit Alignment / Coverage Diagnosis")
     central = QWidget(); layout = QVBoxLayout(central)
     metric = summary["orbit_diagnosis"].get(a.camera_set)
     if isinstance(metric, dict):

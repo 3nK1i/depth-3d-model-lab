@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch EIA TECH — Depth & 3D Model Lab with the active environment.
+# Launch Depth & 3D Model Lab with the active environment.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

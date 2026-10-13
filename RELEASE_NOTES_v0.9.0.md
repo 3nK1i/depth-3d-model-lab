@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab — v0.9.0 Release Notes
+# Depth & 3D Model Lab — v0.9.0 Release Notes
 
 > **Release status:** the finalized source identity is `0.9.0` / `Phase 9 Digital Twin Stable`. The annotated `v0.9.0` tag is created only after the metadata transition is green, committed, pushed and synchronized.
 

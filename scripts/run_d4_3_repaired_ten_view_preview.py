@@ -48,7 +48,7 @@ def main():
     pts,colors=enforce_point_budget(pts,colors,int(a.point_budget),seed=0)
     if a.overlay_sparse and sparse.size:
         pts=np.vstack([pts,sparse]); colors=np.vstack([colors,np.tile(np.asarray([[245,245,245]],dtype=np.uint8),(sparse.shape[0],1))])
-    app=QApplication.instance() or QApplication(sys.argv[:1]); w=QMainWindow(); w.setWindowTitle('EIA TECH — D4.3 Repaired Ten-View Chain')
+    app=QApplication.instance() or QApplication(sys.argv[:1]); w=QMainWindow(); w.setWindowTitle('Depth & 3D Model Lab — D4.3 Repaired Ten-View Chain')
     c=QWidget(); l=QVBoxLayout(c)
     selected=summary['selection']['selected_candidate']
     l.addWidget(QLabel(f"D4.3 selected candidate {selected} | orders {'→'.join(map(str,orders.tolist()))} | {pts.shape[0]:,} rendered | color={a.color_mode} | NO fusion | arbitrary SfM gauge"))

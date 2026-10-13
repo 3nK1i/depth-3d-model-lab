@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab — v0.8.0 Release Notes
+# Depth & 3D Model Lab — v0.8.0 Release Notes
 
 > **Release status:** the finalized source identity is `0.8.0` / `Phase 8 Reconstruction Stable`. The annotated `v0.8.0` tag is created only after the 8.9I2 release gate passes and the release commit is clean, pushed and synchronized in 8.9I3.
 

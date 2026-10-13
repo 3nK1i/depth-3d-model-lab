@@ -224,18 +224,18 @@ def stella_monocular_config_text(request: LiveSlamRequest) -> str:
         )
 
     profile_feature_name = {
-        ReconstructionQualityProfile.EFFICIENT: "EIA live ORB efficient",
-        ReconstructionQualityProfile.BALANCED: "EIA live ORB balanced",
-        ReconstructionQualityProfile.HIGH_QUALITY: "EIA live ORB high quality",
+        ReconstructionQualityProfile.EFFICIENT: "Depth3D live ORB efficient",
+        ReconstructionQualityProfile.BALANCED: "Depth3D live ORB balanced",
+        ReconstructionQualityProfile.HIGH_QUALITY: "Depth3D live ORB high quality",
     }[request.profile]
 
     lines = [
-        "# EIA TECH Phase 8.6A generated stella_vslam monocular config",
+        "# Depth & 3D Model Lab Phase 8.6A generated stella_vslam monocular config",
         f"# intrinsics_source={camera.intrinsics.source.value}",
         f"# calibration_status={camera.intrinsics.calibration_status.value}",
         f"# camera_intrinsics_policy={request.camera_intrinsics_policy.value}",
         "Camera:",
-        f'  name: "EIA {camera.camera_id}"',
+        f'  name: "Depth3D {camera.camera_id}"',
         "  setup: monocular",
         f"  model: {model}",
         f"  fx: {fx:.17g}",

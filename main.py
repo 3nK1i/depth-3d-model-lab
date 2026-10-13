@@ -1,4 +1,4 @@
-"""Entry point for EIA TECH — Depth & 3D Model Lab.
+"""Entry point for Depth & 3D Model Lab.
 
 Run with: python main.py
 """

@@ -49,7 +49,7 @@ def main() -> int:
     points, colors = enforce_point_budget(points, colors, int(args.point_budget), seed=0)
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I2.6 Promoted Dense RGB Scene")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I2.6 Promoted Dense RGB Scene")
     central = QWidget(); layout = QVBoxLayout(central)
     comparison = summary["promotion"]["qualified_counterfactual_comparison"]
     layout.addWidget(QLabel(

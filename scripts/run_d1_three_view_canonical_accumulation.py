@@ -420,7 +420,7 @@ def _write_binary_ply(path: Path, points: np.ndarray, colors: np.ndarray) -> Pat
     header = (
         "ply\n"
         "format binary_little_endian 1.0\n"
-        "comment EIA TECH D1 raw three-view canonical accumulation; NOT fused\n"
+        "comment Depth & 3D Model Lab D1 raw three-view canonical accumulation; NOT fused\n"
         f"element vertex {points.shape[0]}\n"
         "property float x\nproperty float y\nproperty float z\n"
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"

@@ -133,7 +133,7 @@ def main() -> int:
     comparison = record["comparison"]
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — I2.5 Diversity-Aware Filter Counterfactual Review")
+    window.setWindowTitle("Depth & 3D Model Lab — I2.5 Diversity-Aware Filter Counterfactual Review")
     central = QWidget()
     layout = QVBoxLayout(central)
     layout.addWidget(QLabel(

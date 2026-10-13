@@ -103,7 +103,7 @@ def main() -> int:
         raise RuntimeError("I4.1.8A preview found no target markers.")
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I4.1.8A Retained-Core Target Diagnosis")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I4.1.8A Retained-Core Target Diagnosis")
     central = QWidget(); layout = QVBoxLayout(central)
     diagnosis = summary["diagnosis"]
     plane = summary["retained_core"]["dominant_plane"]

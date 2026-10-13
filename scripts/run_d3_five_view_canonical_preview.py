@@ -89,7 +89,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — D3 Five-View Canonical Accumulation")
+    window.setWindowTitle("Depth & 3D Model Lab — D3 Five-View Canonical Accumulation")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

@@ -80,7 +80,7 @@ def main() -> int:
 
     ev = record["balanced_evaluation"]
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I2.3 Balanced Cross-Segment Review")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I2.3 Balanced Cross-Segment Review")
     central = QWidget(); layout = QVBoxLayout(central)
     layout.addWidget(QLabel(
         f"I2.3 | {args.scenario} | {args.representation} | {points.shape[0]:,} rendered | color={args.color_mode} | "

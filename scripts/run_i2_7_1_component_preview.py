@@ -61,7 +61,7 @@ def main() -> int:
     points, colors = enforce_point_budget(points, colors, int(a.point_budget), seed=0)
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    w = QMainWindow(); w.setWindowTitle("EIA TECH — I2.7.1 Detached Component Qualification")
+    w = QMainWindow(); w.setWindowTitle("Depth & 3D Model Lab — I2.7.1 Detached Component Qualification")
     central = QWidget(); layout = QVBoxLayout(central)
     comp = summary["component_comparison"]
     layout.addWidget(QLabel(

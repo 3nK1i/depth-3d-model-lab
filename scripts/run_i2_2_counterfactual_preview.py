@@ -82,7 +82,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — I2.2 Exact Counterfactual Review")
+    window.setWindowTitle("Depth & 3D Model Lab — I2.2 Exact Counterfactual Review")
     central = QWidget(); layout = QVBoxLayout(central)
     c = record["comparison"]
     layout.addWidget(QLabel(

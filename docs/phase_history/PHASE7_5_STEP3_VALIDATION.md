@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab
+# Depth & 3D Model Lab
 ## Phase 7.5 Step 3 — RGB, Mask, Depth and Intrinsics Alignment
 
 ## Status
@@ -230,7 +230,7 @@ Executed in the delivery environment:
 
 ### Full split-process regression
 
-Run in the configured EIA TECH Python 3.11/3.12 `depth` environment:
+Run in the configured project Python 3.11/3.12 `depth` environment:
 
 ```bash
 ./scripts/run_phase7_5_step3_tests.sh full

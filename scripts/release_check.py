@@ -153,7 +153,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=_DEFAULT_REPORT)
     args = parser.parse_args()
 
-    print(f"EIA TECH | Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
+    print(f"Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
     print(f"Release gate mode: {args.mode}\n")
 
     checks = collect_static_checks(

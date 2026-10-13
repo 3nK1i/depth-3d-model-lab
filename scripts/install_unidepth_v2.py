@@ -17,9 +17,9 @@ OFFICIAL_COMMIT = "8d8cfe4c7ee15297099983607febf0d4f32eb3d6"
 REQUIREMENTS = ROOT / "requirements" / "models-unidepth-v2.txt"
 COMPAT_MARKER = ".eia_unidepth_v2_compat.json"
 
-_MODELS_INIT = '''"""EIA TECH V2-only compatibility import for the official UniDepth source."""\n\nfrom .unidepthv2 import UniDepthV2\n\n__all__ = ["UniDepthV2"]\n'''
+_MODELS_INIT = '''"""V2-only compatibility import for the official UniDepth source."""\n\nfrom .unidepthv2 import UniDepthV2\n\n__all__ = ["UniDepthV2"]\n'''
 
-_UNIDEPTH_V2_INIT = '''"""EIA TECH V2-only package import."""\n\nfrom .unidepthv2 import UniDepthV2\n\n__all__ = ["UniDepthV2"]\n'''
+_UNIDEPTH_V2_INIT = '''"""V2-only package import."""\n\nfrom .unidepthv2 import UniDepthV2\n\n__all__ = ["UniDepthV2"]\n'''
 
 _LAYERS_INIT = '''"""V2 inference layers without the legacy V1 Nystrom/xFormers import."""\n\nfrom .activation import GEGLU, SwiGLU\nfrom .attention import AttentionBlock, AttentionDecoderBlock, AttentionLayer\nfrom .convnext import CvnxtBlock\nfrom .mlp import MLP\nfrom .positional_encoding import PositionEmbeddingSine\nfrom .upsample import (\n    ConvUpsample,\n    ConvUpsampleShuffle,\n    ConvUpsampleShuffleResidual,\n    ResUpsampleBil,\n)\n\n__all__ = [\n    "SwiGLU",\n    "GEGLU",\n    "CvnxtBlock",\n    "AttentionBlock",\n    "PositionEmbeddingSine",\n    "ConvUpsample",\n    "MLP",\n    "ConvUpsampleShuffle",\n    "AttentionDecoderBlock",\n    "AttentionLayer",\n    "ConvUpsampleShuffleResidual",\n    "ResUpsampleBil",\n]\n'''
 

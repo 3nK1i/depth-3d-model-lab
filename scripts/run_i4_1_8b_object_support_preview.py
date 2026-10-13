@@ -112,7 +112,7 @@ def main() -> int:
     sparse_rgb = np.asarray(sparse_colors, dtype=np.uint8).reshape(-1, 3) if sparse_colors else np.empty((0,3), dtype=np.uint8)
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I4.1.8B Retained-Core Object Support")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I4.1.8B Retained-Core Object Support")
     central = QWidget(); layout = QVBoxLayout(central)
     diag = summary["diagnosis"]
     posthoc = selected.get("posthoc_orbit_diagnosis", {}).get("current_metric", {}) if isinstance(selected, dict) else {}

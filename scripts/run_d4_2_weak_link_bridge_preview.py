@@ -93,7 +93,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — D4.2 Weak-Link Bridge Diagnosis")
+    window.setWindowTitle("Depth & 3D Model Lab — D4.2 Weak-Link Bridge Diagnosis")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

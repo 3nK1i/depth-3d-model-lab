@@ -1,4 +1,4 @@
-# EIA TECH - Depth & 3D Model Lab
+# Depth & 3D Model Lab
 
 A PyQt6 desktop application for live monocular depth estimation, measurement and inspection, and persistent 3D reconstruction on Ubuntu 24.04.
 

@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab
+# Depth & 3D Model Lab
 
 ## Phase 7.5 Step 2 — Segmentation Perception Pipeline Validation
 
@@ -276,7 +276,7 @@ Executed result:
 The gate covers:
 
 - Registry order and descriptor metadata
-- Ultralytics Enterprise license metadata
+- Ultralytics licensing metadata
 - Optional dependency isolation
 - Adapter capability contracts
 - Runtime profile resolution
@@ -402,7 +402,7 @@ development-perception-mock: available
 
 This confirms the perception registry and application contracts remain importable without the optional runtime.
 
-## 17. Real Ultralytics validation on EIA TECH hardware
+## 17. Real Ultralytics validation on target hardware
 
 Real Ultralytics, CUDA, RTX 2060 and RTX 5090 inference were not available in the delivery container and are not claimed as passed.
 
@@ -500,7 +500,7 @@ Manual Qt application validation was not executed in the delivery container and 
 
 ## 19. Acceptance checklist before commit
 
-Do not commit until all applicable items pass in the EIA TECH environment:
+Do not commit until all applicable items pass in the target environment:
 
 - Compile validation
 - Step 2 quick gate

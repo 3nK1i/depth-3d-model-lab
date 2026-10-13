@@ -70,7 +70,7 @@ std::string errno_message(const std::string& prefix) {
 
 void print_help(const char* argv0) {
     std::cout
-        << "EIA TECH isolated stella_vslam live worker\n"
+        << "Depth & 3D Model Lab isolated stella_vslam live worker\n"
         << "Usage: " << argv0
         << " --socket PATH --session-id UUID --vocab FILE --config FILE [--backend-id ID]\n"
         << "The worker accepts frames only through the Phase 8.4 shared-memory ring.\n";

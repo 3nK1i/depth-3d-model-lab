@@ -781,7 +781,7 @@ def run(request: dict) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="EIA TECH isolated PyCOLMAP SfM worker")
+    parser = argparse.ArgumentParser(description="Isolated PyCOLMAP SfM worker")
     parser.add_argument("--request", required=True)
     parser.add_argument("--result", required=True)
     args = parser.parse_args()

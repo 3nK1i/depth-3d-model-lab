@@ -124,7 +124,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — D2 Multi-View Overlap Diagnostics")
+    window.setWindowTitle("Depth & 3D Model Lab — D2 Multi-View Overlap Diagnostics")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manual-mask", help="Aligned boolean mask saved as .npy")
     parser.add_argument("--observation-id", default="")
     parser.add_argument("--manual-revision", type=int, default=1)
-    parser.add_argument("--approved-by", default="EIA TECH operator")
+    parser.add_argument("--approved-by", default="operator")
     parser.add_argument("--reset-manual", action="store_true", help="Restore the original automatic mask before recomputing")
     return parser
 

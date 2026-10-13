@@ -264,7 +264,7 @@ def main() -> int:
         if args.show:
             image = QImage(str(Path(artifacts[args.views[0]]["ab"])))
             window = QMainWindow()
-            window.setWindowTitle("EIA TECH — I4.2E TempleRing d12 Detail A/B")
+            window.setWindowTitle("Depth & 3D Model Lab — I4.2E TempleRing d12 Detail A/B")
             label = QLabel()
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setPixmap(QPixmap.fromImage(image).scaled(1320, 700, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))

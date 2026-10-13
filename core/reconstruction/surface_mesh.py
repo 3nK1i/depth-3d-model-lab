@@ -916,7 +916,7 @@ def write_surface_mesh_obj(result: SurfaceMeshResult, path: str | Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     mesh = result.mesh
     lines = [
-        "# EIA TECH Phase 8.7A validation mesh",
+        "# Depth & 3D Model Lab Phase 8.7A validation mesh",
         f"# metric_geometry_status={result.metric_geometry_status.value}",
         f"# unit_to_metre={result.unit_to_metre}",
         "# certified_metrology=false",

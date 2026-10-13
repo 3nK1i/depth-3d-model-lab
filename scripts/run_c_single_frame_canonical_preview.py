@@ -74,7 +74,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — Phase C Canonical Dense RGB Validation")
+    window.setWindowTitle("Depth & 3D Model Lab — Phase C Canonical Dense RGB Validation")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

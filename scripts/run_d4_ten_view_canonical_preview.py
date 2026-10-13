@@ -94,7 +94,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — D4 Ten-View Canonical Accumulation")
+    window.setWindowTitle("Depth & 3D Model Lab — D4 Ten-View Canonical Accumulation")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

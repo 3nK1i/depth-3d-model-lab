@@ -74,7 +74,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — E3 Qualified Scene Fusion Expansion")
+    window.setWindowTitle("Depth & 3D Model Lab — E3 Qualified Scene Fusion Expansion")
     central = QWidget()
     layout = QVBoxLayout(central)
     voxel = float(summary["fusion"]["voxel_size_reconstruction_units"])

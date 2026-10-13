@@ -162,7 +162,7 @@ def main() -> int:
     points, colors = enforce_point_budget(points, colors, int(args.point_budget), seed=0)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — I2.4 Support Diversity / Parallax Review")
+    window.setWindowTitle("Depth & 3D Model Lab — I2.4 Support Diversity / Parallax Review")
     central = QWidget()
     layout = QVBoxLayout(central)
     layout.addWidget(QLabel(

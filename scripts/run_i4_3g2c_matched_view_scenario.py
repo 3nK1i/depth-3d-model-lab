@@ -109,7 +109,7 @@ def _render(
     point_size: float,
 ) -> None:
     window = QMainWindow()
-    window.setWindowTitle(f"EIA TECH — I4.3G2C {blind_label} {view} {framing}")
+    window.setWindowTitle(f"Depth & 3D Model Lab — I4.3G2C {blind_label} {view} {framing}")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(

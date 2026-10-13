@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab
+# Depth & 3D Model Lab
 ## Phase 7.5 Step 4 — Object-Specific 3D Point Extraction
 
 ## Status
@@ -251,7 +251,7 @@ The stress tests cover deterministic repeated extraction, landscape/portrait/squ
 
 ### Full split-process regression
 
-Run in the configured EIA TECH Python 3.11/3.12 `depth` environment:
+Run in the configured project Python 3.11/3.12 `depth` environment:
 
 ```bash
 ./scripts/run_phase7_5_step4_tests.sh full

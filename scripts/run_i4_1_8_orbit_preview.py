@@ -83,7 +83,7 @@ def main() -> int:
 
     metrics = summary["final_assessment"]["selected_orbit"]
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I4.1.8 Final Object-Orbit Review")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I4.1.8 Final Object-Orbit Review")
     central = QWidget(); layout = QVBoxLayout(central)
     layout.addWidget(QLabel(
         f"I4.1.8 | {a.geometry} | {len(points):,} rendered | {a.view} | fit={a.fit} | "

@@ -58,8 +58,13 @@ def test_i66c_does_not_add_viewport_or_ui_consumption() -> None:
     assert "persistent_canonical_scene = True" not in controller
 
 
-def test_i66b_worker_remains_frozen_at_qualified_hash() -> None:
+def test_i66b_worker_remains_frozen_at_sanitized_equivalent_hash() -> None:
     import hashlib
 
+    # Open-source sanitization changed only the CLI description string.
+    # Freeze the reviewed sanitized bytes without claiming a new runtime qualification.
+    source = WORKER.read_text(encoding="utf-8")
+    assert source.count('description="Isolated PyCOLMAP SfM worker"') == 1
+
     digest = hashlib.sha256(WORKER.read_bytes()).hexdigest()
-    assert digest == "e02911bca52eb8537496e276411a667eb942317a2e8b47be09999692fe7806dd"
+    assert digest == "5cafb22c9c6bd59d3c81e14498561521618953bca6bf9058bda761ed72d02642"

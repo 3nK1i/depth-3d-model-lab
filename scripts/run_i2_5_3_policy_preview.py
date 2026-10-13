@@ -94,7 +94,7 @@ def main() -> int:
 
     draw_points, draw_colors = enforce_point_budget(draw_points, draw_colors, int(args.point_budget), seed=0)
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I2.5.3 Manifold Filter Counterfactual Review")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I2.5.3 Manifold Filter Counterfactual Review")
     central = QWidget(); layout = QVBoxLayout(central)
     layout.addWidget(QLabel(
         f"I2.5.3 | {scenario_name} | {len(draw_points):,} rendered | {args.color_mode} | {args.view} | {args.fit} | "

@@ -89,7 +89,7 @@ def _render_one(
     source_count: int,
 ) -> None:
     window = QMainWindow()
-    window.setWindowTitle(f"EIA TECH — I4.1.9A A3 {method} {view}")
+    window.setWindowTitle(f"Depth & 3D Model Lab — I4.1.9A A3 {method} {view}")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(
@@ -225,7 +225,7 @@ def main() -> int:
         primary = Path(artifacts["renders"][args.views[0]]["ab"])
         image = QImage(str(primary))
         final_window = QMainWindow()
-        final_window.setWindowTitle("EIA TECH — I4.1.9A A3 Controlled DA3 vs MVS")
+        final_window.setWindowTitle("Depth & 3D Model Lab — I4.1.9A A3 Controlled DA3 vs MVS")
         label = QLabel()
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         from PyQt6.QtGui import QPixmap

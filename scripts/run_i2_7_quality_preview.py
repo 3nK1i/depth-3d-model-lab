@@ -84,7 +84,7 @@ def main() -> int:
     peripheral, far, weak = peripheral[mask], far[mask], weak[mask]
     colors = rgb if a.color_mode == "rgb" else (_region(peripheral, far, weak) if a.color_mode == "region" else _scalar({"support": support, "confidence": confidence, "dispersion": dispersion}[a.color_mode], invert=a.color_mode == "dispersion"))
     points, colors = enforce_point_budget(points, colors, int(a.point_budget), seed=0)
-    app = QApplication.instance() or QApplication(sys.argv[:1]); w = QMainWindow(); w.setWindowTitle("EIA TECH — I2.7 Final Full-Video Quality Review")
+    app = QApplication.instance() or QApplication(sys.argv[:1]); w = QMainWindow(); w.setWindowTitle("Depth & 3D Model Lab — I2.7 Final Full-Video Quality Review")
     central = QWidget(); layout = QVBoxLayout(central)
     layout.addWidget(QLabel(f"I2.7 | {a.representation} | {len(points):,} rendered | {a.color_mode} | {a.view} | {a.fit} | full/robust={float(s['spatial']['promoted_full_to_robust_ratio']):.3f} | final manual review"))
     canvas = PointCloudCanvas(w); canvas.set_point_size(float(a.point_size)); canvas.set_grid_visible(True); canvas.update_points(points, colors)

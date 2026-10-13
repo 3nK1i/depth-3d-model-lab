@@ -80,7 +80,7 @@ def _write_sparse_ply(result, path: Path) -> None:
     lines = [
         "ply",
         "format ascii 1.0",
-        "comment EIA TECH Phase 8.8A3 real PyCOLMAP sparse reconstruction",
+        "comment Phase 8.8A3 real PyCOLMAP sparse reconstruction",
         "comment arbitrary reconstruction gauge; coordinates are NOT metres",
         f"element vertex {len(result.landmarks)}",
         "property float x",

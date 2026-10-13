@@ -25,20 +25,20 @@ Phase 8.7D supports two real external backends without mixing their licensing or
 - Backend kind: `graphdeco_reference_external`
 - Upstream: `https://github.com/graphdeco-inria/gaussian-splatting`
 - Upstream license: `https://github.com/graphdeco-inria/gaussian-splatting/blob/main/LICENSE.md`
-- Purpose in EIA TECH: scientific/reference implementation for industrial research, evaluation, reproducibility, benchmarking and publication.
+- Purpose in this project: scientific/reference implementation for industrial research, evaluation, reproducibility, benchmarking and publication.
 - Contract usage scope: `research_evaluation_only`
 - `commercial_use_permitted_by_backend_license=False`
 - `explicit_commercial_consent_required=True`
 - Redistribution must retain the upstream license/attribution requirements.
 
-The upstream license expressly includes academic and industrial research users, but restricts the software to non-commercial research/evaluation unless the licensors provide prior explicit consent. Publishing the EIA TECH project source does not remove or replace those upstream restrictions.
+The upstream license expressly includes academic and industrial research users, but restricts the software to non-commercial research/evaluation unless the licensors provide prior explicit consent. Publishing this project source does not remove or replace those upstream restrictions.
 
 ### gsplat backend
 
 - Backend kind: `gsplat_external`
 - Upstream: `https://github.com/nerfstudio-project/gsplat`
 - License: Apache-2.0 (`https://github.com/nerfstudio-project/gsplat/blob/main/LICENSE`)
-- Purpose in EIA TECH: permissive real backend and future production-compatible path, subject to normal Apache-2.0 compliance.
+- Purpose in this project: permissive real backend and future production-compatible path, subject to normal Apache-2.0 compliance.
 - Contract usage scope: `permissive_general_use`
 - `commercial_use_permitted_by_backend_license=True`
 - `explicit_commercial_consent_required=False`

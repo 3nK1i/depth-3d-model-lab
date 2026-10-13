@@ -233,7 +233,7 @@ pgrep -af "depth_3d_model_lab|core.inference.worker"
 
 ### 12. License gate
 
-UniDepth and its model weights are published under CC BY-NC 4.0. Keep the registry status `noncommercial_review_required`. Do not approve commercial deployment until EIA TECH has completed legal review or obtained appropriate permission.
+UniDepth and its model weights are published under CC BY-NC 4.0. Keep the registry status `noncommercial_review_required`. Do not approve commercial deployment until appropriate legal review has been completed or the required permission has been obtained.
 
 ## Git review and commit
 

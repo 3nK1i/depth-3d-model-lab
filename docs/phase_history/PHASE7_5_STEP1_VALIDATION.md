@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab
+# Depth & 3D Model Lab
 ## Phase 7.5 Step 1 — Segmentation-First Measurement Architecture and Data Contracts
 
 Date: 2026-08-05  

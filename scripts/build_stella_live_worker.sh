@@ -81,7 +81,7 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-w
 fi
 
 cat > "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt" <<INFO
-EIA TECH Phase 8.8C4 isolated stella_vslam map-structure worker
+Depth & 3D Model Lab Phase 8.8C4 isolated stella_vslam map-structure worker
 worker_status=PASS
 worker_protocol_version=1
 worker_executable=$WORKER

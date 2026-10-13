@@ -84,7 +84,7 @@ def main() -> int:
 
     draw_points, draw_colors = enforce_point_budget(draw_points, draw_colors, int(args.point_budget), seed=0)
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    window = QMainWindow(); window.setWindowTitle("EIA TECH — I3.1 Second-Scene Transfer Review")
+    window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I3.1 Second-Scene Transfer Review")
     central = QWidget(); layout = QVBoxLayout(central)
     ratio = float(candidate["envelope"][args.geometry]["full_to_robust_diagonal_ratio"])
     layout.addWidget(QLabel(

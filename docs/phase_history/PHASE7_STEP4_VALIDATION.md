@@ -84,7 +84,7 @@ git commit -m "release: finalize phase 7 operational modes"
   --require-clean-git
 
 git tag -a v0.7.0 \
-  -m "EIA TECH Depth & 3D Model Lab v0.7.0"
+  -m "Depth & 3D Model Lab v0.7.0"
 
 git push origin HEAD --follow-tags
 ```

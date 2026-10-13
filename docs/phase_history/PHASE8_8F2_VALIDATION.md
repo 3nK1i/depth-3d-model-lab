@@ -30,7 +30,7 @@ The generic preview overlay is representation-agnostic and can be reused by F3 w
   - selecting another F1 representation hides stale Gaussian preview;
   - F4 still owns whole-representation switching.
 - `app/theme.py`
-  - adds native EIA TECH styling for the appearance preview overlay.
+  - adds native Depth & 3D Model Lab styling for the appearance preview overlay.
 
 ## Validation
 

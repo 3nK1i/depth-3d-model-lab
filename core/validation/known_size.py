@@ -103,7 +103,7 @@ def create_benchmark_template(output_path: str | Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "benchmark_name": "EIA TECH Phase 7.5 Known-Size Benchmark",
+        "benchmark_name": "Depth & 3D Model Lab Phase 7.5 Known-Size Benchmark",
         "operator": "",
         "measurement_instrument": "tape measure or caliper",
         "thresholds_confirmed": False,

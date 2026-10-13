@@ -251,9 +251,9 @@ def _write_html(path: Path, summary: InspectionBundleSummary, objects: Sequence[
 <img src="{folder}/approved_mask.png" alt="Approved mask">
 <table><thead><tr><th>Measurement</th><th>Value</th><th>Reliability</th><th>Status</th></tr></thead><tbody>{measurements}</tbody></table>
 </section>""")
-    path.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>EIA TECH Inspection Report</title>
+    path.write_text(f"""<!doctype html><html><head><meta charset="utf-8"><title>Depth & 3D Model Lab Inspection Report</title>
 <style>body{{font:14px Arial,sans-serif;max-width:1100px;margin:30px auto;color:#17202a}}h1{{margin-bottom:4px}}.notice{{padding:12px;background:#fff4d6;border-left:5px solid #e8a83c}}.hero{{width:100%;max-height:600px;object-fit:contain;background:#111}}.meta{{color:#59636e;margin:8px 0 14px}}.object{{page-break-inside:avoid;border-top:1px solid #ccd3da;margin-top:28px;padding-top:16px}}.object img{{width:220px;background:#111}}table{{border-collapse:collapse;width:100%;margin-top:12px}}th,td{{border:1px solid #d7dde3;padding:7px;text-align:left}}th{{background:#eef2f5}}</style></head><body>
-<h1>EIA TECH - Measurement Inspection Report</h1><div class="meta">Generated {datetime.now(timezone.utc).isoformat()} | {len(objects)} object(s)</div>
+<h1>Depth & 3D Model Lab - Measurement Inspection Report</h1><div class="meta">Generated {datetime.now(timezone.utc).isoformat()} | {len(objects)} object(s)</div>
 <p class="notice"><strong>{UNCERTAINTY_NOTICE}</strong><br>This report is an engineering estimate and is not a certified metrology record.</p>
 <img class="hero" src="annotated_rgb.png" alt="Annotated RGB">
 <h2>Provenance</h2><table><tbody>
@@ -269,7 +269,7 @@ def _write_pdf(path: Path, export_dir: Path, summary: InspectionBundleSummary, o
 
     with PdfPages(path) as pdf:
         fig = plt.figure(figsize=(8.27, 11.69))
-        fig.text(0.08, 0.94, "EIA TECH", fontsize=22, weight="bold")
+        fig.text(0.08, 0.94, "Depth & 3D Model Lab", fontsize=22, weight="bold")
         fig.text(0.08, 0.905, "Measurement Inspection Report", fontsize=17, weight="bold")
         fig.text(0.08, 0.875, UNCERTAINTY_NOTICE, fontsize=10, weight="bold")
         fig.text(0.08, 0.852, "Engineering estimate - not a certified metrology record.", fontsize=9)

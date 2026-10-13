@@ -315,7 +315,7 @@ def _write_d4_binary_ply(path: Path, points: np.ndarray, colors: np.ndarray) -> 
     header = (
         "ply\n"
         "format binary_little_endian 1.0\n"
-        "comment EIA TECH D4 raw ten-view canonical accumulation; NOT fused\n"
+        "comment Depth & 3D Model Lab D4 raw ten-view canonical accumulation; NOT fused\n"
         f"element vertex {points.shape[0]}\n"
         "property float x\nproperty float y\nproperty float z\n"
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"

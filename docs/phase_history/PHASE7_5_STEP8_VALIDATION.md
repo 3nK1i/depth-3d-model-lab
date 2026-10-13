@@ -1,4 +1,4 @@
-# EIA TECH Depth & 3D Model Lab
+# Depth & 3D Model Lab
 ## Phase 7.5 Step 8 — Measure & Inspect UI, Manual Correction and Recompute
 
 ## Baseline

@@ -1230,7 +1230,7 @@ def _register_builtins() -> None:
                 active_badge="MOCK ACTIVE",
             ),
             license=ModelLicense(
-                name="EIA TECH internal development utility",
+                name="Internal development utility",
                 status="internal",
             ),
             default_config={

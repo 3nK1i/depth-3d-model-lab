@@ -72,7 +72,7 @@ def _render(
     distance: float, point_size: float, source_count: int,
 ) -> None:
     window = QMainWindow()
-    window.setWindowTitle(f"EIA TECH — I4.3G2B matched view {label_text} {view} {framing}")
+    window.setWindowTitle(f"Depth & 3D Model Lab — I4.3G2B matched view {label_text} {view} {framing}")
     central = QWidget()
     layout = QVBoxLayout(central)
     label = QLabel(
@@ -230,7 +230,7 @@ def main() -> int:
         if args.show:
             primary = Path(artifacts[f"{args.framings[0]}:{args.views[0]}"]["ab"]["path"])
             image = QImage(str(primary))
-            window = QMainWindow(); window.setWindowTitle("EIA TECH — I4.3G2B TempleRing blinded matched view")
+            window = QMainWindow(); window.setWindowTitle("Depth & 3D Model Lab — I4.3G2B TempleRing blinded matched view")
             label = QLabel(); label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setPixmap(QPixmap.fromImage(image).scaled(1320, 700, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             window.setCentralWidget(label); window.resize(1366, 768); window.show()

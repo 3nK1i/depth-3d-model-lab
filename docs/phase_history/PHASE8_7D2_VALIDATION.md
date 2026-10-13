@@ -32,7 +32,7 @@ RTX 2060/RTX 5090 profiling, cancellation, and recovery.
 
 ## Qualified runtime pins
 
-These are EIA TECH Phase 8.7D2 qualification pins, not a claim that they are the
+These are project Phase 8.7D2 qualification pins, not a claim that they are the
 upstream projects' original reference environments:
 
 - Python `3.10`

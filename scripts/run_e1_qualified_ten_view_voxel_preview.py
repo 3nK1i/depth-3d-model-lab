@@ -85,7 +85,7 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
     window = QMainWindow()
-    window.setWindowTitle("EIA TECH — E1 Qualified Ten-View Voxel Fusion")
+    window.setWindowTitle("Depth & 3D Model Lab — E1 Qualified Ten-View Voxel Fusion")
     central = QWidget()
     layout = QVBoxLayout(central)
     voxel = float(summary["policy"]["voxel_size_reconstruction_units"])

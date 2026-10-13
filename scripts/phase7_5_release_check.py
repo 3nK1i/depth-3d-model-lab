@@ -104,7 +104,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(f"EIA TECH | Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
+    print(f"Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
     print("Phase 7.5 release-candidate gate\n")
 
     checks = collect_static_checks(

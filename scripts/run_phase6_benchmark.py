@@ -143,7 +143,7 @@ def _parent_main(args: argparse.Namespace) -> int:
     descriptors = _selected_descriptors(args.models, include_mock=args.include_mock)
     hardware = detect_hardware()
 
-    print(f"EIA TECH Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
+    print(f"Depth & 3D Model Lab v{__version__} — {RELEASE_NAME}")
     print(f"Hardware: {hardware.short_label}")
     print(f"Models: {', '.join(item.model_id for item in descriptors)}")
     print(f"Assets: {manifest.manifest}\n")
@@ -248,7 +248,7 @@ def _parent_main(args: argparse.Namespace) -> int:
     payload: dict[str, object] = {
         "schema_version": 1,
         "application": {
-            "name": "EIA TECH - Depth & 3D Model Lab",
+            "name": "Depth & 3D Model Lab",
             "version": __version__,
             "release_name": RELEASE_NAME,
         },
