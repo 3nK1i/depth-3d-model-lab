@@ -42,7 +42,7 @@ I511B_REPOSITORY_ANCHORS: dict[str, str] = {
     "scripts/reconstruction_engine_fault_worker.py": "0ad2100dba991d917b10fc336f5c05a41df1f1af35923b654ef18b8290ef2a8d",
     "scripts/i5_11_bounded_fault_worker.py": "5d3557e1c07b87816800008de0569e1f86d388657f2fbedf1200b8518c58fae7",
     "app/reconstruction_failure_recovery.py": "4da8cc6a3a1fff30e208c034ff0af99613e3ed3eb43e370a76199c01392e408a",
-    "app/reconstruction_processing_job_controller.py": "b2a8775d7d3ddadfb430b37dd49a1ae2eb18748ec0ec178f0f0af764cf49af12",
+    "app/reconstruction_processing_job_controller.py": "b60a949b0ddb7814f828d48bb06a02ebf4cf9f3b46b42f87ff03ca3eed2bfa77",
     "docs/phase_history/I5_11A_OOM_DISK_CRASH_RECOVERY_INVENTORY_AND_ADMISSION.md": "2eeb26facf540a94c4ee3e3a0967f45bca17459febb6bb9cb8fa59a72ed86402",
 }
 

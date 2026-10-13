@@ -46,12 +46,12 @@ I511C_FINAL_ARTIFACT = "i5_11c_bounded_failure_recovery_campaign.json"
 I511C_REPOSITORY_ANCHORS: dict[str, str] = {
     "core/reconstruction/engine_hardening.py": "5e64126b2c3d11895d15449c6fda9d6f04ab770b891fb9cffa1927cbdaa238c0",
     "core/reconstruction/i5_failure_robustness.py": "6156f88c9c9bf7f677deeaad0c0090197d731604cdfb82de2aa7b4112d03f03e",
-    "core/reconstruction/i5_failure_robustness_preflight.py": "79df05fc6c28620193d047f45c62d35c28c2712a2c7022508e5948360c5bb43c",
+    "core/reconstruction/i5_failure_robustness_preflight.py": "0e14f0dc8b0293b86a9149424c3e05d384c90fd51945de535f603937d50653b3",
     "core/runtime/failures.py": "ba05a440c51d4c5ef6816a586acd44504ddc9ead720243791c4bfe57db4229c4",
     "scripts/i5_11_bounded_fault_worker.py": I511C_FAULT_WORKER_SHA256,
     "scripts/reconstruction_engine_fault_worker.py": "0ad2100dba991d917b10fc336f5c05a41df1f1af35923b654ef18b8290ef2a8d",
     "app/reconstruction_failure_recovery.py": "4da8cc6a3a1fff30e208c034ff0af99613e3ed3eb43e370a76199c01392e408a",
-    "app/reconstruction_processing_job_controller.py": "b2a8775d7d3ddadfb430b37dd49a1ae2eb18748ec0ec178f0f0af764cf49af12",
+    "app/reconstruction_processing_job_controller.py": "b60a949b0ddb7814f828d48bb06a02ebf4cf9f3b46b42f87ff03ca3eed2bfa77",
 }
 
 
