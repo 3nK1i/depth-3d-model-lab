@@ -49,7 +49,7 @@ from scripts.nerf_workers.performance import (  # noqa: E402
     timed_gpu_phase,
 )
 
-FAULT_ENV = "EIA_NERF_E4_TEST_FAULTS"
+FAULT_ENV = "DEPTH3D_NERF_E4_TEST_FAULTS"
 FAULT_NONE = "none"
 FAULT_HANG = "hang"
 FAULT_CRASH = "crash"

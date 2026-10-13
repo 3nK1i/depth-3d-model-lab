@@ -65,11 +65,11 @@ def test_e1_command_is_explicit_shell_free_process_input(tmp_path: Path) -> None
         program=Path(sys.executable),
         arguments=("-c", "print('ok')"),
         working_directory=tmp_path,
-        environment_overrides=(("EIA_TEST", "1"),),
+        environment_overrides=(("DEPTH3D_TEST_OVERRIDE", "1"),),
     )
     assert command.program.is_file()
     assert command.arguments[0] == "-c"
-    assert command.environment_overrides == (("EIA_TEST", "1"),)
+    assert command.environment_overrides == (("DEPTH3D_TEST_OVERRIDE", "1"),)
     with pytest.raises(ValueError, match="reserved by E1"):
         DigitalTwinProcessingCommand(
             program=Path(sys.executable),

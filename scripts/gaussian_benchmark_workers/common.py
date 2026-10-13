@@ -163,7 +163,7 @@ def write_backend_result(
     )
 
 
-LIFECYCLE_FAULT_ENV = "EIA_GAUSSIAN_LIFECYCLE_FAULT_INJECTION"
+LIFECYCLE_FAULT_ENV = "DEPTH3D_GAUSSIAN_LIFECYCLE_FAULT_INJECTION"
 LIFECYCLE_FAULT_MODES = {"none", "hang_with_child", "crash", "partial_artifact_crash"}
 
 

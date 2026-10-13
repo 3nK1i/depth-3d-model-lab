@@ -211,7 +211,7 @@ def test_e4_robustness_report_requires_all_four_scenarios_and_recovery() -> None
 
 def test_e4_worker_fault_hooks_are_explicitly_test_gated() -> None:
     text = (ROOT / "scripts/nerf_workers/nerfstudio_e4_worker.py").read_text(encoding="utf-8")
-    assert 'FAULT_ENV = "EIA_NERF_E4_TEST_FAULTS"' in text
+    assert 'FAULT_ENV = "DEPTH3D_NERF_E4_TEST_FAULTS"' in text
     assert 'os.environ.get(FAULT_ENV) != "1"' in text
     assert "os._exit(86)" in text
     assert '"partial": True' in text

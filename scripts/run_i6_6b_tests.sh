@@ -145,7 +145,7 @@ probe_compile() {
 
 probe_external_pycolmap() {
   local pycolmap_python
-  pycolmap_python="${EIA_PYCOLMAP_PYTHON:-/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python3.11}"
+  pycolmap_python="${DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON:-/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python3.11}"
   if [[ ! -x "$pycolmap_python" ]]; then
     echo "I6.6B external PyCOLMAP probe: FAIL (interpreter not found: $pycolmap_python)"
     EXTERNAL_PYCOLMAP_PROBE_RC=2

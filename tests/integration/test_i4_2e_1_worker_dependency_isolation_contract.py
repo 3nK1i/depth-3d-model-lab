@@ -32,7 +32,7 @@ def test_i42e1_support_worker_preserves_isolation_after_native_visibility_correc
 
 def test_i42e1_test_runner_probes_worker_with_isolated_python_and_import_guard() -> None:
     source = (_root() / "scripts/run_i4_2e_tests.sh").read_text(encoding="utf-8")
-    assert "EIA_PYCOLMAP_PYTHON" in source
+    assert "DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON" in source
     assert "runpy.run_path" in source
     assert '{"cv2", "pycolmap", "core"}' in source
     assert 'name.startswith("core.")' in source
