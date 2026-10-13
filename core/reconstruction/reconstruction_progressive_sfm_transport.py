@@ -15,7 +15,7 @@ from core.reconstruction.reconstruction_progressive_sfm_contract import (
     ProgressiveSfmSnapshot,
 )
 
-PROGRESSIVE_SFM_EVENT_PREFIX = "EIA_SFM_PROGRESSIVE "
+PROGRESSIVE_SFM_EVENT_PREFIX = "DEPTH3D_SFM_PROGRESSIVE "
 
 
 def parse_progressive_sfm_worker_line(line: str) -> ProgressiveSfmSnapshot | None:

@@ -60,7 +60,7 @@ def _workspace_inputs(scene, tmp_path: Path):
         backend_label="Nerfstudio Nerfacto",
         runtime_label="eia-nerf-nerfstudio",
         output_dir=(tmp_path / "job").resolve(),
-        expected_protocol="eia.test.nerf.v1",
+        expected_protocol="depth3d.test.nerf.v1",
         scene_id=scene.scene_id,
         profile_label="Efficient • 64 steps",
     )

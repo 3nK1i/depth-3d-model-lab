@@ -119,7 +119,7 @@ worker = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = worker
 spec.loader.exec_module(worker)
 
-assert helper.PROGRESSIVE_SFM_EVENT_PREFIX == 'EIA_SFM_PROGRESSIVE '
+assert helper.PROGRESSIVE_SFM_EVENT_PREFIX == 'DEPTH3D_SFM_PROGRESSIVE '
 assert helper.PROGRESSIVE_MAX_CAMERA_SAMPLES == 64
 assert helper.PROGRESSIVE_MAX_LANDMARK_SAMPLES == 4096
 assert helper.mapping_snapshot_frame_interval(128) == 11
@@ -271,7 +271,7 @@ payload = {
         'bounded_landmark_preview_limit': 4096,
         'mapping_snapshot_target_count': 12,
         'minimum_emit_interval_seconds': 0.75,
-        'distinct_progressive_stdout_channel': 'EIA_SFM_PROGRESSIVE ',
+        'distinct_progressive_stdout_channel': 'DEPTH3D_SFM_PROGRESSIVE ',
         'existing_worker_event_protocol_modified': False,
         'controller_consumption_added': False,
         'ui_modified': False,

@@ -19,7 +19,7 @@ def test_e4_focus_uses_existing_e1_job_identity_without_new_authority(tmp_path: 
         backend_label="Nerfstudio Nerfacto",
         runtime_label="external eia-nerf-nerfstudio",
         output_dir=tmp_path / "nerf",
-        expected_protocol="eia.digital-twin.nerf-build.v1",
+        expected_protocol="depth3d.digital-twin.nerf-build.v1",
         scene_id="prs-canonical",
     )
     snapshot = begin_digital_twin_processing_snapshot(spec)
@@ -38,7 +38,7 @@ def test_e4_dense_job_authority_text_remains_supporting_only(tmp_path: Path) -> 
         backend_label="Depth Anything 3",
         runtime_label="external eia-da3",
         output_dir=tmp_path / "da3",
-        expected_protocol="eia.digital-twin.da3-full-scene.v1",
+        expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
     )
     snapshot = begin_digital_twin_processing_snapshot(spec)
     assert snapshot.authority_text == "Supporting geometry build only • canonical authority unchanged"

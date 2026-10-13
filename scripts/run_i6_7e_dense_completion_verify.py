@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from app.reconstruction_dense_terminal_verification import verify_dense_completion
-PROTOCOL = 'eia.reconstruction.dense.verify.v1'
+PROTOCOL = 'depth3d.reconstruction.dense.verify.v1'
 
 def main(argv=None):
     p = argparse.ArgumentParser()

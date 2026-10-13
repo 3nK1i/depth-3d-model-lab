@@ -158,8 +158,8 @@ def snap(revision, session_id=None, stage='mapping'):
             'metric_scale_claimed':False,'measurement_authoritative':False,'certified_metrology':False,
         },
     }
-print('EIA_SFM_PROGRESSIVE '+json.dumps(snap(1)), flush=True)
-print('EIA_SFM_PROGRESSIVE '+json.dumps(snap(2, stage='finalizing')), flush=True)
+print('DEPTH3D_SFM_PROGRESSIVE '+json.dumps(snap(1)), flush=True)
+print('DEPTH3D_SFM_PROGRESSIVE '+json.dumps(snap(2, stage='finalizing')), flush=True)
 Path(a.result).write_text(json.dumps(RESULT))
 """.replace("RESULT", repr(result_payload)),
         encoding="utf-8",
@@ -207,7 +207,7 @@ payload={
  'progress_fraction':0.7,'candidate_model_id':'','candidate_model_count':None,'geometry':None,'warnings':[],
  'authority':{'snapshot_authority':'provisional_visualization_only','camera_pose_authority_owner':'PyCOLMAP','pose_convention':'T_reconstruction_from_camera','scale_status':'arbitrary','alignment_status':'arbitrary','provisional':True,'final_result_admitted':False,'persistent_canonical_scene':False,'canonical_geometry_authoritative':False,'metric_scale_claimed':False,'measurement_authoritative':False,'certified_metrology':False},
 }
-print('EIA_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
+print('DEPTH3D_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
 Path(a.result).write_text(json.dumps(RESULT))
 """.replace("RESULT", repr(result_payload)),
         encoding="utf-8",
@@ -253,7 +253,7 @@ payload={
  'progress_fraction':0.7,'candidate_model_id':'','candidate_model_count':None,'geometry':None,'warnings':[],
  'authority':{'snapshot_authority':'provisional_visualization_only','camera_pose_authority_owner':'PyCOLMAP','pose_convention':'T_reconstruction_from_camera','scale_status':'arbitrary','alignment_status':'arbitrary','provisional':True,'final_result_admitted':False,'persistent_canonical_scene':False,'canonical_geometry_authoritative':False,'metric_scale_claimed':False,'measurement_authoritative':False,'certified_metrology':False},
 }
-print('EIA_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
+print('DEPTH3D_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
 Path(a.result).write_text(json.dumps(RESULT))
 """.replace("RESULT", repr(result_payload)),
         encoding="utf-8",

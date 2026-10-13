@@ -26,7 +26,7 @@ from core.reconstruction import (
     materialize_nerf_input_from_da3_persistent_scene,
 )
 
-NERF_BUILD_PROTOCOL = "eia.digital-twin.nerf-build.v1"
+NERF_BUILD_PROTOCOL = "depth3d.digital-twin.nerf-build.v1"
 NERF_BUILD_PHASE = "9.6E3"
 
 

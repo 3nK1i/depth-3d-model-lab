@@ -25,7 +25,7 @@ from core.reconstruction.reconstruction_job_progress_observer import (
 from core.reconstruction.reconstruction_job_resource_sampler import JobResourceSampler
 from core.reconstruction.reconstruction_progressive_dense_transport import ProgressiveDenseTransportLineSink
 
-PROTOCOL = 'eia.reconstruction.dense.post_sparse.v1'
+PROTOCOL = 'depth3d.reconstruction.dense.post_sparse.v1'
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

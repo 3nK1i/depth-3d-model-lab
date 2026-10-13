@@ -66,7 +66,7 @@ def test_e2_active_e1_job_disables_full_scene_and_existing_runtime_controls(qtbo
         backend_label="Depth Anything 3",
         runtime_label="external eia-da3",
         output_dir=tmp_path / "out",
-        expected_protocol="eia.digital-twin.da3-full-scene.v1",
+        expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
     )
     page._digital_twin_processing_snapshot = begin_digital_twin_processing_snapshot(spec)
     page._refresh_da3_full_scene_controls()

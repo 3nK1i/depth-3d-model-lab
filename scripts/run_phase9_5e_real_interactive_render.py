@@ -31,7 +31,7 @@ from core.reconstruction.nerf_interactive_runtime import (
 )
 from core.reconstruction.persistent_scene import read_persistent_reconstruction_scene
 
-PREFIX = "EIA_NERF_JSON "
+PREFIX = "DEPTH3D_NERF_JSON "
 
 
 def _child_env() -> dict[str, str]:

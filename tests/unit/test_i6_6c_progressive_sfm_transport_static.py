@@ -19,7 +19,7 @@ def test_i66c_adds_validated_dedicated_transport_without_touching_worker_protoco
     offline_worker = OFFLINE_WORKER.read_text(encoding="utf-8")
     protocol = WORKER_PROTOCOL.read_text(encoding="utf-8")
 
-    assert 'PROGRESSIVE_SFM_EVENT_PREFIX = "EIA_SFM_PROGRESSIVE "' in transport
+    assert 'PROGRESSIVE_SFM_EVENT_PREFIX = "DEPTH3D_SFM_PROGRESSIVE "' in transport
     assert "ProgressiveSfmSnapshot.from_payload" in transport
     assert "parse_progressive_sfm_worker_line" in backend
     assert "progressive_snapshot_callback" in backend
@@ -27,7 +27,7 @@ def test_i66c_adds_validated_dedicated_transport_without_touching_worker_protoco
     assert "validate_progressive_sfm_snapshot_transition" in backend
     assert "progressive_sfm_transport_line" in offline_worker
     assert "progressive_snapshot_callback=on_progressive_sfm_snapshot" in offline_worker
-    assert "EIA_SFM_PROGRESSIVE " not in protocol
+    assert "DEPTH3D_SFM_PROGRESSIVE " not in protocol
     assert 'SFM_WORKER_EVENT_PREFIX = "EIA_SFM_EVENT "' in protocol
 
 
@@ -53,7 +53,7 @@ def test_i66c_does_not_add_viewport_or_ui_consumption() -> None:
     controller = CONTROLLER.read_text(encoding="utf-8")
     page = PAGE.read_text(encoding="utf-8")
     assert "progressive_sparse_snapshot_changed.connect" not in page
-    assert "EIA_SFM_PROGRESSIVE" not in page
+    assert "DEPTH3D_SFM_PROGRESSIVE" not in page
     assert "vispy" not in TRANSPORT.read_text(encoding="utf-8").lower()
     assert "persistent_canonical_scene = True" not in controller
 

@@ -28,7 +28,7 @@ def _spec(tmp_path: Path) -> DigitalTwinProcessingJobSpec:
         backend_label="Nerfstudio Nerfacto",
         runtime_label="eia-nerf-nerfstudio",
         output_dir=tmp_path / "nerf-build",
-        expected_protocol="eia.digital-twin.processing.test.v1",
+        expected_protocol="depth3d.digital-twin.processing.test.v1",
         scene_id="scene-e1-ui",
         source_label="persistent scene",
         profile_label="Balanced",

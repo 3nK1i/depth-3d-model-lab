@@ -44,7 +44,7 @@ def _default_da3_repository_path() -> Path:
     return Path(raw).expanduser().resolve() if raw else DEFAULT_DA3_REPOSITORY.expanduser().resolve()
 
 DA3_FULL_SCENE_WORKER = PROJECT_ROOT / "scripts" / "run_phase9_6e2_full_scene_da3_job.py"
-DA3_FULL_SCENE_PROTOCOL = "eia.digital-twin.da3-full-scene.v1"
+DA3_FULL_SCENE_PROTOCOL = "depth3d.digital-twin.da3-full-scene.v1"
 
 
 @dataclass(frozen=True, slots=True)

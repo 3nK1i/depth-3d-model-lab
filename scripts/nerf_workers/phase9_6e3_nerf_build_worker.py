@@ -19,7 +19,7 @@ from core.reconstruction import (  # noqa: E402
 )
 from scripts.nerf_workers.nerfstudio_worker import _run as run_qualified_nerfstudio_worker  # noqa: E402
 
-PROTOCOL = "eia.digital-twin.nerf-build.v1"
+PROTOCOL = "depth3d.digital-twin.nerf-build.v1"
 PHASE = "9.6E3"
 
 

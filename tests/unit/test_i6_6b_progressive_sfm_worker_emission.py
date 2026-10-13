@@ -211,6 +211,6 @@ def test_progressive_event_line_uses_distinct_prefix_and_is_json() -> None:
     helper = _load_helper()
     payload = {"schema_version": 1, "revision": 2}
     line = helper.progressive_event_line(payload)
-    assert line.startswith("EIA_SFM_PROGRESSIVE ")
-    restored = json.loads(line[len("EIA_SFM_PROGRESSIVE "):])
+    assert line.startswith("DEPTH3D_SFM_PROGRESSIVE ")
+    restored = json.loads(line[len("DEPTH3D_SFM_PROGRESSIVE "):])
     assert restored == payload

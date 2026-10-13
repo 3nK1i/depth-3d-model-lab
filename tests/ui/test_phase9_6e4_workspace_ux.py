@@ -35,7 +35,7 @@ def _job(tmp_path: Path, *, title: str = "Build Full-Scene DA3"):
             backend_label="Depth Anything 3",
             runtime_label="external eia-da3",
             output_dir=tmp_path / str(uuid4()),
-            expected_protocol="eia.digital-twin.da3-full-scene.v1",
+            expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
         )
     )
 

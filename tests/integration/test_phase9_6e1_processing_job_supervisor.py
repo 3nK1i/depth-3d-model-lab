@@ -19,7 +19,7 @@ from app.reconstruction_processing_jobs import (
 )
 
 
-PROTOCOL = "eia.digital-twin.processing.test.v1"
+PROTOCOL = "depth3d.digital-twin.processing.test.v1"
 
 
 def _worker(path: Path) -> None:

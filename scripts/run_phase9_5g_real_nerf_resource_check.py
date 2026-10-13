@@ -41,7 +41,7 @@ from core.reconstruction.nerf_interactive_runtime import (
 )
 from core.reconstruction.persistent_scene import read_persistent_reconstruction_scene
 
-PREFIX = "EIA_NERF_JSON "
+PREFIX = "DEPTH3D_NERF_JSON "
 EXPECTED_NS_REVISION = "6b60855003011b2ca23c2fe3f8e2ca6314c69924"
 EXPECTED_TCNN_REVISION = "b3473c81396fe927293bdfd5a6be32df8769927c"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-EVENT_PREFIX = "EIA_BENCHMARK_EVENT "
+EVENT_PREFIX = "DEPTH3D_BENCHMARK_EVENT "
 
 
 def encode_event(event: str, **payload: object) -> str:

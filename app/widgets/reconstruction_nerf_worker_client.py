@@ -18,7 +18,7 @@ from PyQt6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSig
 from core.reconstruction.nerf_interactive_runtime import default_phase9_nerf_runtime_spec
 from app.reconstruction_nerf_resources import LatestRenderRequestQueue
 
-PROTOCOL_PREFIX = "EIA_NERF_JSON "
+PROTOCOL_PREFIX = "DEPTH3D_NERF_JSON "
 
 
 class ReconstructionNerfWorkerClient(QObject):

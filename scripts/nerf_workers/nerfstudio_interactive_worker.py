@@ -20,7 +20,7 @@ import sys
 import time
 from typing import Any
 
-PROTOCOL_PREFIX = "EIA_NERF_JSON "
+PROTOCOL_PREFIX = "DEPTH3D_NERF_JSON "
 EXPECTED_NERFSTUDIO_REVISION = "6b60855003011b2ca23c2fe3f8e2ca6314c69924"
 EXPECTED_TCNN_REVISION = "b3473c81396fe927293bdfd5a6be32df8769927c"
 MAX_RENDER_DIMENSION = 1280
@@ -174,7 +174,7 @@ def _load_pipeline(
     staging_root: Path,
 ):
     # Keep backend chatter out of the line protocol.  Only lines prefixed with
-    # EIA_NERF_JSON are consumed by the application.
+    # DEPTH3D_NERF_JSON are consumed by the application.
     with redirect_stdout(sys.stderr):
         import torch
         import tinycudann  # noqa: F401

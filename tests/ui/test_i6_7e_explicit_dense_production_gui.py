@@ -62,7 +62,7 @@ p.add_argument('--session-id'); p.add_argument('--dense-run-id'); p.add_argument
 a,_=p.parse_known_args()
 child=subprocess.Popen(['sleep','120'])
 pathlib.Path(a.offline_output_dir, 'nested_dense_child.pid').write_text(str(child.pid))
-print(json.dumps(dict(protocol='eia.reconstruction.dense.post_sparse.v1', event='dense_starting',
+print(json.dumps(dict(protocol='depth3d.reconstruction.dense.post_sparse.v1', event='dense_starting',
                      session_id=a.session_id, dense_run_id=a.dense_run_id)),flush=True)
 time.sleep(120)
 ''', encoding='utf-8')

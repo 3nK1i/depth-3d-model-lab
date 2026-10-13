@@ -43,7 +43,7 @@ from scripts.run_phase9_5g_real_nerf_resource_check import (
     _wait_released,
 )
 
-PREFIX = "EIA_NERF_JSON "
+PREFIX = "DEPTH3D_NERF_JSON "
 DEFAULT_METRICS_PYTHON = Path.home() / "anaconda3/envs/eia-gaussian-metrics/bin/python"
 
 

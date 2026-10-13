@@ -30,8 +30,8 @@ from core.reconstruction.reconstruction_progressive_dense_transport import (
 ROOT = Path(__file__).resolve().parents[1]
 WORKER = ROOT / 'scripts/run_i6_7e2b2a_post_sparse_dense_worker.py'
 VERIFY_WORKER = ROOT / 'scripts/run_i6_7e_dense_completion_verify.py'
-WORKER_PROTOCOL = 'eia.reconstruction.dense.post_sparse.v1'
-VERIFY_PROTOCOL = 'eia.reconstruction.dense.verify.v1'
+WORKER_PROTOCOL = 'depth3d.reconstruction.dense.post_sparse.v1'
+VERIFY_PROTOCOL = 'depth3d.reconstruction.dense.verify.v1'
 MAX_LINE_BYTES = I67C_MAX_TRANSPORT_SNAPSHOT_BYTES + 1
 
 

@@ -21,17 +21,17 @@ def test_worker_enables_native_incremental_snapshots_without_changing_sfm_algori
 def test_worker_progressive_transport_is_separate_from_existing_event_protocol() -> None:
     worker = WORKER.read_text(encoding="utf-8")
     protocol = PROTOCOL.read_text(encoding="utf-8")
-    assert "EIA_SFM_PROGRESSIVE " in worker or "progressive_event_line" in worker
-    assert "EIA_SFM_PROGRESSIVE " not in protocol
+    assert "DEPTH3D_SFM_PROGRESSIVE " in worker or "progressive_event_line" in worker
+    assert "DEPTH3D_SFM_PROGRESSIVE " not in protocol
     assert 'SFM_WORKER_EVENT_PREFIX = "EIA_SFM_EVENT "' in protocol
 
 
 def test_i66b_does_not_wire_controller_or_ui_consumption() -> None:
     controller = CONTROLLER.read_text(encoding="utf-8")
     page = PAGE.read_text(encoding="utf-8")
-    assert "EIA_SFM_PROGRESSIVE" not in controller
+    assert "DEPTH3D_SFM_PROGRESSIVE" not in controller
     assert "progressive_sfm_snapshot" not in controller.lower()
-    assert "EIA_SFM_PROGRESSIVE" not in page
+    assert "DEPTH3D_SFM_PROGRESSIVE" not in page
 
 
 def test_worker_does_not_import_application_core_or_ml_gui_dependencies() -> None:

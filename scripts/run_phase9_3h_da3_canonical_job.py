@@ -42,7 +42,7 @@ from core.reconstruction.da3_provider import (
 from core.reconstruction.sources import SUPPORTED_IMAGE_EXTENSIONS
 from core.perception.reviewed_analysis import source_image_sha256
 
-PROTOCOL = "eia.reconstruction.da3-canonical.v1"
+PROTOCOL = "depth3d.reconstruction.da3-canonical.v1"
 DA3_WORKER = PROJECT_ROOT / "scripts" / "da3_workers" / "da3_worker.py"
 
 

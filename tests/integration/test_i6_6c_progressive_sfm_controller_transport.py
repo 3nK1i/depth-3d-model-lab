@@ -91,7 +91,7 @@ def _mock_outer_worker(path: Path) -> None:
             out=Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
             def emit(raw):
                 payload=json.loads(raw); payload['session_id']=args.session_id
-                print('EIA_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
+                print('DEPTH3D_SFM_PROGRESSIVE '+json.dumps(payload), flush=True)
             emit({first!r}); time.sleep(0.08)
             emit({second!r}); time.sleep(0.08)
             emit({final!r})

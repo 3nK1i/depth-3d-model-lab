@@ -129,7 +129,7 @@ assert buffer.offer(latest).value == 'coalesced'
 assert buffer.take_pending() == latest
 assert buffer.stats.coalesced == 1
 assert buffer.stats.delivered == 1
-assert PROGRESSIVE_SFM_EVENT_PREFIX == 'EIA_SFM_PROGRESSIVE '
+assert PROGRESSIVE_SFM_EVENT_PREFIX == 'DEPTH3D_SFM_PROGRESSIVE '
 print('I6.6C progressive SfM transport/backpressure import probe: PASS')
 PY
   IMPORT_RC=$?
