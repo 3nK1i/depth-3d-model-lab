@@ -141,6 +141,17 @@ def _existing_file(value: Any, *, label: str) -> Path:
     return path
 
 
+def _environment_value(
+    name: str,
+    *,
+    legacy_name: str | None = None,
+) -> str:
+    raw = os.environ.get(name, "").strip()
+    if not raw and legacy_name:
+        raw = os.environ.get(legacy_name, "").strip()
+    return raw
+
+
 def _existing_dir(value: Any, *, label: str) -> Path:
     path = Path(str(value or "")).expanduser().resolve()
     if not path.is_dir():
@@ -326,8 +337,20 @@ def main() -> int:
         except ValueError as exc:
             raise RuntimeError("persisted transforms escaped dataset root") from exc
 
-        nerfstudio_root = _existing_dir(os.environ.get("EIA_NERFSTUDIO_ROOT"), label="Nerfstudio checkout")
-        tcnn_root = _existing_dir(os.environ.get("EIA_TCNN_ROOT"), label="tiny-cuda-nn checkout")
+        nerfstudio_root = _existing_dir(
+            _environment_value(
+                "DEPTH3D_NERFSTUDIO_ROOT",
+                legacy_name="EIA_NERFSTUDIO_ROOT",
+            ),
+            label="Nerfstudio checkout",
+        )
+        tcnn_root = _existing_dir(
+            _environment_value(
+                "DEPTH3D_TCNN_ROOT",
+                legacy_name="EIA_TCNN_ROOT",
+            ),
+            label="tiny-cuda-nn checkout",
+        )
         ns_revision, ns_clean = _git_state(nerfstudio_root, EXPECTED_NERFSTUDIO_REVISION)
         tcnn_revision, tcnn_clean = _git_state(tcnn_root, EXPECTED_TCNN_REVISION)
         if not ns_clean or not tcnn_clean:

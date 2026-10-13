@@ -84,8 +84,15 @@ def _git_revision(path: Path) -> str:
     return completed.stdout.strip().lower()
 
 
-def _require_checkout(env_name: str, expected_prefix: str) -> tuple[Path, str]:
+def _require_checkout(
+    env_name: str,
+    expected_prefix: str,
+    *,
+    legacy_env_name: str | None = None,
+) -> tuple[Path, str]:
     raw = os.environ.get(env_name, "").strip()
+    if not raw and legacy_env_name:
+        raw = os.environ.get(legacy_env_name, "").strip()
     if not raw:
         raise RuntimeError(f"{env_name} is required for reproducible E4 validation")
     root = Path(raw).expanduser().resolve()
@@ -250,9 +257,15 @@ def _run(request_path: Path, result_path: Path) -> None:
     _maybe_inject_fault(request, result_path)
 
     nerfstudio_root, nerfstudio_revision = _require_checkout(
-        "EIA_NERFSTUDIO_ROOT", NERFSTUDIO_RELEASE_REVISION_PREFIX
+        "DEPTH3D_NERFSTUDIO_ROOT",
+        NERFSTUDIO_RELEASE_REVISION_PREFIX,
+        legacy_env_name="EIA_NERFSTUDIO_ROOT",
     )
-    _tcnn_root, tcnn_revision = _require_checkout("EIA_TCNN_ROOT", TINY_CUDA_NN_E2_REVISION)
+    _tcnn_root, tcnn_revision = _require_checkout(
+        "DEPTH3D_TCNN_ROOT",
+        TINY_CUDA_NN_E2_REVISION,
+        legacy_env_name="EIA_TCNN_ROOT",
+    )
 
     import torch
     import tinycudann  # noqa: F401
