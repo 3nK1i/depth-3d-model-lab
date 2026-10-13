@@ -23,7 +23,7 @@ def main() -> int:
     args = parser.parse_args()
 
     workspace = args.workspace.expanduser().resolve()
-    expected = os.environ.get("EIA_RECONSTRUCTION_ENGINE_WORKSPACE", "")
+    expected = os.environ.get("DEPTH3D_RECONSTRUCTION_ENGINE_WORKSPACE", "")
     if expected and Path(expected).resolve() != workspace:
         raise RuntimeError("workspace does not match supervisor-owned workspace")
     workspace.mkdir(parents=True, exist_ok=True)

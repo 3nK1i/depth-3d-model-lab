@@ -304,6 +304,8 @@ def run_supervised_engine_process(spec: ReconstructionEngineProcessSpec) -> Reco
     workspace = _prepare_owned_workspace(spec)
     env = os.environ.copy()
     env.update(spec.environment_dict)
+    env["DEPTH3D_RECONSTRUCTION_ENGINE_WORKSPACE"] = str(workspace)
+    # Compatibility for the byte-frozen I5.11 bounded fault worker.
     env["EIA_RECONSTRUCTION_ENGINE_WORKSPACE"] = str(workspace)
     started = time.monotonic()
     try:
