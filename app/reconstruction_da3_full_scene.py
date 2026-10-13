@@ -32,11 +32,15 @@ DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
 DEFAULT_DA3_REPOSITORY = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
 
 def _default_da3_python_path() -> Path:
-    raw = os.environ.get("EIA_RECONSTRUCTION_DA3_PYTHON", "").strip()
+    raw = os.environ.get("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", "").strip()
+    if not raw:
+        raw = os.environ.get("EIA_RECONSTRUCTION_DA3_PYTHON", "").strip()
     return Path(raw).expanduser().resolve() if raw else DEFAULT_DA3_PYTHON.expanduser().resolve()
 
 def _default_da3_repository_path() -> Path:
-    raw = os.environ.get("EIA_RECONSTRUCTION_DA3_REPOSITORY", "").strip()
+    raw = os.environ.get("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", "").strip()
+    if not raw:
+        raw = os.environ.get("EIA_RECONSTRUCTION_DA3_REPOSITORY", "").strip()
     return Path(raw).expanduser().resolve() if raw else DEFAULT_DA3_REPOSITORY.expanduser().resolve()
 
 DA3_FULL_SCENE_WORKER = PROJECT_ROOT / "scripts" / "run_phase9_6e2_full_scene_da3_job.py"
