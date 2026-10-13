@@ -186,8 +186,15 @@ DEFAULT_TEST_HORIZONTAL_FOV_DEGREES = 70.0
 DEFAULT_TEST_FOCAL_LENGTH_RELATIVE_UNCERTAINTY = 0.15
 
 
-def _runtime_path_from_environment(name: str, fallback: Path) -> Path:
+def _runtime_path_from_environment(
+    name: str,
+    fallback: Path,
+    *,
+    legacy_name: str | None = None,
+) -> Path:
     raw = os.environ.get(name, "").strip()
+    if not raw and legacy_name:
+        raw = os.environ.get(legacy_name, "").strip()
     return Path(raw).expanduser().resolve() if raw else fallback.expanduser().resolve()
 
 
@@ -195,8 +202,9 @@ def _configured_pycolmap_python_path() -> Path:
     """Resolve the configured isolated PyCOLMAP interpreter without validating it."""
 
     return _runtime_path_from_environment(
-        "EIA_RECONSTRUCTION_PYCOLMAP_PYTHON",
+        "DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON",
         DEFAULT_PYCOLMAP_PYTHON,
+        legacy_name="EIA_RECONSTRUCTION_PYCOLMAP_PYTHON",
     )
 
 
@@ -207,7 +215,7 @@ def default_pycolmap_python_path() -> Path:
     if not path.is_file():
         raise ReconstructionValidationError(
             "Offline reconstruction requires the isolated PyCOLMAP interpreter. "
-            f"Expected: {path}. Set EIA_RECONSTRUCTION_PYCOLMAP_PYTHON to override it."
+            f"Expected: {path}. Set DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON to override it."
         )
     return path
 
@@ -216,8 +224,9 @@ def default_reconstruction_output_root() -> Path:
     """Return the transient B3 runtime-output root without creating it."""
 
     return _runtime_path_from_environment(
-        "EIA_RECONSTRUCTION_OUTPUT_ROOT",
+        "DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT",
         DEFAULT_RECONSTRUCTION_OUTPUT_ROOT,
+        legacy_name="EIA_RECONSTRUCTION_OUTPUT_ROOT",
     )
 
 
@@ -225,16 +234,19 @@ def default_live_stella_launch_settings() -> LiveStellaLaunchSettings:
     """Resolve and validate the already-qualified external Stella runtime paths."""
 
     install_prefix = _runtime_path_from_environment(
-        "EIA_RECONSTRUCTION_STELLA_PREFIX",
+        "DEPTH3D_RECONSTRUCTION_STELLA_PREFIX",
         DEFAULT_STELLA_INSTALL_PREFIX,
+        legacy_name="EIA_RECONSTRUCTION_STELLA_PREFIX",
     )
     worker = _runtime_path_from_environment(
-        "EIA_RECONSTRUCTION_STELLA_WORKER",
+        "DEPTH3D_RECONSTRUCTION_STELLA_WORKER",
         DEFAULT_STELLA_WORKER,
+        legacy_name="EIA_RECONSTRUCTION_STELLA_WORKER",
     )
     vocabulary = _runtime_path_from_environment(
-        "EIA_RECONSTRUCTION_STELLA_VOCAB",
+        "DEPTH3D_RECONSTRUCTION_STELLA_VOCAB",
         DEFAULT_STELLA_VOCABULARY,
+        legacy_name="EIA_RECONSTRUCTION_STELLA_VOCAB",
     )
     if not install_prefix.is_dir():
         raise ReconstructionValidationError(
