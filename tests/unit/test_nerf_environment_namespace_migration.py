@@ -171,3 +171,45 @@ def test_interactive_client_scrubs_legacy_and_emits_public_namespace() -> None:
 
     assert 'env["EIA_NERFSTUDIO_ROOT"] =' not in text
     assert 'env["EIA_TCNN_ROOT"] =' not in text
+
+def test_qualification_helpers_use_public_nerf_environment_namespace() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    helpers = (
+        "scripts/nerf_e4_support.py",
+        "scripts/reconstruction_engine_checkpoint_worker.py",
+        "scripts/run_nerf_backend_qualification.py",
+        "scripts/run_nerf_real_scene_validation.py",
+        "scripts/run_phase9_5e_real_interactive_render.py",
+        "scripts/run_phase9_5g_real_nerf_resource_check.py",
+        "scripts/run_reconstruction_f4_real_backends.py",
+    )
+
+    for relative in helpers:
+        source = (root / relative).read_text(encoding="utf-8")
+
+        assert "DEPTH3D_NERFSTUDIO_ROOT" in source
+        assert "DEPTH3D_TCNN_ROOT" in source
+        assert "EIA_NERFSTUDIO_ROOT" not in source
+        assert "EIA_TCNN_ROOT" not in source
+
+
+def test_e4_worker_environment_emits_public_nerf_namespace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from scripts.nerf_e4_support import worker_environment
+
+    nerfstudio_root = tmp_path / "nerfstudio"
+    tcnn_root = tmp_path / "tiny-cuda-nn"
+
+    monkeypatch.setenv("EIA_NERFSTUDIO_ROOT", "/legacy/nerfstudio")
+    monkeypatch.setenv("EIA_TCNN_ROOT", "/legacy/tcnn")
+
+    env = worker_environment(
+        nerfstudio_root=nerfstudio_root,
+        tcnn_root=tcnn_root,
+    )
+
+    assert env["DEPTH3D_NERFSTUDIO_ROOT"] == str(nerfstudio_root)
+    assert env["DEPTH3D_TCNN_ROOT"] == str(tcnn_root)

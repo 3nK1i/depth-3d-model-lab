@@ -120,15 +120,15 @@ def main()->int:
             worker_script=str((ROOT/'scripts/nerf_workers/nerfstudio_worker.py').resolve()),
             timeout_s=a.timeout_s,require_isolated_interpreter=True,
         )
-        old_ns=os.environ.get('EIA_NERFSTUDIO_ROOT'); old_tcnn=os.environ.get('EIA_TCNN_ROOT')
-        os.environ['EIA_NERFSTUDIO_ROOT']=str(a.nerfstudio_root.expanduser().resolve())
-        os.environ['EIA_TCNN_ROOT']=str(a.tiny_cuda_nn_root.expanduser().resolve())
+        old_ns=os.environ.get('DEPTH3D_NERFSTUDIO_ROOT'); old_tcnn=os.environ.get('DEPTH3D_TCNN_ROOT')
+        os.environ['DEPTH3D_NERFSTUDIO_ROOT']=str(a.nerfstudio_root.expanduser().resolve())
+        os.environ['DEPTH3D_TCNN_ROOT']=str(a.tiny_cuda_nn_root.expanduser().resolve())
         try: return run_nerf_external_worker(spec,req)
         finally:
-            if old_ns is None: os.environ.pop('EIA_NERFSTUDIO_ROOT',None)
-            else: os.environ['EIA_NERFSTUDIO_ROOT']=old_ns
-            if old_tcnn is None: os.environ.pop('EIA_TCNN_ROOT',None)
-            else: os.environ['EIA_TCNN_ROOT']=old_tcnn
+            if old_ns is None: os.environ.pop('DEPTH3D_NERFSTUDIO_ROOT',None)
+            else: os.environ['DEPTH3D_NERFSTUDIO_ROOT']=old_ns
+            if old_tcnn is None: os.environ.pop('DEPTH3D_TCNN_ROOT',None)
+            else: os.environ['DEPTH3D_TCNN_ROOT']=old_tcnn
 
     executors=dict(f.executors)
     executors[providers[-2].provider_id]=GaussianAppearanceProviderExecutor(store=f.store,output_root=out,artifact_resolver=gaussian_resolver)

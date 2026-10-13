@@ -143,8 +143,8 @@ def preflight(
 
 def worker_environment(*, nerfstudio_root: Path, tcnn_root: Path, allow_faults: bool = False) -> dict[str, str]:
     env = os.environ.copy()
-    env["EIA_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
-    env["EIA_TCNN_ROOT"] = str(tcnn_root)
+    env["DEPTH3D_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
+    env["DEPTH3D_TCNN_ROOT"] = str(tcnn_root)
     if allow_faults:
         env["EIA_NERF_E4_TEST_FAULTS"] = "1"
     else:

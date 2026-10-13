@@ -200,21 +200,21 @@ def _resume_mode(args) -> int:
             timeout_s=args.backend_timeout_s,
             require_isolated_interpreter=True,
         )
-        old_ns = os.environ.get("EIA_NERFSTUDIO_ROOT")
-        old_tcnn = os.environ.get("EIA_TCNN_ROOT")
-        os.environ["EIA_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
-        os.environ["EIA_TCNN_ROOT"] = str(tcnn_root)
+        old_ns = os.environ.get("DEPTH3D_NERFSTUDIO_ROOT")
+        old_tcnn = os.environ.get("DEPTH3D_TCNN_ROOT")
+        os.environ["DEPTH3D_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
+        os.environ["DEPTH3D_TCNN_ROOT"] = str(tcnn_root)
         try:
             return run_nerf_external_worker(spec, req)
         finally:
             if old_ns is None:
-                os.environ.pop("EIA_NERFSTUDIO_ROOT", None)
+                os.environ.pop("DEPTH3D_NERFSTUDIO_ROOT", None)
             else:
-                os.environ["EIA_NERFSTUDIO_ROOT"] = old_ns
+                os.environ["DEPTH3D_NERFSTUDIO_ROOT"] = old_ns
             if old_tcnn is None:
-                os.environ.pop("EIA_TCNN_ROOT", None)
+                os.environ.pop("DEPTH3D_TCNN_ROOT", None)
             else:
-                os.environ["EIA_TCNN_ROOT"] = old_tcnn
+                os.environ["DEPTH3D_TCNN_ROOT"] = old_tcnn
 
     executors = dict(fixture.executors)
     # The first three stages are committed in the checkpoint. If resume is

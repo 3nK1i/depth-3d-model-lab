@@ -153,10 +153,10 @@ def _run_worker(
     result_path = output / "worker_result.json"
     request_path.write_text(json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     worker = ROOT / "scripts" / "nerf_workers" / "nerfstudio_e3_worker.py"
-    old_ns = os.environ.get("EIA_NERFSTUDIO_ROOT")
-    old_tcnn = os.environ.get("EIA_TCNN_ROOT")
-    os.environ["EIA_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
-    os.environ["EIA_TCNN_ROOT"] = str(tcnn_root)
+    old_ns = os.environ.get("DEPTH3D_NERFSTUDIO_ROOT")
+    old_tcnn = os.environ.get("DEPTH3D_TCNN_ROOT")
+    os.environ["DEPTH3D_NERFSTUDIO_ROOT"] = str(nerfstudio_root)
+    os.environ["DEPTH3D_TCNN_ROOT"] = str(tcnn_root)
     try:
         completed = subprocess.run(
             [str(python), str(worker), "--request", str(request_path), "--result", str(result_path)],
@@ -168,13 +168,13 @@ def _run_worker(
         )
     finally:
         if old_ns is None:
-            os.environ.pop("EIA_NERFSTUDIO_ROOT", None)
+            os.environ.pop("DEPTH3D_NERFSTUDIO_ROOT", None)
         else:
-            os.environ["EIA_NERFSTUDIO_ROOT"] = old_ns
+            os.environ["DEPTH3D_NERFSTUDIO_ROOT"] = old_ns
         if old_tcnn is None:
-            os.environ.pop("EIA_TCNN_ROOT", None)
+            os.environ.pop("DEPTH3D_TCNN_ROOT", None)
         else:
-            os.environ["EIA_TCNN_ROOT"] = old_tcnn
+            os.environ["DEPTH3D_TCNN_ROOT"] = old_tcnn
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "unknown E3 worker failure"
         raise RuntimeError(f"E3 isolated Nerfstudio worker failed: {detail}")

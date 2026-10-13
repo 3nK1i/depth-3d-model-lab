@@ -43,8 +43,8 @@ def _child_env() -> dict[str, str]:
     env["CONDA_DEFAULT_ENV"] = prefix.name
     env["PYTHONNOUSERSITE"] = "1"
     env.pop("PYTHONPATH", None)
-    env["EIA_NERFSTUDIO_ROOT"] = spec.nerfstudio_root
-    env["EIA_TCNN_ROOT"] = spec.tiny_cuda_nn_root
+    env["DEPTH3D_NERFSTUDIO_ROOT"] = spec.nerfstudio_root
+    env["DEPTH3D_TCNN_ROOT"] = spec.tiny_cuda_nn_root
 
     def prepend(key: str, values: list[Path]) -> None:
         parts = [str(value) for value in values if value.is_dir()]
