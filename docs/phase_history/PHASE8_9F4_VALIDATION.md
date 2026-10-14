@@ -11,7 +11,7 @@ F4 proves that the already-qualified isolated Nerfstudio/Nerfacto backend can co
 - 8.9F2 PyCOLMAP SfM is the real pose source for F4.
 - 24 registered cameras are selected evenly across the real 80-camera trajectory.
 - Intrinsics/distortion are derived from the returned SfM camera model; no calibration values are hardcoded.
-- The expected `SIMPLE_RADIAL` model is undistorted to the existing EIA pinhole neural-scene contract and bounded to a 720 px long edge.
+- The expected `SIMPLE_RADIAL` model is undistorted to the existing pinhole neural-scene contract and bounded to a 720 px long edge.
 - The existing Phase 8.7E3 split contract provides 20 training views and 4 held-out views.
 - Existing E3 held-out quality runs for 1000 bounded steps.
 - Existing E4 performance/artifact hardening runs for 1000 bounded steps and 8 render repetitions.
@@ -28,7 +28,7 @@ F4 proves that the already-qualified isolated Nerfstudio/Nerfacto backend can co
 
 ## Isolation
 
-Nerfstudio and tiny-cuda-nn execute only in `/home/eiatech/anaconda3/envs/eia-nerf-nerfstudio`. Production `depth` must not import Nerfstudio, tiny-cuda-nn, gsplat, DA3, or PyCOLMAP.
+Nerfstudio and tiny-cuda-nn execute only in the isolated Nerfstudio runtime. Production `depth` must not import Nerfstudio, tiny-cuda-nn, gsplat, DA3, or PyCOLMAP.
 
 Qualified pins:
 

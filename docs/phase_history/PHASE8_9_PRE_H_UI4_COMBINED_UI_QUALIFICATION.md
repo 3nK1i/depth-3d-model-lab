@@ -38,7 +38,7 @@ Launch once with the real process status preserved:
 ```bash
 set -o pipefail
 PYTHONFAULTHANDLER=1 python -X faulthandler main.py \
-  2>&1 | tee /tmp/eia_pre_h_ui4_manual.log
+  2>&1 | tee /tmp/depth3d_pre_h_ui4_manual.log
 rc=${PIPESTATUS[0]}
 echo "REAL_EXIT_CODE=$rc"
 ```
@@ -63,7 +63,7 @@ Acceptance requires `REAL_EXIT_CODE=0` and no Python/Qt fatal markers:
 ```bash
 grep -E \
   "NameError|QBackingStore::endPaint|QPaintDevice|Uncaught exception|Traceback|Fatal Python error" \
-  /tmp/eia_pre_h_ui4_manual.log \
+  /tmp/depth3d_pre_h_ui4_manual.log \
   || echo "PASS: UI-4 manual runtime clean"
 ```
 

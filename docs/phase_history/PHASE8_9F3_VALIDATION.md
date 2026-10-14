@@ -30,7 +30,7 @@ F3 fixture. F3 therefore uses a **validation-only bridge** around existing Phase
 5. seed Gaussians from the canonical surface using the existing
    `build_gaussian_seed` contract;
 6. run the existing D3 held-out/performance benchmark against **gsplat only** in
-   the isolated `eia-gaussian-gsplat` interpreter.
+   the isolated gsplat interpreter.
 
 This does **not** claim that PyCOLMAP poses are fed to DA3 or to the F3 Gaussian
 artifact. F2 already established that PyCOLMAP and DA3 are independent evidence
