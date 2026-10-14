@@ -58,7 +58,7 @@ def _workspace_inputs(scene, tmp_path: Path):
         kind=DigitalTwinProcessingKind.NERF_APPEARANCE,
         title="Rebuild NeRF",
         backend_label="Nerfstudio Nerfacto",
-        runtime_label="eia-nerf-nerfstudio",
+        runtime_label="external Nerfstudio",
         output_dir=(tmp_path / "job").resolve(),
         expected_protocol="depth3d.test.nerf.v1",
         scene_id=scene.scene_id,

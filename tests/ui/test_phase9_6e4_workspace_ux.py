@@ -33,7 +33,7 @@ def _job(tmp_path: Path, *, title: str = "Build Full-Scene DA3"):
             kind=DigitalTwinProcessingKind.DENSE_GEOMETRY,
             title=title,
             backend_label="Depth Anything 3",
-            runtime_label="external eia-da3",
+            runtime_label="external Depth Anything 3",
             output_dir=tmp_path / str(uuid4()),
             expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
         )

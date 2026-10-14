@@ -17,7 +17,7 @@ def test_e4_focus_uses_existing_e1_job_identity_without_new_authority(tmp_path: 
         kind=DigitalTwinProcessingKind.NERF_APPEARANCE,
         title="Rebuild NeRF",
         backend_label="Nerfstudio Nerfacto",
-        runtime_label="external eia-nerf-nerfstudio",
+        runtime_label="external Nerfstudio",
         output_dir=tmp_path / "nerf",
         expected_protocol="depth3d.digital-twin.nerf-build.v1",
         scene_id="prs-canonical",
@@ -36,7 +36,7 @@ def test_e4_dense_job_authority_text_remains_supporting_only(tmp_path: Path) -> 
         kind=DigitalTwinProcessingKind.DENSE_GEOMETRY,
         title="Build Full-Scene DA3",
         backend_label="Depth Anything 3",
-        runtime_label="external eia-da3",
+        runtime_label="external Depth Anything 3",
         output_dir=tmp_path / "da3",
         expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
     )

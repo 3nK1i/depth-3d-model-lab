@@ -64,7 +64,7 @@ def test_e2_active_e1_job_disables_full_scene_and_existing_runtime_controls(qtbo
         kind=DigitalTwinProcessingKind.DENSE_GEOMETRY,
         title="Build Full-Scene DA3",
         backend_label="Depth Anything 3",
-        runtime_label="external eia-da3",
+        runtime_label="external Depth Anything 3",
         output_dir=tmp_path / "out",
         expected_protocol="depth3d.digital-twin.da3-full-scene.v1",
     )

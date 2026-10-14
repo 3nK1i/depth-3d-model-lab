@@ -149,7 +149,7 @@ class DA3CanonicalIntegrationController(QObject):
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         # On Unix, give the depth-side orchestration worker its own process group.
-        # The external eia-da3 subprocess inherits that group, so cancellation can
+        # The external Depth Anything 3 subprocess inherits that group, so cancellation can
         # terminate the whole job without touching the application process.
         if os.name == "posix" and hasattr(self._process, "setChildProcessModifier"):
             self._process.setChildProcessModifier(os.setsid)

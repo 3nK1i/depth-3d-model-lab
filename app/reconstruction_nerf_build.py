@@ -150,7 +150,7 @@ def build_nerf_training_job(
         kind=DigitalTwinProcessingKind.NERF_APPEARANCE,
         title=title,
         backend_label="Nerfstudio Nerfacto",
-        runtime_label="external eia-nerf-nerfstudio",
+        runtime_label="external Nerfstudio",
         output_dir=root,
         expected_protocol=NERF_BUILD_PROTOCOL,
         scene_id=str(scene.scene_id),

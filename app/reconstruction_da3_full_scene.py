@@ -266,7 +266,7 @@ def build_full_scene_da3_job(
         kind=DigitalTwinProcessingKind.DENSE_GEOMETRY,
         title="Build Full-Scene DA3",
         backend_label="Depth Anything 3",
-        runtime_label="external eia-da3",
+        runtime_label="external Depth Anything 3",
         output_dir=output_dir,
         expected_protocol=DA3_FULL_SCENE_PROTOCOL,
         source_label=video.name,

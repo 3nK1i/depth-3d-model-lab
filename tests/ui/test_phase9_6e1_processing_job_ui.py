@@ -26,7 +26,7 @@ def _spec(tmp_path: Path) -> DigitalTwinProcessingJobSpec:
         kind=DigitalTwinProcessingKind.NERF_APPEARANCE,
         title="Build NeRF Appearance",
         backend_label="Nerfstudio Nerfacto",
-        runtime_label="eia-nerf-nerfstudio",
+        runtime_label="external Nerfstudio",
         output_dir=tmp_path / "nerf-build",
         expected_protocol="depth3d.digital-twin.processing.test.v1",
         scene_id="scene-e1-ui",
@@ -68,7 +68,7 @@ def test_e1_running_snapshot_surfaces_progress_runtime_output_and_cancel(qtbot, 
     assert page._digital_twin_processing_state_value.text() == "Running"
     assert page._digital_twin_processing_stage_value.text() == "Optimization"
     assert "Nerfstudio Nerfacto" in page._digital_twin_processing_backend_value.text()
-    assert "eia-nerf-nerfstudio" in page._digital_twin_processing_backend_value.text()
+    assert "external Nerfstudio" in page._digital_twin_processing_backend_value.text()
     assert page._digital_twin_processing_progress.value() == 68
     assert "6800 / 10000" in page._digital_twin_processing_progress.format()
     assert page._digital_twin_processing_elapsed_value.text() == "17:22"
