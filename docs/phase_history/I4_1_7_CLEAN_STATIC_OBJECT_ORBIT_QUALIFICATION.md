@@ -42,11 +42,11 @@ Preferred first qualification object: matte, rigid, textured, asymmetric object 
 ## Quick capture preflight
 
 ```bash
-rm -rf /tmp/eia_i4_1_7_capture_preflight
+rm -rf /tmp/depth3d_i4_1_7_capture_preflight
 
 python scripts/run_i4_1_7_capture_preflight.py \
   --video /path/to/clean-static-orbit.mp4 \
-  --output-dir /tmp/eia_i4_1_7_capture_preflight
+  --output-dir /tmp/depth3d_i4_1_7_capture_preflight
 ```
 
 Review the generated contact sheet before the heavy campaign.
@@ -54,19 +54,19 @@ Review the generated contact sheet before the heavy campaign.
 ## Real campaign
 
 ```bash
-rm -rf /tmp/eia_i4_1_7_clean_static_orbit
+rm -rf /tmp/depth3d_i4_1_7_clean_static_orbit
 
 python scripts/run_i4_1_7_clean_static_orbit_campaign.py \
   --video /path/to/clean-static-orbit.mp4 \
   --confirm-static-capture \
-  --output-dir /tmp/eia_i4_1_7_clean_static_orbit
+  --output-dir /tmp/depth3d_i4_1_7_clean_static_orbit
 ```
 
 Default runtime assumptions preserve the established isolated environments:
 
-- PyCOLMAP: `~/anaconda3/envs/eia-pycolmap-probe/bin/python3.11`
-- DA3: `~/anaconda3/envs/eia-da3/bin/python3.11`
-- DA3 checkout: `~/Desktop/eia-da3-backends/depth-anything-3`
+- PyCOLMAP: isolated PyCOLMAP runtime
+- DA3: isolated Depth Anything 3 runtime
+- DA3 checkout: external Depth Anything 3 source checkout
 - exhaustive SfM matching
 - 40 global anchors
 - local dense target 2 FPS
