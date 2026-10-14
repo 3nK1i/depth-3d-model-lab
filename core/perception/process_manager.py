@@ -39,7 +39,7 @@ class PerceptionProcessManager:
         self._process = self._ctx.Process(
             target=perception_worker_main,
             args=(configuration, self._input, self._output),
-            name="eia-perception-worker",
+            name="depth3d-perception-worker",
             daemon=True,
         )
         try:

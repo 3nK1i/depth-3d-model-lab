@@ -207,7 +207,7 @@ class SourceBar(QWidget):
         self.source_type_changed.emit(source_type)
 
     def _sync_type_button_icons(self) -> None:
-        """Tint the checked source button's icon EIA-red to match its text."""
+        """Tint the checked source button's icon with the accent color to match its text."""
         for t, btn in self._type_buttons.items():
             icon_name, _ = _SOURCE_META[t]
             color = PALETTE.accent if t == self._active_type else PALETTE.toolbar_text_muted

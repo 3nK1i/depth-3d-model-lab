@@ -1,7 +1,7 @@
 """Reusable pill-style toggle switch, QPainter-drawn.
 
 Matches the target UI's toggle switches (Grid / Axes / Background Removal
-/ VSync): a rounded track that fills EIA-red when on, with a white knob
+/ VSync): a rounded track that fills with the accent color when on, with a white knob
 that slides across. Fully vector-drawn and DPI-aware; no image assets.
 """
 

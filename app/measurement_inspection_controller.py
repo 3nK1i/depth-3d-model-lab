@@ -188,7 +188,7 @@ class MeasurementInspectionController(QObject):
     def _prepare_temp(self) -> None:
         # Keep previous completed bundles alive while a recompute process reads
         # its trusted state file. All session directories are removed on shutdown.
-        self._temp_dir = Path(tempfile.mkdtemp(prefix="eia_measure_inspect_"))
+        self._temp_dir = Path(tempfile.mkdtemp(prefix="depth3d_measure_inspect_"))
         self._temp_dirs.append(self._temp_dir)
 
     def _start_process(self, arguments: list[str], state: InspectionControllerState) -> None:

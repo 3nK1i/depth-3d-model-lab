@@ -91,7 +91,7 @@ class AutoSegmentController(QObject):
     ) -> None:
         if int(minimum_mask_pixels) < 1 or int(max_proposals) < 1:
             raise ValueError("Auto Segment limits must be positive integers.")
-        input_path, output = self._prepare_job(image_bgr, prefix="eia_auto_segment_")
+        input_path, output = self._prepare_job(image_bgr, prefix="depth3d_auto_segment_")
         self._launch(
             [
                 str(self._root / "scripts" / "run_auto_segment_job.py"),
@@ -119,7 +119,7 @@ class AutoSegmentController(QObject):
             raise ValueError("minimum_mask_pixels must be positive.")
         if not isinstance(prompt_spec, dict):
             raise TypeError("prompt_spec must be a dictionary.")
-        input_path, output = self._prepare_job(image_bgr, prefix="eia_prompted_segment_")
+        input_path, output = self._prepare_job(image_bgr, prefix="depth3d_prompted_segment_")
         assert self._temp_dir is not None
         prompt_path = self._temp_dir / "prompt.json"
         prompt_path.write_text(json.dumps(prompt_spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")

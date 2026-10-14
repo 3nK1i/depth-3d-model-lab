@@ -42,7 +42,7 @@ class SnapshotController(QObject):
             raise RuntimeError("A snapshot job is already running.")
         if image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("Snapshot input must be an HxWx3 BGR image.")
-        self._temp_dir = Path(tempfile.mkdtemp(prefix="eia_snapshot_"))
+        self._temp_dir = Path(tempfile.mkdtemp(prefix="depth3d_snapshot_"))
         self._output_dir = Path(output_dir)
         input_path = self._temp_dir / "frame.npy"
         config_path = self._temp_dir / "config.json"
