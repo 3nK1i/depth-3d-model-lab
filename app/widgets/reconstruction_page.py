@@ -5187,7 +5187,7 @@ class ReconstructionPage(QWidget):
         if self._interactive_nerf_session_dir is not None:
             self._schedule_interactive_nerf_session_cleanup(self._interactive_nerf_session_dir)
         self._interactive_nerf_session_dir = Path(
-            tempfile.mkdtemp(prefix="eia-phase9-5e-nerf-")
+            tempfile.mkdtemp(prefix="depth3d-phase9-5e-nerf-")
         ).resolve()
         worker = Path(__file__).resolve().parents[2] / "scripts" / "nerf_workers" / "nerfstudio_interactive_worker.py"
         try:
@@ -6050,7 +6050,7 @@ class ReconstructionPage(QWidget):
         self._nerf_build_button = QPushButton("Build & Train NeRF")
         self._nerf_build_button.setObjectName("reconstructionRuntimeAction")
         self._nerf_build_button.setToolTip(
-            "Build exact canonical RGB/camera input, train Nerfacto in the isolated eia-nerf-nerfstudio runtime, and persist appearance as a new immutable scene revision. NeRF never becomes geometry or scale authority."
+            "Build exact canonical RGB/camera input, train Nerfacto in the isolated Nerfstudio runtime, and persist appearance as a new immutable scene revision. NeRF never becomes geometry or scale authority."
         )
         self._nerf_build_button.clicked.connect(self._start_nerf_build)
         self._nerf_build_button.setMinimumWidth(0)
@@ -7567,7 +7567,7 @@ class ReconstructionPage(QWidget):
         labels = {
             "probing_da3": "Qualifying isolated DA3 runtime…",
             "da3_qualified": "Qualified runtime • preparing source frames",
-            "da3_inference_started": "DA3 inference running in eia-da3…",
+            "da3_inference_started": "DA3 inference running in isolated runtime…",
             "da3_inference_completed": "DA3 evidence ready • canonicalizing…",
             "canonicalizing": "Building canonical dense/surface geometry…",
             "completed": "Completed • persistent canonical scene loaded",
@@ -7576,7 +7576,7 @@ class ReconstructionPage(QWidget):
         presentations = {
             "probing_da3": ReconstructionStatusPresentation(
                 "Qualifying DA3 runtime",
-                "Read-only qualification of the isolated eia-da3 runtime and compatibility lock.",
+                "Read-only qualification of the isolated DA3 runtime and compatibility lock.",
                 "running",
                 indeterminate=True,
             ),
@@ -7588,7 +7588,7 @@ class ReconstructionPage(QWidget):
             ),
             "da3_inference_started": ReconstructionStatusPresentation(
                 "DA3 inference",
-                "Relative depth and camera-pose evidence are being produced in the isolated eia-da3 environment.",
+                "Relative depth and camera-pose evidence are being produced in the isolated DA3 environment.",
                 "running",
                 indeterminate=True,
             ),
