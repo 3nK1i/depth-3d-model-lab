@@ -165,7 +165,7 @@ def test_quality_evaluation_is_auditable_and_aggregate_is_recomputed(tmp_path: P
 
 def test_psnr_and_ssim_implementation_has_expected_identity_behavior() -> None:
     worker = ROOT / "scripts" / "gaussian_benchmark_workers" / "metrics_worker.py"
-    spec = importlib.util.spec_from_file_location("eia_metrics_worker_test", worker)
+    spec = importlib.util.spec_from_file_location("depth3d_metrics_worker_test", worker)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -181,7 +181,7 @@ def test_psnr_and_ssim_implementation_has_expected_identity_behavior() -> None:
 
 def test_graphdeco_materialized_dataset_places_explicit_test_list_in_sparse_model(tmp_path: Path) -> None:
     worker_path = ROOT / "scripts" / "gaussian_benchmark_workers" / "graphdeco_worker.py"
-    worker_spec = importlib.util.spec_from_file_location("eia_graphdeco_benchmark_worker_test", worker_path)
+    worker_spec = importlib.util.spec_from_file_location("depth3d_graphdeco_benchmark_worker_test", worker_path)
     assert worker_spec is not None and worker_spec.loader is not None
     worker = importlib.util.module_from_spec(worker_spec)
     worker_spec.loader.exec_module(worker)

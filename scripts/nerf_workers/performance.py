@@ -149,7 +149,7 @@ class ProcessTreeGpuSampler:
 
     def start(self) -> "ProcessTreeGpuSampler":
         self._sample_once()
-        self._thread = threading.Thread(target=self._loop, name="eia-nerf-vram-sampler", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="depth3d-nerf-vram-sampler", daemon=True)
         self._thread.start()
         return self
 

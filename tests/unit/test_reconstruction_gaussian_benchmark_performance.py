@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _load_performance_module():
     path = ROOT / "scripts" / "gaussian_benchmark_workers" / "performance.py"
-    spec = importlib.util.spec_from_file_location("eia_test_gaussian_performance_helpers", path)
+    spec = importlib.util.spec_from_file_location("depth3d_test_gaussian_performance_helpers", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
