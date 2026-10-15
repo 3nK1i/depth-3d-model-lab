@@ -307,7 +307,7 @@ def supervise(args: argparse.Namespace, request: dict, dense: Path, run: Path) -
     py = Path(str(request['runtime']['python_executable']))
     require(py.is_absolute() and py.is_file() and py.resolve(strict=True).is_file(),
             'recorded isolated PyCOLMAP interpreter is missing')
-    require(py == Path('/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python3.11'),
+    require(py == Path.home() / 'anaconda3/envs/eia-pycolmap-probe/bin/python3.11',
             'recovery must use recorded isolated PyCOLMAP interpreter')
     recoveries = run / 'fusion_recoveries'
     require(not recoveries.is_symlink(), 'foreign recovery root symlink')
