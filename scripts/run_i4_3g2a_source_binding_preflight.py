@@ -23,9 +23,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--i4-3g1-snapshot", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--temple-ring-dir", type=Path, default=Path("/home/eiatech/Desktop/datasets/templeRing_official/templeRing"))
-    parser.add_argument("--i4-2f-closure", type=Path, default=Path("/home/eiatech/Desktop/i4_2_evidence_20260824/i4_2f_closure_attempt01/i4_2f_closure.json"))
-    parser.add_argument("--house-dir", type=Path, default=Path("/home/eiatech/Downloads/House"))
+    parser.add_argument("--temple-ring-dir", type=Path, default=Path.home() / "Desktop/datasets/templeRing_official/templeRing")
+    parser.add_argument("--i4-2f-closure", type=Path, default=Path.home() / "Desktop/i4_2_evidence_20260824/i4_2f_closure_attempt01/i4_2f_closure.json")
+    parser.add_argument("--house-dir", type=Path, default=Path.home() / "Downloads/House")
     parser.add_argument("--house-historical-closure", type=Path, default=Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a3_visual_ab/i4_1_9a_a3_1_closure.json"))
     parser.add_argument("--complete-room-dir", type=Path)
     parser.add_argument("--low-texture-dir", type=Path)
@@ -71,9 +71,9 @@ def main() -> int:
     fresh_binding_path = args.fresh_binding_snapshot.expanduser().resolve() if args.fresh_binding_snapshot else None
     fresh_binding = _read_json(fresh_binding_path) if fresh_binding_path is not None else None
     roots = list(args.discovery_root) or [
-        Path("/home/eiatech/Desktop/datasets"),
-        Path("/home/eiatech/Downloads"),
-        Path("/home/eiatech/Desktop/phase8_3c_south_building"),
+        Path.home() / "Desktop/datasets",
+        Path.home() / "Downloads",
+        Path.home() / "Desktop/phase8_3c_south_building",
     ]
     snapshot = build_g2a_preflight_snapshot(
         i4_3g1_snapshot=g1,

@@ -22,9 +22,9 @@ from core.reconstruction.temple_ring_closure import (  # noqa: E402
     write_json,
 )
 
-_DEFAULT_E = Path("/home/eiatech/Desktop/i4_2_evidence_20260824/i4_2e_detail_qualification_attempt04")
-_DEFAULT_PREVIEW = Path("/home/eiatech/Desktop/i4_2_evidence_20260824/i4_2e_detail_preview_attempt04")
-_DEFAULT_OUTPUT = Path("/home/eiatech/Desktop/i4_2_evidence_20260824/i4_2f_closure_attempt01")
+_DEFAULT_E = Path.home() / "Desktop/i4_2_evidence_20260824/i4_2e_detail_qualification_attempt04"
+_DEFAULT_PREVIEW = Path.home() / "Desktop/i4_2_evidence_20260824/i4_2e_detail_preview_attempt04"
+_DEFAULT_OUTPUT = Path.home() / "Desktop/i4_2_evidence_20260824/i4_2f_closure_attempt01"
 
 
 def _args() -> argparse.Namespace:

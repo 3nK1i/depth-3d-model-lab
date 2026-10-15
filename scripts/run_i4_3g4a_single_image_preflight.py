@@ -62,7 +62,7 @@ def _parser() -> argparse.ArgumentParser:
             type=Path,
             help=f"Optional captured {implementation} runtime probe JSON; avoids probing the live runtime.",
         )
-    parser.add_argument("--storage-path", type=Path, default=Path("/home/eiatech/Desktop"))
+    parser.add_argument("--storage-path", type=Path, default=Path.home() / "Desktop")
     parser.add_argument("--minimum-free-gib", type=float, default=32.0)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser
