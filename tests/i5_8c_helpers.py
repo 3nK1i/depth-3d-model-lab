@@ -14,7 +14,7 @@ I58B_SHA = "24eab2c95869ea96792c6599eeb94ce2801d5920d4a37b9a015a5428e568bb63"
 I58C_RECEIPT_SHA = "c" * 64
 ACTUAL_CHECKPOINT_SHA = "3c28432b4e1f0d7bb31cad5151b6313b49457db5aa58d82e85bfb0f8b1311b33"
 ACTUAL_SOURCE_REVISION = "4f5ae23172ba60fd7bc11ef671cca678842c7072"
-ACTUAL_CHECKPOINT = "/home/eiatech/Desktop/depth_3d_model_lab/checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth"
+ACTUAL_CHECKPOINT = "checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth"
 CAPACITY_DROPS = {
     "castle_control": 3678651,
     "castle_low_overlap": 215631,

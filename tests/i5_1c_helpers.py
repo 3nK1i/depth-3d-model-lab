@@ -125,7 +125,7 @@ def passing_i5_1c_receipt() -> dict:
 
 def oom_diagnostic_text() -> str:
     return """===== REAL_DIR =====
-/home/eiatech/Desktop/i4_2_evidence_20260824/i5_1b_difficult_handheld_replay_20260902_133628
+/tmp/depth3d/i5_1b_difficult_handheld_replay_20260902_133628
 I4.1.6A localizing extra candidate 176/176 source_index=1501...
 I4.1.6A Decoupled Dense-Candidate Localization: LOCALIZATION_READY
 I4.1.6B aligning/projecting extra 147/176 source_index=1259
