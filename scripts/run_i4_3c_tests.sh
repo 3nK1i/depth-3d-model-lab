@@ -70,8 +70,8 @@ case "${1:-all}" in
   *) echo "usage: $0 [focused|stress|all]" >&2; exit 2 ;;
 esac
 
-DA3_PYTHON="${DEPTH3D_RECONSTRUCTION_DA3_PYTHON:-/home/eiatech/anaconda3/envs/eia-da3/bin/python3.11}"
-DA3_REPO="${DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY:-/home/eiatech/Desktop/eia-da3-backends/depth-anything-3}"
+DA3_PYTHON="${DEPTH3D_RECONSTRUCTION_DA3_PYTHON:-$HOME/anaconda3/envs/eia-da3/bin/python3.11}"
+DA3_REPO="${DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY:-$HOME/Desktop/eia-da3-backends/depth-anything-3}"
 if [[ -x "$DA3_PYTHON" && -d "$DA3_REPO" ]]; then
   "$DA3_PYTHON" - "$DA3_REPO" <<'PYPROBE'
 import importlib

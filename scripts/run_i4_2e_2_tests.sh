@@ -17,7 +17,7 @@ case "${1:-all}" in
   *) echo "usage: $0 [focused|stress|all]" >&2; exit 2 ;;
 esac
 
-PYCOLMAP_PYTHON="${DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON:-/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python3.11}"
+PYCOLMAP_PYTHON="${DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON:-$HOME/anaconda3/envs/eia-pycolmap-probe/bin/python3.11}"
 WORKER="scripts/reconstruction_pycolmap_temple_ring_detail_support_worker.py"
 if [[ -x "$PYCOLMAP_PYTHON" ]]; then
   "$PYCOLMAP_PYTHON" - "$WORKER" <<'PYPROBE'
