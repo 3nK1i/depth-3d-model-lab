@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ENV_NAME="eia-rollingdepth"
-ROOT="/home/eiatech/Desktop/eia-rollingdepth-backends"
+ROOT="${HOME}/Desktop/eia-rollingdepth-backends"
 REVISION=""
 DOWNLOAD_WEIGHTS=0
 ACCEPT_MODEL_LICENSE=0
@@ -16,7 +16,7 @@ Usage: setup_rolling_depth_backend.sh --revision <40-hex> [options]
 Options:
   --revision <sha>          Required exact RollingDepth git revision.
   --env-name <name>         Conda env name (default: eia-rollingdepth).
-  --root <path>             Backend root (default: /home/eiatech/Desktop/eia-rollingdepth-backends).
+  --root <path>             Backend root (default: ~/Desktop/eia-rollingdepth-backends).
   --download-weights        Run the official model-weight download script.
   --accept-model-license    Confirm acceptance of RollingDepth model LICENSE-MODEL.
   --finalize-existing       Verify/finalize an already installed runtime without remote fetch or dependency reinstall.

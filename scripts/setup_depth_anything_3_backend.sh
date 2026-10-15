@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONDA_ROOT="${CONDA_ROOT:-/home/eiatech/anaconda3}"
+CONDA_ROOT="${CONDA_ROOT:-$HOME/anaconda3}"
 ENV_NAME="${DA3_ENV_NAME:-eia-da3}"
-BACKEND_ROOT="${DA3_BACKEND_ROOT:-/home/eiatech/Desktop/eia-da3-backends}"
+BACKEND_ROOT="${DA3_BACKEND_ROOT:-$HOME/Desktop/eia-da3-backends}"
 REPO_ROOT="${BACKEND_ROOT}/depth-anything-3"
 UPSTREAM="https://github.com/ByteDance-Seed/Depth-Anything-3.git"
 REVISION="${DA3_REVISION:-}"
