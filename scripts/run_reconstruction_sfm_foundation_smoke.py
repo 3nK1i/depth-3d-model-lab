@@ -102,7 +102,7 @@ def main() -> int:
         "--sfm-python",
         help=(
             "Optional external reconstruction-environment Python executable. "
-            "Example: /home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python"
+            "Example: /path/to/pycolmap-python"
         ),
     )
     args = parser.parse_args()
