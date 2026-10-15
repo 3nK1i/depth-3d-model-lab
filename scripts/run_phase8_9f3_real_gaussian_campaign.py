@@ -70,9 +70,9 @@ EXPECTED_GSPLAT_VERSION = "1.5.3"
 EXPECTED_GSPLAT_REVISION = "937e29912570c372bed6747a5c9bf85fed877bae"
 DEFAULT_F2_ROOT = Path("/tmp/phase8_9f2_real_geometry")
 DEFAULT_OUTPUT = Path("/tmp/phase8_9f3_real_gaussian")
-DEFAULT_GSPLAT_PYTHON = Path("/home/eiatech/anaconda3/envs/eia-gaussian-gsplat/bin/python")
-DEFAULT_METRICS_PYTHON = Path("/home/eiatech/anaconda3/envs/eia-gaussian-metrics/bin/python")
-DEFAULT_GSPLAT_ROOT = Path("/home/eiatech/Desktop/eia-gaussian-backends/gsplat")
+DEFAULT_GSPLAT_PYTHON = Path.home() / "anaconda3/envs/eia-gaussian-gsplat/bin/python"
+DEFAULT_METRICS_PYTHON = Path.home() / "anaconda3/envs/eia-gaussian-metrics/bin/python"
+DEFAULT_GSPLAT_ROOT = Path.home() / "Desktop/eia-gaussian-backends/gsplat"
 DEFAULT_TRAINING_STEPS = 64
 DEFAULT_RENDER_REPEATS = 3
 

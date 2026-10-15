@@ -63,18 +63,18 @@ HEAVY_MODULES = (
 )
 
 DEFAULT_PATHS = {
-    "pycolmap_python": Path("/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python"),
-    "da3_python": Path("/home/eiatech/anaconda3/envs/eia-da3/bin/python"),
-    "da3_root": Path("/home/eiatech/Desktop/eia-da3-backends/depth-anything-3"),
-    "gsplat_python": Path("/home/eiatech/anaconda3/envs/eia-gaussian-gsplat/bin/python"),
-    "gsplat_root": Path("/home/eiatech/Desktop/eia-gaussian-backends/gsplat"),
-    "graphdeco_python": Path("/home/eiatech/anaconda3/envs/eia-gaussian-graphdeco/bin/python"),
-    "graphdeco_root": Path("/home/eiatech/Desktop/eia-gaussian-backends/gaussian-splatting"),
-    "metrics_python": Path("/home/eiatech/anaconda3/envs/eia-gaussian-metrics/bin/python"),
-    "nerf_python": Path("/home/eiatech/anaconda3/envs/eia-nerf-nerfstudio/bin/python"),
-    "nerfstudio_root": Path("/home/eiatech/Desktop/eia-nerf-backends/nerfstudio"),
-    "tcnn_root": Path("/home/eiatech/Desktop/eia-nerf-backends/tiny-cuda-nn"),
-    "south_building": Path("/home/eiatech/Desktop/phase8_3c_south_building/south-building/images"),
+    "pycolmap_python": Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python",
+    "da3_python": Path.home() / "anaconda3/envs/eia-da3/bin/python",
+    "da3_root": Path.home() / "Desktop/eia-da3-backends/depth-anything-3",
+    "gsplat_python": Path.home() / "anaconda3/envs/eia-gaussian-gsplat/bin/python",
+    "gsplat_root": Path.home() / "Desktop/eia-gaussian-backends/gsplat",
+    "graphdeco_python": Path.home() / "anaconda3/envs/eia-gaussian-graphdeco/bin/python",
+    "graphdeco_root": Path.home() / "Desktop/eia-gaussian-backends/gaussian-splatting",
+    "metrics_python": Path.home() / "anaconda3/envs/eia-gaussian-metrics/bin/python",
+    "nerf_python": Path.home() / "anaconda3/envs/eia-nerf-nerfstudio/bin/python",
+    "nerfstudio_root": Path.home() / "Desktop/eia-nerf-backends/nerfstudio",
+    "tcnn_root": Path.home() / "Desktop/eia-nerf-backends/tiny-cuda-nn",
+    "south_building": Path.home() / "Desktop/phase8_3c_south_building/south-building/images",
 }
 
 

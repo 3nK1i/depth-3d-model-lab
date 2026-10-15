@@ -16,7 +16,7 @@ def args():
     p=argparse.ArgumentParser(); p.add_argument("--image-dir",required=True); p.add_argument("--output-dir",default="/tmp/phase8_7f2_da3_real"); p.add_argument("--max-images",type=int,default=3); p.add_argument("--process-res",type=int,default=392); p.add_argument("--model-id",default=DA3_EFFICIENT_MODEL_ID); p.add_argument("--model-revision",default=""); return p.parse_args()
 
 a=args(); out=Path(a.output_dir); out.mkdir(parents=True,exist_ok=True)
-python=Path("/home/eiatech/anaconda3/envs/eia-da3/bin/python"); repo=Path("/home/eiatech/Desktop/eia-da3-backends/depth-anything-3")
+python=Path.home() / "anaconda3/envs/eia-da3/bin/python"; repo=Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
 probe=probe_da3_environment(python,repo)
 if not probe.available: raise SystemExit(f"DA3 environment not qualified: {probe.as_dict()}")
 files=sorted([p for p in Path(a.image_dir).iterdir() if p.suffix.lower() in {".png",".jpg",".jpeg",".webp"}])

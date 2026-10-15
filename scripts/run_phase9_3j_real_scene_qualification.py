@@ -39,9 +39,9 @@ from core.reconstruction.persistent_scene import (
     verify_persistent_scene_file_references,
 )
 
-DEFAULT_IMAGES = Path("/home/eiatech/Desktop/phase8_3c_south_building/south-building/images")
-DEFAULT_DA3_PYTHON = Path("/home/eiatech/anaconda3/envs/eia-da3/bin/python")
-DEFAULT_DA3_REPO = Path("/home/eiatech/Desktop/eia-da3-backends/depth-anything-3")
+DEFAULT_IMAGES = Path.home() / "Desktop/phase8_3c_south_building/south-building/images"
+DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
+DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
 WORKER = ROOT / "scripts" / "run_phase9_3h_da3_canonical_job.py"
 SUMMARY_NAME = "phase9_3j_qualification_summary.json"
 

@@ -29,7 +29,7 @@ from core.reconstruction.temple_ring_detail_qualification import (  # noqa: E402
 
 _DEFAULT_D = Path("/tmp/eia_i4_2_temple_ring/i4_2d_mvs_attempt01")
 _DEFAULT_OUT = Path("/tmp/eia_i4_2_temple_ring/i4_2e_detail_qualification_attempt01")
-_DEFAULT_PYCOLMAP = Path("/home/eiatech/anaconda3/envs/eia-pycolmap-probe/bin/python3.11")
+_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
 _DEFAULT_WORKER = ROOT / "scripts/reconstruction_pycolmap_temple_ring_detail_support_worker.py"
 _SPARSE_FILES = ("cameras.bin", "images.bin", "points3D.bin", "frames.bin", "rigs.bin")
 

@@ -7,8 +7,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from core.reconstruction.da3 import probe_da3_environment
 
-python = Path("/home/eiatech/anaconda3/envs/eia-da3/bin/python")
-repo = Path("/home/eiatech/Desktop/eia-da3-backends/depth-anything-3")
+python = Path.home() / "anaconda3/envs/eia-da3/bin/python"
+repo = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
 probe = probe_da3_environment(python, repo)
 out = Path("/tmp/phase8_7f2_da3_probe.json")
 out.write_text(json.dumps(probe.as_dict(), indent=2, sort_keys=True) + "\n")
