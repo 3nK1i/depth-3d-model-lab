@@ -188,7 +188,7 @@ def _benchmark_graphdeco_native_render(
     saved_argv = sys.argv
     try:
         sys.argv = [
-            "eia-graphdeco-render-benchmark",
+            "depth3d-graphdeco-render-benchmark",
             "-m", str(model_dir),
             "-s", str(dataset_dir),
             "--eval",

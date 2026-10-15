@@ -3,7 +3,7 @@
 
 The helper is intended for the official Nerfstudio ``poster`` capture or an
 equivalent Nerfstudio-format real scene.  Selected images are undistorted and
-optionally downscaled into an EIA-owned pinhole dataset, camera poses are
+optionally downscaled into a project-local pinhole dataset, camera poses are
 converted into ``T_reconstruction_from_camera``, and a deterministic held-out
 split is written alongside the canonical NeuralSceneDataset manifest.
 """

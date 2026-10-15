@@ -353,7 +353,7 @@ def _run(request_path: Path, result_path: Path) -> None:
         missing_rejected = True
 
     malformed_path = artifact_root / "malformed-checkpoint.ckpt"
-    malformed_path.write_bytes(b"EIA-NOT-A-NERF-CHECKPOINT\n")
+    malformed_path.write_bytes(b"DEPTH3D-NOT-A-NERF-CHECKPOINT\n")
     malformed_rejected = False
     try:
         _load_checkpoint_payload(torch, malformed_path)
