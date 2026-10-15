@@ -103,7 +103,7 @@ def main() -> int:
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="eia-phase8-4c-video-") as temp_text:
+    with tempfile.TemporaryDirectory(prefix="depth3d-phase8-4c-video-") as temp_text:
         video_path = Path(temp_text) / "euroc_cam0.avi"
         _build_euroc_video(records, video_path)
         source_metadata = make_recorded_video_live_metadata(

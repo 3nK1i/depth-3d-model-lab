@@ -95,7 +95,7 @@ def main() -> int:
     retained_after_stop = False
     screenshot_path = output_dir / "reconstruction_visualizer.png"
     try:
-        with tempfile.TemporaryDirectory(prefix="eia-phase8-c3-live-sparse-map-") as temp_text:
+        with tempfile.TemporaryDirectory(prefix="depth3d-phase8-c3-live-sparse-map-") as temp_text:
             video_path = Path(temp_text) / "euroc_cam0.avi"
             _build_euroc_video(records, video_path)
             video = VideoSource(str(video_path))

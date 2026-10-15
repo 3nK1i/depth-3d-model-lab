@@ -212,7 +212,7 @@ class ExternalStellaLiveSlamBackend:
             self.prepare(context)
         assert self._environment_probe is not None
 
-        self._tempdir = tempfile.TemporaryDirectory(prefix="eia-live-stella-")
+        self._tempdir = tempfile.TemporaryDirectory(prefix="depth3d-live-stella-")
         temp_root = Path(self._tempdir.name)
         config_path = write_stella_monocular_config(request, temp_root / "camera.yaml")
         self._log_path = temp_root / "worker.log"

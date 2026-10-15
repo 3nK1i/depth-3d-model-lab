@@ -176,7 +176,7 @@ def main() -> int:
     parser.add_argument('--mode', choices=('transport', 'host', 'all'), default='all')
     parser.add_argument('--events', type=int, default=256, help='32..1024 synthetic events')
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='eia_i6_8f_diagnostic_') as directory:
+    with tempfile.TemporaryDirectory(prefix='depth3d_i6_8f_diagnostic_') as directory:
         workspace = Path(directory)
         if args.mode in ('transport', 'all'):
             print('===== BOUNDED TRANSPORT MICROBENCHMARK =====', flush=True)

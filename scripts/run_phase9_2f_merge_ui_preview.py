@@ -26,7 +26,7 @@ def main() -> int:
     QApplication.setApplicationName(APP_NAME)
     app = QApplication(sys.argv)
     apply_theme(app)
-    temp = Path(tempfile.mkdtemp(prefix="eia_phase9_2f_preview_"))
+    temp = Path(tempfile.mkdtemp(prefix="depth3d_phase9_2f_preview_"))
     store = SegmentationProjectStore(temp / "projects")
     project = create_segmentation_project("Factory Semantics", project_id="phase9-2f-preview")
     project, _ = add_project_class(project, "plant")

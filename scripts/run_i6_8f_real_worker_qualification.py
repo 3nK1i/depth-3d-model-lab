@@ -188,7 +188,7 @@ def real_worker_probe(images: tuple[Path, ...], sfm_python: Path) -> dict[str, o
 
     app = QCoreApplication.instance() or QCoreApplication([])
     session_id = str(uuid4())
-    with tempfile.TemporaryDirectory(prefix='eia_i6_8f_real_sfm_') as temp:
+    with tempfile.TemporaryDirectory(prefix='depth3d_i6_8f_real_sfm_') as temp:
         workspace = Path(temp)
         input_dir = workspace / 'input_images'
         output_dir = workspace / session_id

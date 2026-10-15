@@ -86,7 +86,7 @@ def main() -> int:
     args = build_parser().parse_args()
     output = Path(args.output).expanduser().resolve()
     bundle_dir = Path(args.bundle_dir).expanduser().resolve()
-    with tempfile.TemporaryDirectory(prefix="eia_step8_smoke_") as temporary:
+    with tempfile.TemporaryDirectory(prefix="depth3d_step8_smoke_") as temporary:
         temp = Path(temporary)
         frame = temp / "frame.npy"
         config = temp / "depth.json"

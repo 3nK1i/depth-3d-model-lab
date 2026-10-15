@@ -87,7 +87,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     sockets_before = {path.name for path in Path("/tmp").glob("eia-ls-*.sock")}
 
-    with tempfile.TemporaryDirectory(prefix="eia-phase8-4d-video-") as temp_text:
+    with tempfile.TemporaryDirectory(prefix="depth3d-phase8-4d-video-") as temp_text:
         video_path = Path(temp_text) / "euroc_cam0.avi"
         _build_euroc_video(records, video_path)
         request = LiveSlamRequest(
