@@ -18,11 +18,11 @@ def main() -> int:
     config = output / 'config.yml'
     checkpoint = output / 'contract-only.ckpt'
     config.write_text('method_name: nerfacto\nstate: contract_only\n', encoding='utf-8')
-    checkpoint.write_bytes(b'EIA-NERF-CONTRACT-ONLY\n')
+    checkpoint.write_bytes(b'DEPTH3D-NERF-CONTRACT-ONLY\n')
     payload = {
         'schema_version': 1,
         'request_id': request['request_id'],
-        'backend_id': 'eia-development-nerf-mock',
+        'backend_id': 'depth3d-development-nerf-mock',
         'backend_version': '1',
         'backend_revision': 'internal',
         'backend_provenance': request['backend_provenance'],
