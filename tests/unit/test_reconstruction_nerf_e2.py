@@ -227,7 +227,7 @@ def test_nerfstudio_install_keeps_pep517_build_isolation_enabled() -> None:
 
 def _qualified_rtx2060_probe(total_vram_mib: float) -> NerfEnvironmentProbe:
     return NerfEnvironmentProbe(
-        python_executable="/tmp/eia-nerf-nerfstudio/bin/python",
+        python_executable="/tmp/depth3d-nerf-nerfstudio/bin/python",
         available=True,
         nerfstudio_version="1.1.5",
         torch_version="2.1.2+cu118",

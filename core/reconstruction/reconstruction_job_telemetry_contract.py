@@ -13,7 +13,7 @@ from math import isfinite
 from uuid import UUID
 
 
-JOB_TELEMETRY_SCHEMA = "eia.reconstruction.job_telemetry.v1"
+JOB_TELEMETRY_SCHEMA = "depth3d.reconstruction.job_telemetry.v1"
 JOB_TELEMETRY_PREFIX = "EIA_JOB_TELEMETRY "
 JOB_TELEMETRY_MAX_LINE_BYTES = 4096
 JOB_TELEMETRY_MAX_RESOURCES = 12

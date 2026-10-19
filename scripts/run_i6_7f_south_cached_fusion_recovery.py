@@ -26,7 +26,7 @@ REQUEST_SHA256 = '9400e0cd194b6b628f56ccae6835f66fec9c167c9168d739272bda383be6f1
 STATE_SHA256 = '37690ad09298cf6ecb41aace7e63e3a28b42dc1e033d15fa64865b1b7904e7bf'
 GIB = 1024 ** 3
 CACHE_GIB = 1.0
-RECOVERY_PROTOCOL = 'eia.i6_7f.cached_fusion_only_recovery.v1'
+RECOVERY_PROTOCOL = 'depth3d.i6_7f.cached_fusion_only_recovery.v1'
 
 
 def require(test: bool, message: str) -> None:
@@ -344,7 +344,7 @@ def supervise(args: argparse.Namespace, request: dict, dense: Path, run: Path) -
     py = Path(str(request['runtime']['python_executable']))
     require(py.is_absolute() and py.is_file() and py.resolve(strict=True).is_file(),
             'recorded isolated PyCOLMAP interpreter is missing')
-    require(py == Path.home() / 'anaconda3/envs/eia-pycolmap-probe/bin/python3.11',
+    require(py == Path.home() / 'anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11',
             'recovery must use recorded isolated PyCOLMAP interpreter')
     recoveries = run / 'fusion_recoveries'
     require(not recoveries.is_symlink(), 'foreign recovery root symlink')

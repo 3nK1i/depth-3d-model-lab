@@ -17,7 +17,7 @@ from core.reconstruction.offline_dense_i4_visual_acceptance import finalize_visu
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i4-1-9-dir", type=Path, default=Path("/tmp/eia_i4_1_9_visual_acceptance"))
+    p.add_argument("--i4-1-9-dir", type=Path, default=Path("/tmp/depth3d_i4_1_9_visual_acceptance"))
     p.add_argument("--confirm-manual-visual-pass", action="store_true")
     a = p.parse_args()
     root = a.i4_1_9_dir.expanduser().resolve()

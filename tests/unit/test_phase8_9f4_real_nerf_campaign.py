@@ -30,7 +30,7 @@ def test_f4_uses_qualified_nerfstudio_and_tcnn_pins() -> None:
     assert module.EXPECTED_NERFSTUDIO_VERSION == "1.1.5"
     assert module.EXPECTED_NERFSTUDIO_REVISION == "6b60855003011b2ca23c2fe3f8e2ca6314c69924"
     assert module.EXPECTED_TCNN_REVISION == "b3473c81396fe927293bdfd5a6be32df8769927c"
-    assert "eia-nerf-nerfstudio" in str(module.DEFAULT_NERF_PYTHON)
+    assert "depth3d-nerf-nerfstudio" in str(module.DEFAULT_NERF_PYTHON)
 
 
 def test_even_selection_is_bounded_and_spans_real_trajectory() -> None:

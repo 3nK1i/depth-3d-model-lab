@@ -44,7 +44,7 @@ from scripts.run_phase9_5g_real_nerf_resource_check import (
 )
 
 PREFIX = "DEPTH3D_NERF_JSON "
-DEFAULT_METRICS_PYTHON = Path.home() / "anaconda3/envs/eia-gaussian-metrics/bin/python"
+DEFAULT_METRICS_PYTHON = Path.home() / "anaconda3/envs/depth3d-gaussian-metrics/bin/python"
 
 
 def _json_object(path: Path) -> dict[str, Any]:
@@ -214,10 +214,10 @@ def main() -> int:
                     "backend_kind": "nerfstudio_nerfacto_external",
                     "benchmark_fingerprint_sha256": quality_fingerprint,
                     "dataset_fingerprint_sha256": presentation.dataset_fingerprint_sha256,
-                    "validation_frame_ids": [str(frame.get("eia_frame_id", val_file))],
+                    "validation_frame_ids": [str(frame.get("depth3d_frame_id", val_file))],
                     "renders": [
                         {
-                            "frame_id": str(frame.get("eia_frame_id", val_file)),
+                            "frame_id": str(frame.get("depth3d_frame_id", val_file)),
                             "reference_image_path": str(reference),
                             "rendered_image_path": str(rendered),
                             "width": width,

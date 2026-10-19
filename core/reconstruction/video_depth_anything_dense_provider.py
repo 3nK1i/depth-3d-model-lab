@@ -69,7 +69,7 @@ I43D1_DEFAULT_PIXEL_STRIDE = 2
 I43D1_DEFAULT_MAX_VOXELS = 1_500_000
 I43D1_DEFAULT_MINIMUM_ACCEPTED_VIEWS = 2
 I43D1_DEFAULT_SOURCE_DIR = "third_party/Video-Depth-Anything"
-I43D1_DEFAULT_READY_MARKER = "third_party/Video-Depth-Anything/.eia_video_depth_anything_ready.json"
+I43D1_DEFAULT_READY_MARKER = "third_party/Video-Depth-Anything/.depth3d_video_depth_anything_ready.json"
 I43D1_DEFAULT_CHECKPOINT = "checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth"
 
 

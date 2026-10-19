@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_NAME="eia-rollingdepth"
-ROOT="${HOME}/Desktop/eia-rollingdepth-backends"
+ENV_NAME="depth3d-rollingdepth"
+ROOT="${HOME}/Desktop/depth3d-rollingdepth-backends"
 REVISION=""
 DOWNLOAD_WEIGHTS=0
 ACCEPT_MODEL_LICENSE=0
@@ -15,8 +15,8 @@ Usage: setup_rolling_depth_backend.sh --revision <40-hex> [options]
 
 Options:
   --revision <sha>          Required exact RollingDepth git revision.
-  --env-name <name>         Conda env name (default: eia-rollingdepth).
-  --root <path>             Backend root (default: ~/Desktop/eia-rollingdepth-backends).
+  --env-name <name>         Conda env name (default: depth3d-rollingdepth).
+  --root <path>             Backend root (default: ~/Desktop/depth3d-rollingdepth-backends).
   --download-weights        Run the official model-weight download script.
   --accept-model-license    Confirm acceptance of RollingDepth model LICENSE-MODEL.
   --finalize-existing       Verify/finalize an already installed runtime without remote fetch or dependency reinstall.
@@ -246,7 +246,7 @@ PY
 
 PROBE_JSON="$(cat "$PROBE_FILE")"
 
-LOCK="$REPO/.eia_rolling_depth_runtime_lock.json"
+LOCK="$REPO/.depth3d_rolling_depth_runtime_lock.json"
 PYTHONNOUSERSITE=1 "$PYTHON_BIN" - "$LOCK" "$REVISION" "$ENV_NAME" "$PYTHON_BIN" "$PROBE_JSON" <<'PY'
 import json
 import pathlib

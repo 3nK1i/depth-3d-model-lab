@@ -37,13 +37,13 @@ from core.reconstruction.offline_dense_i3_transfer import (  # noqa: E402
     transfer_candidate_assessment,
 )
 
-_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
-_DEFAULT_REFERENCE_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_REFERENCE_I252 = Path("/tmp/eia_i2_5_2_extremum_local_geometry_manifold_diagnosis")
-_DEFAULT_REFERENCE_I26 = Path("/tmp/eia_i2_6_manifold_filter_promotion")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i3_second_scene_campaign")
+_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
+_DEFAULT_REFERENCE_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_REFERENCE_I252 = Path("/tmp/depth3d_i2_5_2_extremum_local_geometry_manifold_diagnosis")
+_DEFAULT_REFERENCE_I26 = Path("/tmp/depth3d_i2_6_manifold_filter_promotion")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i3_second_scene_campaign")
 
 
 def _args() -> argparse.Namespace:

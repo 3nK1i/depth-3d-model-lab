@@ -42,7 +42,7 @@ def test_i67c_dedicated_transport_line_round_trips_contract_snapshot() -> None:
 
 def test_i67c_unrelated_process_lines_are_ignored() -> None:
     assert parse_progressive_dense_transport_line("native COLMAP output") is None
-    assert parse_progressive_dense_transport_line('{"protocol":"eia.reconstruction.offline.v1"}') is None
+    assert parse_progressive_dense_transport_line('{"protocol":"depth3d.reconstruction.offline.v1"}') is None
 
 
 def test_i67c_malformed_or_authority_upgraded_payload_fails_closed() -> None:

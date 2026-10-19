@@ -43,10 +43,10 @@ from core.reconstruction.offline_dense_quality import (  # noqa: E402
 from scripts.run_e2_consistency_aware_fusion_refinement import _voxel_indices  # noqa: E402
 from scripts.run_i2_full_video_quality_qualification import _resolve_sfm_summary  # noqa: E402
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I26 = Path("/tmp/eia_i2_6_manifold_filter_promotion")
-_DEFAULT_OUT = Path("/tmp/eia_i2_7_final_requalification")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I26 = Path("/tmp/depth3d_i2_6_manifold_filter_promotion")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_7_final_requalification")
 
 
 def _args() -> argparse.Namespace:

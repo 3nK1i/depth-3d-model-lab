@@ -14,7 +14,7 @@ from core.geometry.sampling import enforce_point_budget  # noqa: E402
 
 def _args():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--d4-3-dir', type=Path, default=Path('/tmp/eia_d4_3_repaired_ten_view_chain'))
+    p.add_argument('--d4-3-dir', type=Path, default=Path('/tmp/depth3d_d4_3_repaired_ten_view_chain'))
     p.add_argument('--color-mode', choices=('rgb','source'), default='source')
     p.add_argument('--point-budget', type=int, default=250000)
     p.add_argument('--point-size', type=float, default=2.0)

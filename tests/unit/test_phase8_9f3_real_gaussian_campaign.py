@@ -30,7 +30,7 @@ def test_f3_uses_qualified_gsplat_pin() -> None:
     assert module.EXPECTED_GSPLAT_VERSION == "1.5.3"
     assert module.EXPECTED_GSPLAT_REVISION == "937e29912570c372bed6747a5c9bf85fed877bae"
     assert module.DEFAULT_GSPLAT_PYTHON.name == "python"
-    assert "eia-gaussian-gsplat" in str(module.DEFAULT_GSPLAT_PYTHON)
+    assert "depth3d-gaussian-gsplat" in str(module.DEFAULT_GSPLAT_PYTHON)
 
 
 def test_benchmark_command_is_gsplat_only_and_bounded(tmp_path: Path) -> None:

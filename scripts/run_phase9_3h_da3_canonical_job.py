@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Depth-environment worker for Phase 9.3H DA3 -> canonical integration.
 
-The heavy DA3 model remains in the qualified ``eia-da3`` interpreter.  This
+The heavy DA3 model remains in the qualified ``depth3d-da3`` interpreter.  This
 worker only orchestrates source materialization, external DA3 execution, and
 in-process canonical dense/surface integration in the production ``depth``
 environment.

@@ -30,9 +30,9 @@ from scripts.run_e2_consistency_aware_fusion_refinement import (  # noqa: E402
     _voxel_indices,
 )
 
-_DEFAULT_I4_1_8 = Path("/tmp/eia_i4_1_8_box_production_binding_01")
-_DEFAULT_I4_1_8A = Path("/tmp/eia_i4_1_8a_box_target_diag_01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_8b_retained_core_object_support")
+_DEFAULT_I4_1_8 = Path("/tmp/depth3d_i4_1_8_box_production_binding_01")
+_DEFAULT_I4_1_8A = Path("/tmp/depth3d_i4_1_8a_box_target_diag_01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_8b_retained_core_object_support")
 
 
 def _args() -> argparse.Namespace:

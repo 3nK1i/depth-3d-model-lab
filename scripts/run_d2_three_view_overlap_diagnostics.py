@@ -56,13 +56,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d1-dir",
         type=Path,
-        default=Path("/tmp/eia_d1_three_view_accumulation"),
+        default=Path("/tmp/depth3d_d1_three_view_accumulation"),
         help="Successful D1 output directory to diagnose.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d2_overlap_diagnostics"),
+        default=Path("/tmp/depth3d_d2_overlap_diagnostics"),
     )
     parser.add_argument(
         "--max-points-per-direction",

@@ -109,7 +109,7 @@ def _configure_nerfacto(*, dataset_dir: Path, output_dir: Path, profile: NerfOpt
 
     config = deepcopy(method_configs[NERFSTUDIO_METHOD])
     config.output_dir = output_dir
-    config.experiment_name = "eia-phase8-7e4"
+    config.experiment_name = "depth3d-phase8-7e4"
     config.timestamp = "performance-hardening"
     config.data = dataset_dir
     config.max_num_iterations = int(steps)

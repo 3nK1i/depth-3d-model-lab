@@ -53,8 +53,8 @@ def _require(path: Path, *, directory: bool = False) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stella-prefix", type=Path, default=Path.home() / "Desktop/eia-stella-vslam-probe")
-    parser.add_argument("--worker", type=Path, default=Path.home() / "Desktop/eia-stella-live-worker/bin/eia_stella_live_worker")
+    parser.add_argument("--stella-prefix", type=Path, default=Path.home() / "Desktop/depth3d-stella-vslam-probe")
+    parser.add_argument("--worker", type=Path, default=Path.home() / "Desktop/depth3d-stella-live-worker/bin/depth3d_stella_live_worker")
     parser.add_argument("--vocab", type=Path, default=Path.home() / "Desktop/phase8_4_stella_probe_data/orb_vocab.fbow")
     parser.add_argument("--euroc", type=Path, default=Path.home() / "Desktop/phase8_4_stella_probe_data/MH_01_easy/mav0")
     parser.add_argument("--max-frames", type=int, default=500)

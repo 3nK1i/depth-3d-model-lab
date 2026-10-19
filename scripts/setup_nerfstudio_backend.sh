@@ -5,8 +5,8 @@ set -euo pipefail
 # This script never installs Nerfstudio, tiny-cuda-nn, or their CUDA stack into
 # the production `depth` environment.
 
-ENV_NAME="eia-nerf-nerfstudio"
-ROOT_DIR="${HOME}/Desktop/eia-nerf-backends"
+ENV_NAME="depth3d-nerf-nerfstudio"
+ROOT_DIR="${HOME}/Desktop/depth3d-nerf-backends"
 RECREATE=0
 RESUME=0
 CUDA_ARCH="75"
@@ -25,8 +25,8 @@ usage() {
 Usage: scripts/setup_nerfstudio_backend.sh [options]
 
 Options:
-  --root PATH         External checkout root (default: ~/Desktop/eia-nerf-backends)
-  --env-name NAME     Isolated conda environment name (default: eia-nerf-nerfstudio)
+  --root PATH         External checkout root (default: ~/Desktop/depth3d-nerf-backends)
+  --env-name NAME     Isolated conda environment name (default: depth3d-nerf-nerfstudio)
   --cuda-arch XX      tiny-cuda-nn compute capability (default: 75 for RTX 2060)
   --recreate           Remove/recreate the isolated env and checkouts
   --resume             Resume a verified partial E2 setup after a build failure

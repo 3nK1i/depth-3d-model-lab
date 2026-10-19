@@ -13,9 +13,9 @@ if str(ROOT) not in sys.path:
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 from core.reconstruction.mvs_execution import MvsExecutionConfig, run_house_mvs_execution  # noqa: E402
 
-_DEFAULT_A1 = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a1_camera_bridge")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a2_mvs_attempt01")
-_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
+_DEFAULT_A1 = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a1_camera_bridge")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a2_mvs_attempt01")
+_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"
 _DEFAULT_WORKER = ROOT / "scripts/reconstruction_pycolmap_mvs_worker.py"
 
 

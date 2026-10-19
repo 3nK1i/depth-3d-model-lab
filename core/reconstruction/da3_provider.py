@@ -230,7 +230,7 @@ class DepthAnything3ProviderExecutor:
         if not hasattr(runner, "run"):
             raise TypeError("runner must expose run(input_manifest_path, output_dir).")
         self.runner = runner
-        self.workspace_root = Path(workspace_root or Path(tempfile.gettempdir()) / "eia-da3-provider")
+        self.workspace_root = Path(workspace_root or Path(tempfile.gettempdir()) / "depth3d-da3-provider")
         self._cache: dict[tuple[str, str], tuple[Path, DA3ResultManifest]] = {}
 
     @staticmethod

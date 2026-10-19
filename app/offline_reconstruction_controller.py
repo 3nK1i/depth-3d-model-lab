@@ -34,7 +34,7 @@ from app.reconstruction_progressive_sfm_state import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OFFLINE_RECONSTRUCTION_WORKER = PROJECT_ROOT / "scripts" / "run_reconstruction_offline_job.py"
-OFFLINE_EVENT_PROTOCOL = "eia.reconstruction.offline.v1"
+OFFLINE_EVENT_PROTOCOL = "depth3d.reconstruction.offline.v1"
 PROGRESSIVE_SFM_COALESCE_INTERVAL_MS = 50
 
 

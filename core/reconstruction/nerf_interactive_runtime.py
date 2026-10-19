@@ -221,9 +221,9 @@ def _isolated_runtime_paths(python_executable: str | Path):
 
 def default_phase9_nerf_runtime_spec(home: str | Path | None = None) -> NerfInteractiveRuntimeSpec:
     root = Path.home() if home is None else Path(home)
-    backend_root = root / "Desktop" / "eia-nerf-backends"
+    backend_root = root / "Desktop" / "depth3d-nerf-backends"
     return NerfInteractiveRuntimeSpec(
-        python_executable=str(root / "anaconda3" / "envs" / "eia-nerf-nerfstudio" / "bin" / "python"),
+        python_executable=str(root / "anaconda3" / "envs" / "depth3d-nerf-nerfstudio" / "bin" / "python"),
         nerfstudio_root=str(backend_root / "nerfstudio"),
         tiny_cuda_nn_root=str(backend_root / "tiny-cuda-nn"),
     )

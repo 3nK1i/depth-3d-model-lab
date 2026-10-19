@@ -46,7 +46,7 @@ def _mock_worker(path: Path, *, delay_seconds: float = 0.0) -> None:
             p.add_argument('--output-dir', required=True)
             args, _ = p.parse_known_args()
             out=Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
-            print(json.dumps({{'protocol':'eia.reconstruction.offline.v1','event':'progress','stage':'source_ingestion','message':'mock ingestion','progress_fraction':0.2}}), flush=True)
+            print(json.dumps({{'protocol':'depth3d.reconstruction.offline.v1','event':'progress','stage':'source_ingestion','message':'mock ingestion','progress_fraction':0.2}}), flush=True)
             time.sleep({float(delay_seconds)!r})
             payload={{
                 'phase':'I6.2B-test','pass':True,'status':'completed','session_id':args.session_id,
@@ -56,7 +56,7 @@ def _mock_worker(path: Path, *, delay_seconds: float = 0.0) -> None:
                 'certified_metrology':False,'reconstruction_ui_enabled':True,
             }}
             (out/'offline_result.json').write_text(json.dumps(payload), encoding='utf-8')
-            print(json.dumps({{'protocol':'eia.reconstruction.offline.v1','event':'completed','stage':'camera_pose','message':'mock complete','progress_fraction':1.0}}), flush=True)
+            print(json.dumps({{'protocol':'depth3d.reconstruction.offline.v1','event':'completed','stage':'camera_pose','message':'mock complete','progress_fraction':1.0}}), flush=True)
             """
         ).strip()
         + "\n",

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 CONDA_ROOT="${CONDA_ROOT:-$HOME/anaconda3}"
-ENV_NAME="${DA3_ENV_NAME:-eia-da3}"
-BACKEND_ROOT="${DA3_BACKEND_ROOT:-$HOME/Desktop/eia-da3-backends}"
+ENV_NAME="${DA3_ENV_NAME:-depth3d-da3}"
+BACKEND_ROOT="${DA3_BACKEND_ROOT:-$HOME/Desktop/depth3d-da3-backends}"
 REPO_ROOT="${BACKEND_ROOT}/depth-anything-3"
 UPSTREAM="https://github.com/ByteDance-Seed/Depth-Anything-3.git"
 REVISION="${DA3_REVISION:-}"
@@ -96,7 +96,7 @@ payload = {
     "torch_cuda_version": str(torch.version.cuda or ""),
     "compatibility_patch": "turing_native_bf16_autocast_pr269_equivalent",
 }
-path = Path(os.environ["REPO_ROOT"]) / ".eia_da3_runtime_lock.json"
+path = Path(os.environ["REPO_ROOT"]) / ".depth3d_da3_runtime_lock.json"
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 print(path)
 print(json.dumps(payload, indent=2, sort_keys=True))

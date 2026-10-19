@@ -30,11 +30,11 @@ from core.reconstruction.offline_dense_quality import I2QualityPolicy  # noqa: E
 from scripts.run_i2_1_targeted_peripheral_diagnosis import _membership_matrix  # noqa: E402
 
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I24 = Path("/tmp/eia_i2_4_support_diversity_parallax_diagnosis")
-_DEFAULT_I25 = Path("/tmp/eia_i2_5_conservative_diversity_filter_counterfactual")
-_DEFAULT_OUT = Path("/tmp/eia_i2_5_1_spatial_extremum_survivor_diagnosis")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I24 = Path("/tmp/depth3d_i2_4_support_diversity_parallax_diagnosis")
+_DEFAULT_I25 = Path("/tmp/depth3d_i2_5_conservative_diversity_filter_counterfactual")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_5_1_spatial_extremum_survivor_diagnosis")
 
 
 def _args() -> argparse.Namespace:

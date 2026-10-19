@@ -5,11 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # This script never installs Graphdeco/gsplat into the production `depth` env.
 
-ROOT_DIR="${HOME}/Desktop/eia-gaussian-backends"
+ROOT_DIR="${HOME}/Desktop/depth3d-gaussian-backends"
 BACKEND="both"
 RECREATE=0
-GSPLAT_ENV="eia-gaussian-gsplat"
-GRAPHDECO_ENV="eia-gaussian-graphdeco"
+GSPLAT_ENV="depth3d-gaussian-gsplat"
+GRAPHDECO_ENV="depth3d-gaussian-graphdeco"
 GSPLAT_TAG="v1.5.3"
 GSPLAT_REVISION_SHORT="937e299"
 GRAPHDECO_REVISION="54c035f7834b564019656c3e3fcc3646292f727d"

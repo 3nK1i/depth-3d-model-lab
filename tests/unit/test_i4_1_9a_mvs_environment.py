@@ -34,7 +34,7 @@ def test_external_mvs_probe_accepts_exact_cuda_pycolmap_capabilities(monkeypatch
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload) + "\n", stderr="")
 
     monkeypatch.setattr(mvs_environment.subprocess, "run", fake_run)
-    probe = probe_pycolmap_mvs_environment("/opt/eia-pycolmap/bin/python")
+    probe = probe_pycolmap_mvs_environment("/opt/depth3d-pycolmap/bin/python")
     assert probe.mvs_api_ready
     assert probe.patchmatch_cuda_ready
     assert probe.recommended_version
@@ -70,7 +70,7 @@ def test_external_mvs_probe_fails_closed_when_patchmatch_api_is_missing(monkeypa
 
 def test_preflight_guardrails_do_not_promote_reconstruction_authority() -> None:
     env = mvs_environment.PycolmapMvsEnvironmentProbe(
-        python_executable="/opt/eia-pycolmap/bin/python",
+        python_executable="/opt/depth3d-pycolmap/bin/python",
         available=True,
         pycolmap_version="4.1.1",
         distribution="pycolmap-cuda12",
@@ -81,7 +81,7 @@ def test_preflight_guardrails_do_not_promote_reconstruction_authority() -> None:
         stereo_fusion_options_constructible=True,
     )
     resources = MvsHostResourceProbe(
-        workspace_path="/tmp/eia_i4_1_9a",
+        workspace_path="/tmp/depth3d_i4_1_9a",
         disk_free_gib=20.0,
         ram_available_gib=12.0,
         gpus=(MvsGpuResource(index=0, name="RTX", total_vram_gib=6.0, free_vram_gib=5.0),),
@@ -110,7 +110,7 @@ def test_preflight_guardrails_do_not_promote_reconstruction_authority() -> None:
 
 def test_preflight_rejects_insufficient_resource_headroom() -> None:
     env = mvs_environment.PycolmapMvsEnvironmentProbe(
-        python_executable="/opt/eia-pycolmap/bin/python",
+        python_executable="/opt/depth3d-pycolmap/bin/python",
         available=True,
         pycolmap_version="4.1.1",
         distribution="pycolmap-cuda12",
@@ -121,7 +121,7 @@ def test_preflight_rejects_insufficient_resource_headroom() -> None:
         stereo_fusion_options_constructible=True,
     )
     resources = MvsHostResourceProbe(
-        workspace_path="/tmp/eia_i4_1_9a",
+        workspace_path="/tmp/depth3d_i4_1_9a",
         disk_free_gib=7.0,
         ram_available_gib=3.0,
         gpus=(MvsGpuResource(index=0, name="RTX", total_vram_gib=6.0, free_vram_gib=1.5),),

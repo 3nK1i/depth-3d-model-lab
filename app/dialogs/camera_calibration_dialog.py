@@ -64,7 +64,7 @@ def default_camera_calibration_profile_root() -> Path:
 
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
     if not str(base).strip():
-        base = str(Path.home() / ".local" / "share" / "eia-depth-3d-model-lab")
+        base = str(Path.home() / ".local" / "share" / "depth3d-model-lab")
     return Path(base).expanduser().resolve() / "camera_calibration_profiles"
 
 

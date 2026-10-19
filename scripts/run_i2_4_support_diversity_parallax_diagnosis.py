@@ -43,11 +43,11 @@ from scripts.run_i2_1_targeted_peripheral_diagnosis import (  # noqa: E402
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i1-dir", type=Path, default=Path("/tmp/eia_i1_offline_dense_campaign_recovered"))
-    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/eia_i2_full_video_quality"))
-    parser.add_argument("--i2-1-dir", type=Path, default=Path("/tmp/eia_i2_1_targeted_peripheral_diagnosis"))
-    parser.add_argument("--i2-3-dir", type=Path, default=Path("/tmp/eia_i2_3_balanced_cross_segment_counterfactuals"))
-    parser.add_argument("--output-dir", type=Path, default=Path("/tmp/eia_i2_4_support_diversity_parallax_diagnosis"))
+    parser.add_argument("--i1-dir", type=Path, default=Path("/tmp/depth3d_i1_offline_dense_campaign_recovered"))
+    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/depth3d_i2_full_video_quality"))
+    parser.add_argument("--i2-1-dir", type=Path, default=Path("/tmp/depth3d_i2_1_targeted_peripheral_diagnosis"))
+    parser.add_argument("--i2-3-dir", type=Path, default=Path("/tmp/depth3d_i2_3_balanced_cross_segment_counterfactuals"))
+    parser.add_argument("--output-dir", type=Path, default=Path("/tmp/depth3d_i2_4_support_diversity_parallax_diagnosis"))
     parser.add_argument("--reference-quantile", type=float, default=0.25)
     parser.add_argument("--maximum-support-for-low-diversity", type=int, default=3)
     parser.add_argument("--minimum-reference-points", type=int, default=128)

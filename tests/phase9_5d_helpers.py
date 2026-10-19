@@ -95,7 +95,7 @@ def make_phase9_5d_source(tmp_path: Path):
         json.dumps({"camera_model": "OPENCV", "frames": [{"file_path": "images/0000.png"}]}, indent=2) + "\n",
         encoding="utf-8",
     )
-    config = artifact_root / "nerfstudio-output/eia-phase8-7e2/nerfacto/qualification/config.yml"
+    config = artifact_root / "nerfstudio-output/depth3d-phase8-7e2/nerfacto/qualification/config.yml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(f"data: {dataset}\noutput_dir: {artifact_root / 'nerfstudio-output'}\n", encoding="utf-8")
     checkpoint = config.parent / "nerfstudio_models/step-000000063.ckpt"

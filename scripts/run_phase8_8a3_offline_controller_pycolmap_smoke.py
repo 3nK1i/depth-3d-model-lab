@@ -33,7 +33,7 @@ from core.reconstruction import ReconstructionQualityProfile, SfmMatchingStrateg
 
 
 def _default_sfm_python() -> Path:
-    return Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
+    return Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python"
 
 
 def _parse_args() -> argparse.Namespace:

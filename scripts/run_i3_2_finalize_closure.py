@@ -16,7 +16,7 @@ from core.reconstruction.offline_dense_i3_promotion import build_i3_closure_reco
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i3-2-dir", type=Path, default=Path("/tmp/eia_i3_2_second_scene_promotion"))
+    p.add_argument("--i3-2-dir", type=Path, default=Path("/tmp/depth3d_i3_2_second_scene_promotion"))
     p.add_argument("--confirm-fixed-view-review-pass", action="store_true")
     a = p.parse_args(); d = a.i3_2_dir.expanduser().resolve()
     automated = json.loads((d / "i3_2_summary.json").read_text(encoding="utf-8"))

@@ -42,8 +42,8 @@ from core.reconstruction import (  # noqa: E402
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 from scripts.run_d1_three_view_canonical_accumulation import _sfm_result_from_payload  # noqa: E402
 
-_DEFAULT_D43_DIR = Path("/tmp/eia_d4_3_repaired_ten_view_chain")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_e1_qualified_ten_view_voxel_fusion")
+_DEFAULT_D43_DIR = Path("/tmp/depth3d_d4_3_repaired_ten_view_chain")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_e1_qualified_ten_view_voxel_fusion")
 _DEFAULT_VOXEL_SCENE_FRACTION = 0.004
 _DEFAULT_MAX_VOXELS = 750_000
 _DEFAULT_MIN_SUPPORTED_VIEWS = 2

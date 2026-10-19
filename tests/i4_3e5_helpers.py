@@ -109,7 +109,7 @@ def good_depth_anything_v2_environment(
     root = (tmp_path / "project").resolve()
     source = root / "third_party/Depth-Anything-V2"
     source.mkdir(parents=True, exist_ok=True)
-    marker = source / ".eia_depth_anything_v2_ready.json"
+    marker = source / ".depth3d_depth_anything_v2_ready.json"
     marker.write_text("{}\n", encoding="utf-8")
     python = root / "bin/python"
     python.parent.mkdir(parents=True, exist_ok=True)

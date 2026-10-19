@@ -278,7 +278,7 @@ def main() -> int:
         result_path=result_path,
         request=request,
         dataset=dataset,
-        backend_id="eia-graphdeco-reference-external",
+        backend_id="depth3d-graphdeco-reference-external",
         backend_version=revision,
         artifact_dir=artifact_dir,
         scene_path=point_cloud,

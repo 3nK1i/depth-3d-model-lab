@@ -58,7 +58,7 @@ def main() -> int:
     )
     parser.add_argument("--minimum-mask-pixels", type=int, default=64)
     parser.add_argument("--max-proposals", type=int, default=64)
-    parser.add_argument("--output-dir", default="/tmp/eia_phase9_2c_auto_segment")
+    parser.add_argument("--output-dir", default="/tmp/depth3d_phase9_2c_auto_segment")
     args = parser.parse_args()
 
     if args.image:

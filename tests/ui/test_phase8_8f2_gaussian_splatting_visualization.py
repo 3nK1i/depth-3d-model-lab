@@ -39,7 +39,7 @@ class _Artifact:
             "canonical_geometry_authoritative": False,
             "certified_metrology": False,
             "metadata": {
-                "backend_id": "eia-gsplat-external",
+                "backend_id": "depth3d-gsplat-external",
                 "backend_version": "1.5.3",
                 "artifact_dir": self.artifact_dir,
                 "gaussian_count": 1024,
@@ -47,7 +47,7 @@ class _Artifact:
                 "metric_geometry_status": "arbitrary",
             },
             "payload_snapshot": {
-                "backend_id": "eia-gsplat-external",
+                "backend_id": "depth3d-gsplat-external",
                 "backend_version": "1.5.3",
                 "artifact_dir": self.artifact_dir,
                 "scene_path": str(Path(self.artifact_dir) / "scene.pt"),

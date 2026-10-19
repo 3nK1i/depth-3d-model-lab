@@ -21,7 +21,7 @@ from core.reconstruction.mvs_visual_ab_closure import (  # noqa: E402
     write_json,
 )
 
-_DEFAULT_A3 = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a3_visual_ab")
+_DEFAULT_A3 = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a3_visual_ab")
 _DEFAULT_VERDICT = "mvs_better_but_imperfect"
 
 

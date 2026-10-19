@@ -41,11 +41,11 @@ from core.reconstruction.offline_dense_i4_orbit_geometry_sampling_diagnosis impo
 )
 from scripts.run_d1_three_view_canonical_accumulation import _sfm_result_from_payload  # noqa: E402
 
-_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python3.11"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
-_DEFAULT_PRIOR_6B = Path("/tmp/eia_i4_1_6b_decoupled_dense_ab/i4_1_6b_summary.json")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_7_clean_static_orbit")
+_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python3.11"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
+_DEFAULT_PRIOR_6B = Path("/tmp/depth3d_i4_1_6b_decoupled_dense_ab/i4_1_6b_summary.json")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_7_clean_static_orbit")
 
 
 def _args() -> argparse.Namespace:

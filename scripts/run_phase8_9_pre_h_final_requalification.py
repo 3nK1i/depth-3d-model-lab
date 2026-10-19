@@ -39,7 +39,7 @@ GROUPS = (
             "scripts/run_phase8_9g2_full_regression.py",
             "--non-strict-git",
             "--output-dir",
-            "/tmp/eia_pre_h_final_requal/g2",
+            "/tmp/depth3d_pre_h_final_requal/g2",
         ],
     ),
     (
@@ -49,7 +49,7 @@ GROUPS = (
             "scripts/run_phase8_9g3_backward_compatibility.py",
             "--non-strict-git",
             "--output-dir",
-            "/tmp/eia_pre_h_final_requal/g3",
+            "/tmp/depth3d_pre_h_final_requal/g3",
         ],
     ),
     (
@@ -251,7 +251,7 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_pre_h_final_requal"),
+        default=Path("/tmp/depth3d_pre_h_final_requal"),
     )
     parser.add_argument("--plan-only", action="store_true")
     args = parser.parse_args()

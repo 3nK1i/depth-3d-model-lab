@@ -39,8 +39,8 @@ from core.reconstruction.offline_dense_i3_promotion import (  # noqa: E402
 from core.reconstruction.offline_dense_i3_transfer import build_scene_relative_manifold_evidence, exact_reference_transfer_preflight  # noqa: E402
 from scripts.run_e2_consistency_aware_fusion_refinement import _quantiles, _write_binary_ply  # noqa: E402
 
-_DEFAULT_I3_1 = Path("/tmp/eia_i3_second_scene_campaign")
-_DEFAULT_OUT = Path("/tmp/eia_i3_2_second_scene_promotion")
+_DEFAULT_I3_1 = Path("/tmp/depth3d_i3_second_scene_campaign")
+_DEFAULT_OUT = Path("/tmp/depth3d_i3_2_second_scene_promotion")
 
 _POINT_FIELDS = (
     "points_reconstruction", "colors_rgb", "view_observation_counts", "filter_confidence",

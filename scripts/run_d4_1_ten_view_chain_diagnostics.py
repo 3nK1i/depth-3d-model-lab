@@ -50,13 +50,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d4-dir",
         type=Path,
-        default=Path("/tmp/eia_d4_ten_view_accumulation"),
+        default=Path("/tmp/depth3d_d4_ten_view_accumulation"),
         help="Successful unfused D4 ten-view output directory to qualify.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d4_1_ten_view_qualification"),
+        default=Path("/tmp/depth3d_d4_1_ten_view_qualification"),
     )
     parser.add_argument("--max-points-per-direction", type=int, default=120_000)
     parser.add_argument("--nn-max-points-per-view", type=int, default=60_000)

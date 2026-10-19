@@ -56,7 +56,7 @@ def main() -> int:
 
     setup_text = setup_script.read_text(encoding="utf-8")
     required_tokens = (
-        'ENV_NAME="eia-nerf-nerfstudio"',
+        'ENV_NAME="depth3d-nerf-nerfstudio"',
         'TORCH_VERSION="2.1.2+cu118"',
         'TORCHVISION_VERSION="0.16.2+cu118"',
         'CUDA_TOOLKIT_VERSION="11.8.0"',

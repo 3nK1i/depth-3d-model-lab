@@ -686,7 +686,7 @@ def run_gaussian_external_worker(
         raise GaussianWorkerExecutionError(f"Gaussian worker script does not exist: {worker}")
     output_dir = Path(request.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="eia-gaussian-request-", dir=str(output_dir)) as tmp:
+    with tempfile.TemporaryDirectory(prefix="depth3d-gaussian-request-", dir=str(output_dir)) as tmp:
         tmp_dir = Path(tmp)
         request_path = tmp_dir / "request.json"
         result_path = tmp_dir / "result.json"

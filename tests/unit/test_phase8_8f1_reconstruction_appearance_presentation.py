@@ -61,9 +61,9 @@ def _gaussian() -> _Artifact:
         artifact_id="scene:gaussian",
         kind_name="gaussian_scene",
         provider_id="qualified-gaussian-appearance",
-        metadata={"backend_id": "eia-gsplat-external", "backend_version": "1.5.3", "render_capable": True},
+        metadata={"backend_id": "depth3d-gsplat-external", "backend_version": "1.5.3", "render_capable": True},
         payload_snapshot={
-            "backend_id": "eia-gsplat-external",
+            "backend_id": "depth3d-gsplat-external",
             "backend_version": "1.5.3",
             "optimization_state": "optimized",
             "render_capable": True,
@@ -104,7 +104,7 @@ def test_f1_entry_uses_persisted_backend_and_render_metadata_without_probing() -
     presentation = build_reconstruction_appearance_presentation(_scene(_gaussian()))
     assert presentation is not None
     entry = presentation.entries[0]
-    assert entry.provider_text == "eia-gsplat-external • v1.5.3"
+    assert entry.provider_text == "depth3d-gsplat-external • v1.5.3"
     assert entry.render_text == "Declared render-capable"
     assert entry.scale_text == "Arbitrary scene gauge • appearance only"
     assert "Optimized" in entry.state_text

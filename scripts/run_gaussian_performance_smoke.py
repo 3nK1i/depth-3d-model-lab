@@ -23,12 +23,12 @@ DEFAULT_OUTPUT = Path("/tmp/phase8_7d3_gaussian_performance_smoke")
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=("gsplat", "graphdeco", "both"), default="both")
-    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("eia-gaussian-gsplat"))
-    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("eia-gaussian-graphdeco"))
-    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("eia-gaussian-metrics"))
+    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("depth3d-gaussian-gsplat"))
+    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("depth3d-gaussian-graphdeco"))
+    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("depth3d-gaussian-metrics"))
     parser.add_argument(
         "--graphdeco-root", type=Path,
-        default=Path.home() / "Desktop" / "eia-gaussian-backends" / "gaussian-splatting",
+        default=Path.home() / "Desktop" / "depth3d-gaussian-backends" / "gaussian-splatting",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--training-steps", type=int, default=64)

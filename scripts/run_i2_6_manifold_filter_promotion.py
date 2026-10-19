@@ -42,10 +42,10 @@ from core.reconstruction.dense_scene_persistence import (  # noqa: E402
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 from scripts.run_e2_consistency_aware_fusion_refinement import _quantiles, _write_binary_ply  # noqa: E402
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I252 = Path("/tmp/eia_i2_5_2_extremum_local_geometry_manifold_diagnosis")
-_DEFAULT_I253 = Path("/tmp/eia_i2_5_3_conservative_manifold_filter_counterfactual")
-_DEFAULT_OUT = Path("/tmp/eia_i2_6_manifold_filter_promotion")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I252 = Path("/tmp/depth3d_i2_5_2_extremum_local_geometry_manifold_diagnosis")
+_DEFAULT_I253 = Path("/tmp/depth3d_i2_5_3_conservative_manifold_filter_counterfactual")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_6_manifold_filter_promotion")
 
 _POINT_FIELDS = (
     "points_reconstruction",

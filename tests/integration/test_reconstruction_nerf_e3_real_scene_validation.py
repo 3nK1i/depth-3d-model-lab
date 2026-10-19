@@ -62,7 +62,7 @@ def test_e3_manifest_split_and_export_are_consistent(tmp_path: Path) -> None:
         validation_frame_ids=heldout,
     )
     payload = json.loads(transforms.read_text())
-    path_by_id = {item["eia_frame_id"]: item["file_path"] for item in payload["frames"]}
+    path_by_id = {item["depth3d_frame_id"]: item["file_path"] for item in payload["frames"]}
     assert payload["train_filenames"] == [path_by_id[value] for value in train]
     assert payload["test_filenames"] == [path_by_id[value] for value in heldout]
     assert all((transforms.parent / relative).exists() for relative in payload["train_filenames"] + payload["test_filenames"])
@@ -82,7 +82,7 @@ def test_e3_worker_maps_multiple_dataset_render_outputs_to_exact_frame_ids(tmp_p
         dataset, dataset_dir, copy_images=False, training_frame_ids=train, validation_frame_ids=heldout
     )
     transforms = json.loads(transforms_path.read_text())
-    by_id = {item["eia_frame_id"]: Path(item["file_path"]).stem for item in transforms["frames"]}
+    by_id = {item["depth3d_frame_id"]: Path(item["file_path"]).stem for item in transforms["frames"]}
     render_root = tmp_path / "rendered"
     rgb = render_root / "test" / "rgb"
     rgb.mkdir(parents=True)

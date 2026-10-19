@@ -29,7 +29,7 @@ def test_i6_1a_contract_composes_existing_g1_session_model_without_replacing_it(
         offline_state=SimpleNamespace(value="running"),
         offline_output_dir="/tmp/i6_1a/integration-output",
         latest_event={
-            "protocol": "eia.reconstruction.offline.v1",
+            "protocol": "depth3d.reconstruction.offline.v1",
             "event": "progress",
             "stage": "source_ingestion",
             "message": "Offline ingestion started.",

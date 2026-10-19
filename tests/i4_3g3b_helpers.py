@@ -11,16 +11,16 @@ from tests.i4_3g3a_helpers import all_bindings, passing_g1_snapshot, passing_g2_
 def passing_g3a_snapshot() -> dict[str, Any]:
     vda = runtime_probe("video_depth_anything")
     vda.update({
-        "project_root": "/opt/eia/depth_3d_model_lab",
-        "python_executable": "/opt/eia/envs/depth/bin/python",
-        "checkpoint_path": "/opt/eia/depth_3d_model_lab/checkpoints/video_depth_anything_vits.pth",
+        "project_root": "/opt/depth3d/depth_3d_model_lab",
+        "python_executable": "/opt/depth3d/envs/depth/bin/python",
+        "checkpoint_path": "/opt/depth3d/depth_3d_model_lab/checkpoints/video_depth_anything_vits.pth",
     })
     rolling = runtime_probe("rolling_depth")
     rolling.update({
-        "python_executable": "/opt/eia/envs/eia-rolling-depth/bin/python",
-        "repository_root": "/opt/eia/third_party/RollingDepth",
-        "runtime_lock_path": "/opt/eia/third_party/RollingDepth/.eia_i4_3d2_runtime.json",
-        "checkpoint_path": "/opt/eia/third_party/RollingDepth/checkpoints/rollingdepth",
+        "python_executable": "/opt/depth3d/envs/depth3d-rolling-depth/bin/python",
+        "repository_root": "/opt/depth3d/third_party/RollingDepth",
+        "runtime_lock_path": "/opt/depth3d/third_party/RollingDepth/.depth3d_i4_3d2_runtime.json",
+        "checkpoint_path": "/opt/depth3d/third_party/RollingDepth/checkpoints/rollingdepth",
     })
     return build_i4_3g3a_preflight_snapshot(
         i4_3g1_snapshot=passing_g1_snapshot(),
@@ -39,7 +39,7 @@ def sfm_runtime(*, ready: bool = True) -> dict[str, Any]:
         "recommended_version": ready,
         "cuda_ready": ready,
         "cuda_devices": 1 if ready else 0,
-        "python_executable": "/opt/eia/envs/depth/bin/python",
+        "python_executable": "/opt/depth3d/envs/depth/bin/python",
         "version": "4.1.1",
     }
 

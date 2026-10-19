@@ -45,7 +45,7 @@ def sample(**overrides):
 def test_serialization_round_trip_and_explicit_observation_only_fields():
     obj = sample()
     assert JobTelemetryObservation.from_dict(obj.as_dict()) == obj
-    assert obj.as_dict()["schema"] == "eia.reconstruction.job_telemetry.v1"
+    assert obj.as_dict()["schema"] == "depth3d.reconstruction.job_telemetry.v1"
     assert "final_dense_result_admitted" not in obj.as_dict()
     assert "metric_scale_claimed" not in obj.as_dict()
     assert "progress_fraction" not in obj.as_dict()

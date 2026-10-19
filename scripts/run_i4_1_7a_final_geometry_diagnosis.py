@@ -25,8 +25,8 @@ from core.reconstruction.offline_dense_i4_clean_static_orbit_diagnosis import ( 
 from core.reconstruction.offline_dense_i4_clean_static_orbit_qualification import selected_plan_payload  # noqa: E402
 from core.reconstruction.offline_dense_i4_decoupled_dense_ab import compare_dense_plan_to_baseline  # noqa: E402
 
-_DEFAULT_I4_1_7 = Path("/tmp/eia_i4_1_7_box_clean_static_orbit_03_final")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_7a_final_geometry_diagnosis")
+_DEFAULT_I4_1_7 = Path("/tmp/depth3d_i4_1_7_box_clean_static_orbit_03_final")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_7a_final_geometry_diagnosis")
 
 
 def _args() -> argparse.Namespace:

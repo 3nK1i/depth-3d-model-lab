@@ -18,9 +18,9 @@ def main() -> int:
     parser.add_argument("--dataset-dir", required=True, help="Extracted Middlebury TempleRing directory containing templeR*.png and templeR_par.txt")
     parser.add_argument(
         "--i4-1-9a-closure",
-        default="/tmp/eia_i4_1_9a_house_mvs_positive_control/a3_visual_ab/i4_1_9a_a3_1_closure.json",
+        default="/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a3_visual_ab/i4_1_9a_a3_1_closure.json",
     )
-    parser.add_argument("--output-dir", default="/tmp/eia_i4_2_temple_ring/i4_2a_preflight")
+    parser.add_argument("--output-dir", default="/tmp/depth3d_i4_2_temple_ring/i4_2a_preflight")
     args = parser.parse_args()
 
     result = run_i4_2a_preflight(

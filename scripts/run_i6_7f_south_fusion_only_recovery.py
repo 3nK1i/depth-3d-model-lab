@@ -222,7 +222,7 @@ def run_fusion_child(args: argparse.Namespace, request: dict, dense: Path, run: 
     require(patch_cfg['pass'], f'PatchMatch registered source view contract changed: {patch_cfg["checks"]}')
     map_report = inspect_workspace(request, dense)
     write_new(recovery / 'pre_fusion_evidence.json', {
-        'protocol': 'eia.i6_7f.fusion_only_recovery.v1', 'interrupted_run': RUN_ID,
+        'protocol': 'depth3d.i6_7f.fusion_only_recovery.v1', 'interrupted_run': RUN_ID,
         'session_id': SESSION_ID, 'original_request_sha256': REQUEST_SHA256,
         'original_state_sha256': STATE_SHA256, 'frame_id': request['reconstruction_frame_id'],
         'camera_and_sparse_checks': workspace_check, 'source_view_checks': patch_cfg,
@@ -259,7 +259,7 @@ def run_fusion_child(args: argparse.Namespace, request: dict, dense: Path, run: 
         require(digest(canonical_file(Path(request['input_sparse']) / name)) == sha,
                 f'authoritative sparse geometry changed during recovery: {name}')
     report = {
-        'protocol': 'eia.i6_7f.fusion_only_recovery.v1', 'result': 'fusion_output_verified',
+        'protocol': 'depth3d.i6_7f.fusion_only_recovery.v1', 'result': 'fusion_output_verified',
         'session_id': SESSION_ID, 'interrupted_dense_run_id': RUN_ID,
         'recovery_id': args.recovery_id, 'original_request_sha256': REQUEST_SHA256,
         'original_state_sha256': STATE_SHA256, 'reconstruction_frame_id': request['reconstruction_frame_id'],
@@ -307,7 +307,7 @@ def supervise(args: argparse.Namespace, request: dict, dense: Path, run: Path) -
     py = Path(str(request['runtime']['python_executable']))
     require(py.is_absolute() and py.is_file() and py.resolve(strict=True).is_file(),
             'recorded isolated PyCOLMAP interpreter is missing')
-    require(py == Path.home() / 'anaconda3/envs/eia-pycolmap-probe/bin/python3.11',
+    require(py == Path.home() / 'anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11',
             'recovery must use recorded isolated PyCOLMAP interpreter')
     recoveries = run / 'fusion_recoveries'
     require(not recoveries.is_symlink(), 'foreign recovery root symlink')
@@ -315,7 +315,7 @@ def supervise(args: argparse.Namespace, request: dict, dense: Path, run: Path) -
     recovery = recoveries / args.recovery_id
     recovery.mkdir(mode=0o700, exist_ok=False)
     write_new(recovery / 'launch.json', {
-        'protocol': 'eia.i6_7f.fusion_only_recovery.v1', 'recovery_id': args.recovery_id,
+        'protocol': 'depth3d.i6_7f.fusion_only_recovery.v1', 'recovery_id': args.recovery_id,
         'interrupted_run_id': RUN_ID, 'session_id': SESSION_ID,
         'threads_requested': args.threads, 'max_rss_gib': args.max_rss_gib,
         'min_available_gib': args.min_available_gib,
@@ -366,7 +366,7 @@ def supervise(args: argparse.Namespace, request: dict, dense: Path, run: Path) -
     if not success and not reason:
         reason = f'fusion_worker_exit_code_{code}'
     replace_status(recovery / 'supervisor_result.json', {
-        'protocol': 'eia.i6_7f.fusion_only_recovery.v1',
+        'protocol': 'depth3d.i6_7f.fusion_only_recovery.v1',
         'status': 'fusion_output_verified' if success else 'failed_no_admission',
         'worker_exit_code': code, 'recovery_id': args.recovery_id,
         'elapsed_seconds': time.monotonic() - start, 'peak_child_rss_gib_observed': peak_rss,

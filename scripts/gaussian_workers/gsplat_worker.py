@@ -238,7 +238,7 @@ def main() -> int:
         result_path=result_path,
         request=request,
         dataset=dataset,
-        backend_id="eia-gsplat-external",
+        backend_id="depth3d-gsplat-external",
         backend_version=QUALIFIED_VERSION,
         artifact_dir=artifact_dir,
         scene_path=scene_path,

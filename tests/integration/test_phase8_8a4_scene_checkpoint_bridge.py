@@ -63,7 +63,7 @@ def _mock_a3_worker(path: Path) -> None:
                 'reconstruction_ui_enabled':False,
             }
             (out/'offline_result.json').write_text(json.dumps(payload), encoding='utf-8')
-            print(json.dumps({'protocol':'eia.reconstruction.offline.v1','event':'completed','stage':'camera_pose','message':'mock complete','progress_fraction':1.0}), flush=True)
+            print(json.dumps({'protocol':'depth3d.reconstruction.offline.v1','event':'completed','stage':'camera_pose','message':'mock complete','progress_fraction':1.0}), flush=True)
             """
         ).strip()
         + "\n",

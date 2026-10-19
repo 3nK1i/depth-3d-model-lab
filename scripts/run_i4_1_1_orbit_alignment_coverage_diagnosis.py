@@ -30,8 +30,8 @@ from core.reconstruction.offline_dense_i4_orbit_qualification import (  # noqa: 
     select_camera_poses,
 )
 
-_DEFAULT_I4 = Path("/tmp/eia_i4_object_orbit_campaign")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_1_orbit_alignment_coverage_diagnosis")
+_DEFAULT_I4 = Path("/tmp/depth3d_i4_object_orbit_campaign")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_1_orbit_alignment_coverage_diagnosis")
 
 
 def _args() -> argparse.Namespace:

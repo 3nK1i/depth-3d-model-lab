@@ -65,8 +65,8 @@ from core.reconstruction.errors import ReconstructionValidationError  # noqa: E4
 from scripts.run_b2_sfm_dense_real_alignment import _adapt_da3_depth_to_sfm_pixel_space  # noqa: E402
 
 _MIB = 1024**2
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 _DA3_WORKER = ROOT / "scripts/da3_workers/da3_worker.py"
 _D1_VIEW_COUNT = 3
 
@@ -76,13 +76,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--b2-dir",
         type=Path,
-        default=Path("/tmp/eia_b2_real_alignment"),
+        default=Path("/tmp/depth3d_b2_real_alignment"),
         help="Validated B2 output directory whose SfM world frame is reused.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d1_three_view_accumulation"),
+        default=Path("/tmp/depth3d_d1_three_view_accumulation"),
     )
     parser.add_argument("--da3-python", type=Path, default=_DEFAULT_DA3_PYTHON)
     parser.add_argument("--da3-repo", type=Path, default=_DEFAULT_DA3_REPO)

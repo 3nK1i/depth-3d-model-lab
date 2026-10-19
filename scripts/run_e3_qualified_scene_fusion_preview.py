@@ -24,7 +24,7 @@ from core.geometry.sampling import enforce_point_budget  # noqa: E402
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--e3-dir", type=Path, default=Path("/tmp/eia_e3_qualified_scene_fusion_expansion"))
+    parser.add_argument("--e3-dir", type=Path, default=Path("/tmp/depth3d_e3_qualified_scene_fusion_expansion"))
     parser.add_argument("--cloud", choices=("all", "supported", "high"), default="supported")
     parser.add_argument("--color-mode", choices=("rgb", "support"), default="rgb")
     parser.add_argument("--point-budget", type=int, default=300_000)

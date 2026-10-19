@@ -76,7 +76,7 @@ def _configure_nerfacto(*, dataset_dir: Path, output_dir: Path, profile: NerfOpt
 
     config = deepcopy(method_configs[NERFSTUDIO_METHOD])
     config.output_dir = output_dir
-    config.experiment_name = "eia-phase8-7e3"
+    config.experiment_name = "depth3d-phase8-7e3"
     config.timestamp = "real-scene-validation"
     config.data = dataset_dir
     config.max_num_iterations = int(steps)
@@ -134,7 +134,7 @@ def _map_rendered_outputs(
     transforms = json.loads(transforms_path.read_text(encoding="utf-8"))
     by_id: dict[str, str] = {}
     for item in transforms.get("frames", []):
-        frame_id = str(item.get("eia_frame_id", ""))
+        frame_id = str(item.get("depth3d_frame_id", ""))
         file_path = str(item.get("file_path", ""))
         if frame_id and file_path:
             by_id[frame_id] = file_path

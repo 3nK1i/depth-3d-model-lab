@@ -27,9 +27,9 @@ from core.reconstruction.offline_dense_i4_clean_static_orbit_target_correction i
     build_i4_1_7b_bounded_target_correction,
 )
 
-_DEFAULT_I4_1_7 = Path("/tmp/eia_i4_1_7_box_clean_static_orbit_03_final")
-_DEFAULT_I4_1_7A = Path("/tmp/eia_i4_1_7a_box_final_geometry_diag_01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_7b_bounded_target_correction")
+_DEFAULT_I4_1_7 = Path("/tmp/depth3d_i4_1_7_box_clean_static_orbit_03_final")
+_DEFAULT_I4_1_7A = Path("/tmp/depth3d_i4_1_7a_box_final_geometry_diag_01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_7b_bounded_target_correction")
 
 
 def _args() -> argparse.Namespace:

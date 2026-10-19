@@ -25,7 +25,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i2-3-dir", type=Path, default=Path("/tmp/eia_i2_3_balanced_cross_segment_counterfactuals"))
+    parser.add_argument("--i2-3-dir", type=Path, default=Path("/tmp/depth3d_i2_3_balanced_cross_segment_counterfactuals"))
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--representation", choices=("extended", "core"), default="extended")
     parser.add_argument("--color-mode", choices=("rgb", "region"), default="rgb")

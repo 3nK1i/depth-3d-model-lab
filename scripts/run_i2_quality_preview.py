@@ -31,7 +31,7 @@ _VIEW_ANGLES = {
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/eia_i2_full_video_quality"))
+    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/depth3d_i2_full_video_quality"))
     parser.add_argument("--representation", choices=("extended", "core"), default="extended")
     parser.add_argument(
         "--color-mode",

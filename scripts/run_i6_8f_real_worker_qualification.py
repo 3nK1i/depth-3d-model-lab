@@ -31,8 +31,8 @@ from core.reconstruction.reconstruction_job_telemetry_transport import (
     JobTelemetrySidecarTransport, TELEMETRY_HISTORY_LIMIT,
 )
 
-DEFAULT_SOURCE = Path('/tmp/eia_depth_reconstruction/b0e5e51f-6975-4152-822f-e28602842f58/sfm_workspace/images')
-DEFAULT_SFM = Path.home() / 'anaconda3/envs/eia-pycolmap-probe/bin/python'
+DEFAULT_SOURCE = Path('/tmp/depth3d_reconstruction/b0e5e51f-6975-4152-822f-e28602842f58/sfm_workspace/images')
+DEFAULT_SFM = Path.home() / 'anaconda3/envs/depth3d-pycolmap-probe/bin/python'
 IMAGE_EXTENSIONS = frozenset(('.jpg', '.jpeg', '.png'))
 MAX_SOURCE_BYTES = 12 * 1024**2
 MAX_TOTAL_SOURCE_BYTES = 80 * 1024**2

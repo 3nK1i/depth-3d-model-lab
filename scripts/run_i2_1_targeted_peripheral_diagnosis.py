@@ -36,9 +36,9 @@ from scripts.run_e2_consistency_aware_fusion_refinement import (  # noqa: E402
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i1-dir", type=Path, default=Path("/tmp/eia_i1_offline_dense_campaign_recovered"))
-    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/eia_i2_full_video_quality"))
-    parser.add_argument("--output-dir", type=Path, default=Path("/tmp/eia_i2_1_targeted_peripheral_diagnosis"))
+    parser.add_argument("--i1-dir", type=Path, default=Path("/tmp/depth3d_i1_offline_dense_campaign_recovered"))
+    parser.add_argument("--i2-dir", type=Path, default=Path("/tmp/depth3d_i2_full_video_quality"))
+    parser.add_argument("--output-dir", type=Path, default=Path("/tmp/depth3d_i2_1_targeted_peripheral_diagnosis"))
     parser.add_argument("--minimum-support-views", type=int, default=2)
     parser.add_argument("--top-views-per-temporal-half", type=int, default=6)
     parser.add_argument(

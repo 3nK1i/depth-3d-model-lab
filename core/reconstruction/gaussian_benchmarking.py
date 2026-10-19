@@ -926,7 +926,7 @@ class GaussianHeldOutQualityEvaluation:
     validation_frame_ids: tuple[str, ...]
     views: tuple[GaussianHeldOutViewMetrics, ...]
     aggregate: GaussianImageQualityMetrics
-    evaluator_name: str = "eia-heldout-quality"
+    evaluator_name: str = "depth3d-heldout-quality"
     psnr_definition: str = "rgb_mse_unit_range_mse_floor_1e-12"
     ssim_definition: str = "gaussian_11_sigma_1.5_rgb_unit_range"
     lpips_network: str = "alex"

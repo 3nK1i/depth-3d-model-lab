@@ -127,7 +127,7 @@ def test_e2_alignment_rejects_insufficient_or_unstable_overlap() -> None:
 def test_e2_build_contract_uses_e1_dense_job_and_external_da3_provenance(tmp_path: Path) -> None:
     video = tmp_path / "office.mp4"
     video.write_bytes(b"video")
-    da3_python = tmp_path / "eia-da3-python"
+    da3_python = tmp_path / "depth3d-da3-python"
     da3_python.write_text("fixture", encoding="utf-8")
     repo = tmp_path / "depth-anything-3"
     repo.mkdir()

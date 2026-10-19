@@ -79,8 +79,8 @@ def _checkout(spec: GaussianInteractiveRuntimeSpec, *, clean=True, revision=None
 def test_4a_defaults_keep_gsplat_external_and_outside_depth(tmp_path: Path) -> None:
     spec = default_phase9_gaussian_runtime_spec(tmp_path)
     assert spec.backend_kind is GaussianBackendKind.GSPLAT_EXTERNAL
-    assert "eia-gaussian-gsplat" in spec.python_executable
-    assert spec.checkout_root.endswith("Desktop/eia-gaussian-backends/gsplat")
+    assert "depth3d-gaussian-gsplat" in spec.python_executable
+    assert spec.checkout_root.endswith("Desktop/depth3d-gaussian-backends/gsplat")
     assert spec.expected_checkout_revision == PHASE9_4A_GSPLAT_QUALIFIED_REVISION
     assert spec.process_policy.start_new_session is True
     assert spec.process_policy.shell is False

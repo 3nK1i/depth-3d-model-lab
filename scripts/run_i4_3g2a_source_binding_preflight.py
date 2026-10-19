@@ -26,7 +26,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--temple-ring-dir", type=Path, default=Path.home() / "Desktop/datasets/templeRing_official/templeRing")
     parser.add_argument("--i4-2f-closure", type=Path, default=Path.home() / "Desktop/i4_2_evidence_20260824/i4_2f_closure_attempt01/i4_2f_closure.json")
     parser.add_argument("--house-dir", type=Path, default=Path.home() / "Downloads/House")
-    parser.add_argument("--house-historical-closure", type=Path, default=Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a3_visual_ab/i4_1_9a_a3_1_closure.json"))
+    parser.add_argument("--house-historical-closure", type=Path, default=Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a3_visual_ab/i4_1_9a_a3_1_closure.json"))
     parser.add_argument("--complete-room-dir", type=Path)
     parser.add_argument("--low-texture-dir", type=Path)
     parser.add_argument("--weak-overlap-dir", type=Path)

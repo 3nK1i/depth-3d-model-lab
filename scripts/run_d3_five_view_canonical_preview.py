@@ -33,12 +33,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cloud",
         type=Path,
-        default=Path("/tmp/eia_d3_five_view_accumulation/d3_five_view_raw_accumulation.npz"),
+        default=Path("/tmp/depth3d_d3_five_view_accumulation/d3_five_view_raw_accumulation.npz"),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/tmp/eia_d3_five_view_accumulation/d3_five_view_preview.png"),
+        default=Path("/tmp/depth3d_d3_five_view_accumulation/d3_five_view_preview.png"),
     )
     parser.add_argument("--point-budget", type=int, default=250_000)
     parser.add_argument("--point-size", type=float, default=2.0)

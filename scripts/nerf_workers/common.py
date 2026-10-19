@@ -108,7 +108,7 @@ def export_nerfstudio_dataset(
         frames.append(
             {
                 "file_path": relative,
-                "eia_frame_id": frame.frame_id,
+                "depth3d_frame_id": frame.frame_id,
                 "fl_x": float(frame.fx),
                 "fl_y": float(frame.fy),
                 "cx": float(frame.cx),
@@ -130,10 +130,10 @@ def export_nerfstudio_dataset(
         "train_filenames": train_paths,
         "val_filenames": eval_paths,
         "test_filenames": eval_paths,
-        "eia_pose_source_convention": "T_reconstruction_from_camera",
-        "eia_nerfstudio_camera_convention": "OpenGL_c2w",
-        "eia_explicit_heldout_split": bool(explicit_split),
-        "eia_backend_qualification_only": not bool(explicit_split),
+        "depth3d_pose_source_convention": "T_reconstruction_from_camera",
+        "depth3d_nerfstudio_camera_convention": "OpenGL_c2w",
+        "depth3d_explicit_heldout_split": bool(explicit_split),
+        "depth3d_backend_qualification_only": not bool(explicit_split),
     }
     transforms = root / "transforms.json"
     transforms.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

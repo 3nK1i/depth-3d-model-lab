@@ -268,7 +268,7 @@ def probe_da3_environment(
 ) -> DA3EnvironmentProbe:
     python = Path(python_executable)
     repo = Path(repository_root)
-    lock_path = Path(runtime_lock_path) if runtime_lock_path is not None else repo / ".eia_da3_runtime_lock.json"
+    lock_path = Path(runtime_lock_path) if runtime_lock_path is not None else repo / ".depth3d_da3_runtime_lock.json"
     timeout = float(timeout_s)
     if not isfinite(timeout) or timeout <= 0:
         raise ReconstructionValidationError("timeout_s must be finite and positive.")

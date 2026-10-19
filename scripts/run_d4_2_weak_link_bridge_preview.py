@@ -25,7 +25,7 @@ from core.geometry.sampling import enforce_point_budget  # noqa: E402
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--d4-2-dir", type=Path, default=Path("/tmp/eia_d4_2_weak_link_bridge_diagnosis"))
+    parser.add_argument("--d4-2-dir", type=Path, default=Path("/tmp/depth3d_d4_2_weak_link_bridge_diagnosis"))
     parser.add_argument("--bridge", choices=("left", "right"), default="left")
     parser.add_argument("--color-mode", choices=("residual", "source"), default="residual")
     parser.add_argument("--direction", choices=("both", "a-to-b", "b-to-a"), default="both")

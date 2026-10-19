@@ -26,7 +26,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i2-5-1-dir", type=Path, default=Path("/tmp/eia_i2_5_1_spatial_extremum_survivor_diagnosis"))
+    parser.add_argument("--i2-5-1-dir", type=Path, default=Path("/tmp/depth3d_i2_5_1_spatial_extremum_survivor_diagnosis"))
     parser.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")
     parser.add_argument("--color-mode", choices=("extremum", "rejection-count", "rgb"), default="extremum")
     parser.add_argument("--fit", choices=("full", "robust"), default="full")

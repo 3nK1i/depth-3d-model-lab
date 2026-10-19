@@ -26,9 +26,9 @@ from core.reconstruction.offline_dense_i4_retained_core_target_diagnosis import 
     build_i4_1_8a_retained_core_target_diagnosis,
 )
 
-_DEFAULT_I4_1_7B = Path("/tmp/eia_i4_1_7b_box_bounded_target_01")
-_DEFAULT_I4_1_8 = Path("/tmp/eia_i4_1_8_box_production_binding_01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_8a_retained_core_target_diagnosis")
+_DEFAULT_I4_1_7B = Path("/tmp/depth3d_i4_1_7b_box_bounded_target_01")
+_DEFAULT_I4_1_8 = Path("/tmp/depth3d_i4_1_8_box_production_binding_01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_8a_retained_core_target_diagnosis")
 
 
 def _args() -> argparse.Namespace:

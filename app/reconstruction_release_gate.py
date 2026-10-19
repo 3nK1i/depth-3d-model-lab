@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 PHASE96H = "9.6H"
-RELEASE_GATE_SCHEMA = "eia.digital-twin.phase9-6h-release-gate.v1"
-STATE_EXPORT_SCHEMA = "eia.digital-twin.state-export.v1"
+RELEASE_GATE_SCHEMA = "depth3d.digital-twin.phase9-6h-release-gate.v1"
+STATE_EXPORT_SCHEMA = "depth3d.digital-twin.state-export.v1"
 MIN_REAL_SCENE_DURATION_S = 120.0
 MAX_REAL_SCENE_DURATION_S = 180.0
 MIN_VIDEO_WIDTH = 640

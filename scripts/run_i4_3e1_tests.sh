@@ -42,7 +42,7 @@ from core.models.adapters.metric3d_v2_adapter import Metric3DV2GeometryModel
 from core.models.catalog import METRIC3D_V2_MODEL_ID
 
 root = Path.cwd()
-source = root / "third_party/Metric3D/.eia_metric3d_v2_ready.json"
+source = root / "third_party/Metric3D/.depth3d_metric3d_v2_ready.json"
 worker = root / "scripts/reconstruction_single_image_depth_provider_worker.py"
 assert Metric3DV2GeometryModel is not None
 assert METRIC3D_V2_MODEL_ID == "metric3d-v2"

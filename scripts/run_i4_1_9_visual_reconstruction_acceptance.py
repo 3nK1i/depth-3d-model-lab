@@ -55,8 +55,8 @@ from scripts.run_i4_1_8_production_binding import (  # noqa: E402
     _selected_rows,
 )
 
-_DEFAULT_I4_1_7 = Path("/tmp/eia_i4_1_7_bonsai_clean_static_orbit_03")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_9_visual_acceptance")
+_DEFAULT_I4_1_7 = Path("/tmp/depth3d_i4_1_7_bonsai_clean_static_orbit_03")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_9_visual_acceptance")
 
 
 def _args() -> argparse.Namespace:

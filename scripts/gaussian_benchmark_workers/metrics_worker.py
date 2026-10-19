@@ -175,7 +175,7 @@ def main() -> int:
         "views": per_view,
         "aggregate": aggregate,
         "evaluator": {
-            "name": "eia-heldout-quality",
+            "name": "depth3d-heldout-quality",
             "psnr_definition": "rgb_mse_unit_range_mse_floor_1e-12",
             "ssim_definition": "gaussian_11_sigma_1.5_rgb_unit_range",
             "lpips_network": LPIPS_NETWORK,

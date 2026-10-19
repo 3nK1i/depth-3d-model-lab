@@ -32,11 +32,11 @@ from core.reconstruction.offline_dense_balanced_counterfactuals import (  # noqa
 )
 
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I21 = Path("/tmp/eia_i2_1_targeted_peripheral_diagnosis")
-_DEFAULT_I22 = Path("/tmp/eia_i2_2_narrow_exact_counterfactual_refusion")
-_DEFAULT_OUT = Path("/tmp/eia_i2_3_balanced_cross_segment_counterfactuals")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I21 = Path("/tmp/depth3d_i2_1_targeted_peripheral_diagnosis")
+_DEFAULT_I22 = Path("/tmp/depth3d_i2_2_narrow_exact_counterfactual_refusion")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_3_balanced_cross_segment_counterfactuals")
 
 
 def _args() -> argparse.Namespace:

@@ -38,11 +38,11 @@ from scripts.run_i2_5_1_spatial_extremum_survivor_diagnosis import _load_f_exten
 from scripts.run_i2_5_conservative_diversity_filter_counterfactual import _candidate_topology  # noqa: E402
 
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I251 = Path("/tmp/eia_i2_5_1_spatial_extremum_survivor_diagnosis")
-_DEFAULT_I252 = Path("/tmp/eia_i2_5_2_extremum_local_geometry_manifold_diagnosis")
-_DEFAULT_OUT = Path("/tmp/eia_i2_5_3_conservative_manifold_filter_counterfactual")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I251 = Path("/tmp/depth3d_i2_5_1_spatial_extremum_survivor_diagnosis")
+_DEFAULT_I252 = Path("/tmp/depth3d_i2_5_2_extremum_local_geometry_manifold_diagnosis")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_5_3_conservative_manifold_filter_counterfactual")
 
 
 def _args() -> argparse.Namespace:

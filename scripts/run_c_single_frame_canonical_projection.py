@@ -50,13 +50,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--b2-dir",
         type=Path,
-        default=Path("/tmp/eia_b2_real_alignment"),
+        default=Path("/tmp/depth3d_b2_real_alignment"),
         help="Validated B2 output directory.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_c_single_frame_projection"),
+        default=Path("/tmp/depth3d_c_single_frame_projection"),
     )
     parser.add_argument(
         "--pixel-stride",

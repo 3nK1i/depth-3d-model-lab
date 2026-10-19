@@ -73,12 +73,12 @@ def main() -> int:
     parser.add_argument(
         "--stella-prefix",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-vslam-probe",
+        default=Path.home() / "Desktop" / "depth3d-stella-vslam-probe",
     )
     parser.add_argument(
         "--worker",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-live-worker" / "bin" / "eia_stella_live_worker",
+        default=Path.home() / "Desktop" / "depth3d-stella-live-worker" / "bin" / "depth3d_stella_live_worker",
     )
     parser.add_argument(
         "--vocab",
@@ -175,7 +175,7 @@ def main() -> int:
         ),
     )
 
-    sockets_before = {path.name for path in Path("/tmp").glob("eia-ls-*.sock")}
+    sockets_before = {path.name for path in Path("/tmp").glob("depth3d-ls-*.sock")}
     backends: list[ExternalStellaLiveSlamBackend] = []
     observations = []
     tracking_states: dict[str, int] = {}
@@ -338,7 +338,7 @@ def main() -> int:
             backend.shutdown()
 
         ring.shutdown()
-        sockets_after = {path.name for path in Path("/tmp").glob("eia-ls-*.sock")}
+        sockets_after = {path.name for path in Path("/tmp").glob("depth3d-ls-*.sock")}
         leaked_sockets = sorted(sockets_after - sockets_before)
         leaked_shared_memory: list[str] = []
         try:

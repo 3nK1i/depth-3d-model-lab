@@ -45,7 +45,7 @@ class _Artifact:
             "canonical_geometry_authoritative": self.canonical,
             "certified_metrology": self.certified,
             "metadata": {
-                "backend_id": "eia-gsplat-external",
+                "backend_id": "depth3d-gsplat-external",
                 "backend_version": "1.5.3",
                 "render_capable": self.render_capable,
                 "metric_geometry_status": "arbitrary",
@@ -53,7 +53,7 @@ class _Artifact:
                 "artifact_dir": self.artifact_dir,
             },
             "payload_snapshot": {
-                "backend_id": "eia-gsplat-external",
+                "backend_id": "depth3d-gsplat-external",
                 "backend_version": "1.5.3",
                 "render_capable": self.render_capable,
                 "metric_geometry_status": "arbitrary",
@@ -135,7 +135,7 @@ def test_f2_builds_ready_presentation_without_parsing_gaussian_scene(tmp_path: P
     assert presentation is not None
     assert presentation.ready is True
     assert presentation.preview_path == str(preview.resolve())
-    assert presentation.provider_text == "eia-gsplat-external • v1.5.3"
+    assert presentation.provider_text == "depth3d-gsplat-external • v1.5.3"
     assert presentation.scene_text == "2,048 Gaussians • appearance only"
     assert presentation.scale_text == "Arbitrary scene gauge • appearance only"
     assert presentation.canonical_geometry_authoritative is False

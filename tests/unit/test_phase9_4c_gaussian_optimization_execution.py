@@ -157,7 +157,7 @@ def test_4c_supervisor_uses_process_group_and_validates_appearance_artifact(tmp_
             payload = {
                 "schema_version": 1,
                 "request_id": request["request_id"],
-                "backend_id": "eia-gsplat-external",
+                "backend_id": "depth3d-gsplat-external",
                 "backend_version": "1.5.3",
                 "backend_provenance": request["backend_provenance"],
                 "optimization_state": "optimized",

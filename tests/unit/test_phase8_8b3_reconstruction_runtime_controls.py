@@ -48,7 +48,7 @@ def test_b3_selected_offline_builds_real_application_configuration_without_impor
 ) -> None:
     controller = ReconstructionController(application_controller)
     images = _images(tmp_path)
-    sfm_python = tmp_path / "eia-pycolmap-probe-python"
+    sfm_python = tmp_path / "depth3d-pycolmap-probe-python"
     sfm_python.write_text("#!/bin/sh\n", encoding="utf-8")
     sfm_python.chmod(0o755)
     output_root = tmp_path / "outputs"

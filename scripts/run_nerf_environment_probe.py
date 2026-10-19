@@ -17,7 +17,7 @@ from core.reconstruction import probe_nerf_environment
 
 
 def _default_python() -> Path:
-    return Path.home() / "anaconda3/envs/eia-nerf-nerfstudio/bin/python"
+    return Path.home() / "anaconda3/envs/depth3d-nerf-nerfstudio/bin/python"
 
 
 @contextmanager

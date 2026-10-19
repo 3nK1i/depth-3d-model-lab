@@ -53,8 +53,8 @@ def _default_env_python() -> Path:
     if executable.parent.name == "bin" and len(executable.parents) >= 3:
         envs_dir = executable.parents[2]
         if envs_dir.name == "envs":
-            return envs_dir / "eia-nerf-nerfstudio" / "bin" / "python"
-    return Path.home() / "anaconda3" / "envs" / "eia-nerf-nerfstudio" / "bin" / "python"
+            return envs_dir / "depth3d-nerf-nerfstudio" / "bin" / "python"
+    return Path.home() / "anaconda3" / "envs" / "depth3d-nerf-nerfstudio" / "bin" / "python"
 
 
 def _git_revision(root: Path) -> str:
@@ -230,8 +230,8 @@ def _preflight_reasons(*, probe, nerfstudio_root: Path, tcnn_root: Path, hardwar
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nerf-python", type=Path, default=_default_env_python())
-    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/nerfstudio")
-    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/tiny-cuda-nn")
+    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/nerfstudio")
+    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/tiny-cuda-nn")
     parser.add_argument("--profile", choices=[p.value for p in NerfOptimizationProfile], default="efficient")
     parser.add_argument("--training-steps", type=int, default=16)
     parser.add_argument("--hardware-profile", choices=["rtx_2060_6gb"], default="rtx_2060_6gb")

@@ -57,9 +57,9 @@ def make_rolling_sfm_result(tmp_path: Path, *, view_count: int = 3):
 
 def good_rolling_environment(tmp_path: Path, *, available: bool = True) -> RollingDepthEnvironmentProbe:
     repo = (tmp_path / "RollingDepth").resolve()
-    python = (tmp_path / "eia-rollingdepth/bin/python").resolve()
+    python = (tmp_path / "depth3d-rollingdepth/bin/python").resolve()
     checkpoint = (repo / "checkpoint/rollingdepth-v1-0").resolve()
-    lock = (repo / ".eia_rolling_depth_runtime_lock.json").resolve()
+    lock = (repo / ".depth3d_rolling_depth_runtime_lock.json").resolve()
     repo.mkdir(parents=True, exist_ok=True)
     python.parent.mkdir(parents=True, exist_ok=True)
     checkpoint.mkdir(parents=True, exist_ok=True)

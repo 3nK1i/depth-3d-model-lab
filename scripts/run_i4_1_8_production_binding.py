@@ -53,9 +53,9 @@ from scripts.run_e1_qualified_ten_view_voxel_fusion import _save_cloud_npz, _sup
 from scripts.run_e3_qualified_scene_fusion_expansion import _robust_diagonal  # noqa: E402
 from scripts.run_i1_offline_dense_campaign import _DENSE_THRESHOLDS  # noqa: E402
 
-_DEFAULT_I4_1_7 = Path("/tmp/eia_i4_1_7_box_clean_static_orbit_03_final")
-_DEFAULT_I4_1_7B = Path("/tmp/eia_i4_1_7b_box_bounded_target_01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_8_production_binding")
+_DEFAULT_I4_1_7 = Path("/tmp/depth3d_i4_1_7_box_clean_static_orbit_03_final")
+_DEFAULT_I4_1_7B = Path("/tmp/depth3d_i4_1_7b_box_bounded_target_01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_8_production_binding")
 
 
 def _args() -> argparse.Namespace:

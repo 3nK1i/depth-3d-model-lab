@@ -24,7 +24,7 @@ from tests.phase9_4b_helpers import make_phase9_4b_da3_scene
 
 
 def _ready_runtime(tmp_path: Path):
-    python = (tmp_path / "eia-nerf-nerfstudio/bin/python").resolve()
+    python = (tmp_path / "depth3d-nerf-nerfstudio/bin/python").resolve()
     ns = (tmp_path / "nerfstudio").resolve()
     tcnn = (tmp_path / "tiny-cuda-nn").resolve()
     python.parent.mkdir(parents=True, exist_ok=True)

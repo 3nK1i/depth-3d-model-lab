@@ -48,12 +48,12 @@ def main() -> int:
     parser.add_argument(
         "--stella-prefix",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-vslam-probe",
+        default=Path.home() / "Desktop" / "depth3d-stella-vslam-probe",
     )
     parser.add_argument(
         "--worker",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-live-worker" / "bin" / "eia_stella_live_worker",
+        default=Path.home() / "Desktop" / "depth3d-stella-live-worker" / "bin" / "depth3d_stella_live_worker",
     )
     parser.add_argument(
         "--vocab",
@@ -85,7 +85,7 @@ def main() -> int:
     camera = _euroc_camera()
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    sockets_before = {path.name for path in Path("/tmp").glob("eia-ls-*.sock")}
+    sockets_before = {path.name for path in Path("/tmp").glob("depth3d-ls-*.sock")}
 
     with tempfile.TemporaryDirectory(prefix="depth3d-phase8-4d-video-") as temp_text:
         video_path = Path(temp_text) / "euroc_cam0.avi"
@@ -210,7 +210,7 @@ def main() -> int:
     stats = runtime.stats
     poses = [item for item in observations if item.pose is not None]
     latencies_ms = [item.quality.processing_latency_ns / 1_000_000.0 for item in observations]
-    sockets_after = {path.name for path in Path("/tmp").glob("eia-ls-*.sock")}
+    sockets_after = {path.name for path in Path("/tmp").glob("depth3d-ls-*.sock")}
     leaked_sockets = sorted(sockets_after - sockets_before)
     leaked_shared_memory: list[str] = []
     for name in sorted(set(ring_names)):

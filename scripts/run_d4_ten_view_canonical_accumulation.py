@@ -64,8 +64,8 @@ from scripts.run_d3_five_view_canonical_accumulation import (  # noqa: E402
     _shared_track_counts,
 )
 
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 _DA3_WORKER = ROOT / "scripts/da3_workers/da3_worker.py"
 _D4_VIEW_COUNT = 10
 _D4_QUALIFIED_COUNT = 5
@@ -76,13 +76,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--b2-dir",
         type=Path,
-        default=Path("/tmp/eia_b2_real_alignment"),
+        default=Path("/tmp/depth3d_b2_real_alignment"),
         help="Validated B2 output directory whose globally optimized SfM world is reused.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d4_ten_view_accumulation"),
+        default=Path("/tmp/depth3d_d4_ten_view_accumulation"),
     )
     parser.add_argument("--da3-python", type=Path, default=_DEFAULT_DA3_PYTHON)
     parser.add_argument("--da3-repo", type=Path, default=_DEFAULT_DA3_REPO)

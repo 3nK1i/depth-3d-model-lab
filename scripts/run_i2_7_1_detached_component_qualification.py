@@ -29,9 +29,9 @@ from core.reconstruction.offline_dense_detached_component_qualification import (
     mask_statistics,
 )
 
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I27 = Path("/tmp/eia_i2_7_final_requalification")
-_DEFAULT_OUT = Path("/tmp/eia_i2_7_1_detached_component_qualification")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I27 = Path("/tmp/depth3d_i2_7_final_requalification")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_7_1_detached_component_qualification")
 
 
 def _args() -> argparse.Namespace:

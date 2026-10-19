@@ -118,8 +118,8 @@ def main() -> int:
     parser.add_argument("--fault-timeout-s", type=float, default=0.8)
     parser.add_argument("--recovery-timeout-s", type=float, default=600.0)
     parser.add_argument("--nerf-python", type=Path, default=default_env_python())
-    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/nerfstudio")
-    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/tiny-cuda-nn")
+    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/nerfstudio")
+    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/tiny-cuda-nn")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
 

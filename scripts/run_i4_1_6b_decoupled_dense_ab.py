@@ -51,18 +51,18 @@ from scripts.run_d1_three_view_canonical_accumulation import _all_sparse_landmar
 from scripts.run_e3_qualified_scene_fusion_expansion import _diagnose_pair, _robust_diagonal  # noqa: E402
 from scripts.run_i1_offline_dense_campaign import _DENSE_THRESHOLDS, _load_reused_dense_candidate  # noqa: E402
 
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python3.11"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python3.11"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 _DA3_WORKER = ROOT / "scripts/da3_workers/i4_1_6b_da3_sequential_worker.py"
 _EDGE_RE = re.compile(r"^\s*edge\s+(\d+)<->(\d+)\s+status=(pass|degraded|inconclusive)\s*$", re.IGNORECASE)
 
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i4-dir", type=Path, default=Path("/tmp/eia_i4_object_orbit_campaign"))
-    p.add_argument("--i4-1-6a-dir", type=Path, default=Path("/tmp/eia_i4_1_6_decoupled_sampling_integration"))
+    p.add_argument("--i4-dir", type=Path, default=Path("/tmp/depth3d_i4_object_orbit_campaign"))
+    p.add_argument("--i4-1-6a-dir", type=Path, default=Path("/tmp/depth3d_i4_1_6_decoupled_sampling_integration"))
     p.add_argument("--video", type=Path, required=True)
-    p.add_argument("--output-dir", type=Path, default=Path("/tmp/eia_i4_1_6b_decoupled_dense_ab"))
+    p.add_argument("--output-dir", type=Path, default=Path("/tmp/depth3d_i4_1_6b_decoupled_dense_ab"))
     p.add_argument("--da3-python", type=Path, default=_DEFAULT_DA3_PYTHON)
     p.add_argument("--da3-repo", type=Path, default=_DEFAULT_DA3_REPO)
     p.add_argument("--da3-model", default=DA3_EFFICIENT_MODEL_ID)

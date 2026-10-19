@@ -88,7 +88,7 @@ def test_i6_1b_offline_event_is_forwarded_cached_and_deduplicated(
     controller.offline_workspace_changed.connect(workspaces.append)
 
     event = {
-        "protocol": "eia.reconstruction.offline.v1",
+        "protocol": "depth3d.reconstruction.offline.v1",
         "event": "progress",
         "stage": "camera_pose",
         "message": "Sparse reconstruction running.",
@@ -114,7 +114,7 @@ def test_i6_1b_starting_state_clears_stale_progress_before_recomposition(
     controller.select_image_sequence(_image_sequence(tmp_path))
     controller.offline_controller.event_received.emit(
         {
-            "protocol": "eia.reconstruction.offline.v1",
+            "protocol": "depth3d.reconstruction.offline.v1",
             "event": "progress",
             "stage": "camera_pose",
             "message": "Old run progress",

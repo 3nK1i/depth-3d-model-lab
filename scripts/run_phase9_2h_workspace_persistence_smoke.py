@@ -34,7 +34,7 @@ from core.perception import (
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-dir", default="/tmp/eia_phase9_2h_workspace")
+    parser.add_argument("--output-dir", default="/tmp/depth3d_phase9_2h_workspace")
     args = parser.parse_args()
     root = Path(args.output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)

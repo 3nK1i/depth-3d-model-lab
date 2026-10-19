@@ -29,7 +29,7 @@ from core.reconstruction.orchestration import (
 )
 from core.reconstruction.surface_mesh import SurfaceMeshResult, write_surface_mesh_obj
 
-RECONSTRUCTION_EXPORT_SCHEMA = "eia.reconstruction.export.v1"
+RECONSTRUCTION_EXPORT_SCHEMA = "depth3d.reconstruction.export.v1"
 RECONSTRUCTION_EXPORT_MANIFEST = "reconstruction_export_manifest.json"
 RECONSTRUCTION_EXPORT_CHECKSUM = "reconstruction_export_manifest.sha256"
 

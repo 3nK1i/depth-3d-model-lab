@@ -139,7 +139,7 @@ def make_sfm_result(tmp_path: Path, *, view_count: int = 3, backend_id: str = PY
     )
 
 
-def good_environment(python_path: str = "/synthetic/eia-pycolmap-probe/bin/python3.11") -> PycolmapMvsEnvironmentProbe:
+def good_environment(python_path: str = "/synthetic/depth3d-pycolmap-probe/bin/python3.11") -> PycolmapMvsEnvironmentProbe:
     return PycolmapMvsEnvironmentProbe(
         python_executable=python_path,
         available=True,

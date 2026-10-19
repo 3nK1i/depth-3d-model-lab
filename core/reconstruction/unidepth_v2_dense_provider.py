@@ -240,7 +240,7 @@ def probe_unidepth_v2_environment(
     root = Path(project_root or Path.cwd()).expanduser().resolve()
     python = Path(python_executable or sys.executable).expanduser().resolve()
     source = root / "third_party/UniDepth"
-    marker = source / ".eia_unidepth_v2_compat.json"
+    marker = source / ".depth3d_unidepth_v2_compat.json"
     errors: list[str] = []
 
     source_revision = ""

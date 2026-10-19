@@ -178,7 +178,7 @@ def make_da3_sfm_result(tmp_path: Path, *, view_count: int = 3, camera_ids: tupl
 
 
 def good_da3_environment(tmp_path: Path, *, available: bool = True) -> DA3EnvironmentProbe:
-    python = tmp_path / "eia-da3" / "bin" / "python3.11"
+    python = tmp_path / "depth3d-da3" / "bin" / "python3.11"
     repo = tmp_path / "depth-anything-3"
     python.parent.mkdir(parents=True, exist_ok=True)
     repo.mkdir(parents=True, exist_ok=True)

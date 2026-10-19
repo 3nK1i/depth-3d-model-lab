@@ -15,7 +15,7 @@ DEFAULT_SOURCE = ROOT / "third_party" / "UniDepth"
 OFFICIAL_REPOSITORY = "https://github.com/lpiccinelli-eth/UniDepth.git"
 OFFICIAL_COMMIT = "8d8cfe4c7ee15297099983607febf0d4f32eb3d6"
 REQUIREMENTS = ROOT / "requirements" / "models-unidepth-v2.txt"
-COMPAT_MARKER = ".eia_unidepth_v2_compat.json"
+COMPAT_MARKER = ".depth3d_unidepth_v2_compat.json"
 
 _MODELS_INIT = '''"""V2-only compatibility import for the official UniDepth source."""\n\nfrom .unidepthv2 import UniDepthV2\n\n__all__ = ["UniDepthV2"]\n'''
 

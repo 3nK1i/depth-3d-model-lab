@@ -17,8 +17,8 @@ from app.widgets.reconstruction_page import ReconstructionPage  # noqa: E402
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i2-6-dir", type=Path, default=Path("/tmp/eia_i2_6_manifold_filter_promotion"))
-    p.add_argument("--i2-7-dir", type=Path, default=Path("/tmp/eia_i2_7_final_requalification"))
+    p.add_argument("--i2-6-dir", type=Path, default=Path("/tmp/depth3d_i2_6_manifold_filter_promotion"))
+    p.add_argument("--i2-7-dir", type=Path, default=Path("/tmp/depth3d_i2_7_final_requalification"))
     p.add_argument("--show", action="store_true")
     return p.parse_args()
 

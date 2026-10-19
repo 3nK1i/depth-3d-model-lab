@@ -4,7 +4,7 @@
 This validation intentionally stops before RGB-D projection and multi-view
 fusion. It runs a real offline PyCOLMAP reconstruction, selects one registered
 keyframe with strong sparse support, obtains one real DA3 dense-depth prediction
-through the isolated ``eia-da3`` runtime, adapts that depth map back to the SfM
+through the isolated ``depth3d-da3`` runtime, adapts that depth map back to the SfM
 keyframe pixel grid when DA3 inference resolution differs, and executes the B1
 scale-only alignment bridge.
 
@@ -67,9 +67,9 @@ from core.reconstruction.da3_provider import (  # noqa: E402
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 
 _MIB = 1024**2
-_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 _DA3_WORKER = ROOT / "scripts/da3_workers/da3_worker.py"
 _MAX_PIXEL_SCALE_ANISOTROPY = 0.05
 

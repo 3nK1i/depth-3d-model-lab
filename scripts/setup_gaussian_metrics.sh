@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_NAME="eia-gaussian-metrics"
+ENV_NAME="depth3d-gaussian-metrics"
 PYTHON_VERSION="3.10"
 TORCH_VERSION="2.7.1"
 TORCHVISION_VERSION="0.22.1"

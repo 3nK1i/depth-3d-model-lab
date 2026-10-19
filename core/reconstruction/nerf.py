@@ -267,7 +267,7 @@ def nerfstudio_camera_to_world_from_eia_pose(value: object) -> list[list[float]]
     return result.tolist()
 
 
-def eia_pose_from_nerfstudio_camera_to_world(value: object) -> list[list[float]]:
+def depth3d_pose_from_nerfstudio_camera_to_world(value: object) -> list[list[float]]:
     """Convert Nerfstudio/OpenGL camera-to-world to canonical OpenCV-style c2w.
 
     This is the exact inverse of :func:`nerfstudio_camera_to_world_from_eia_pose`.
@@ -564,7 +564,7 @@ def run_nerf_external_worker(spec: NerfWorkerProcessSpec, request: NerfWorkerReq
         raise NerfWorkerExecutionError(f"NeRF worker script does not exist: {worker}")
     output_dir = Path(request.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="eia-nerf-request-", dir=str(output_dir)) as tmp:
+    with tempfile.TemporaryDirectory(prefix="depth3d-nerf-request-", dir=str(output_dir)) as tmp:
         tmp_dir = Path(tmp)
         request_path = tmp_dir / "request.json"
         result_path = tmp_dir / "result.json"

@@ -89,7 +89,7 @@ def test_a1_sparse_export_preserves_supporting_arbitrary_authority(tmp_path: Pat
     assert all(item.certified_metrology is False for item in files)
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema"] == "eia.reconstruction.export.v1"
+    assert manifest["schema"] == "depth3d.reconstruction.export.v1"
     assert manifest["canonical_geometry_authoritative"] is False
     assert manifest["certified_metrology"] is False
     assert manifest["authority_model"]["gaussian_nerf"] == "appearance_only"

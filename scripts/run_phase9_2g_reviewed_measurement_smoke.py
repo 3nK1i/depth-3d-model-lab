@@ -33,7 +33,7 @@ from core.perception.reviewed_analysis import reviewed_selection_from_workspace,
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", default="/tmp/eia_phase9_2g_reviewed_measurement")
+    parser.add_argument("--output-dir", default="/tmp/depth3d_phase9_2g_reviewed_measurement")
     return parser
 
 

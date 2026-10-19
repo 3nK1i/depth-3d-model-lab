@@ -26,7 +26,7 @@ from core.reconstruction import (
     SfmWorldAlignmentStatus,
     aggregate_nerf_held_out_metrics,
     deterministic_nerf_validation_split,
-    eia_pose_from_nerfstudio_camera_to_world,
+    depth3d_pose_from_nerfstudio_camera_to_world,
     nerfstudio_camera_to_world_from_eia_pose,
 )
 from scripts.nerf_workers.common import export_nerfstudio_dataset
@@ -75,7 +75,7 @@ def test_nerfstudio_pose_conversion_is_exactly_invertible() -> None:
     pose = np.eye(4, dtype=np.float64)
     pose[:3, 3] = [1.0, 2.0, 3.0]
     ns_pose = np.asarray(nerfstudio_camera_to_world_from_eia_pose(pose))
-    restored = np.asarray(eia_pose_from_nerfstudio_camera_to_world(ns_pose))
+    restored = np.asarray(depth3d_pose_from_nerfstudio_camera_to_world(ns_pose))
     assert np.allclose(restored, pose)
     assert np.allclose(ns_pose[:3, 0], pose[:3, 0])
     assert np.allclose(ns_pose[:3, 1:3], -pose[:3, 1:3])
@@ -133,7 +133,7 @@ def test_explicit_export_preserves_e2_default_and_supports_e3_split(tmp_path: Pa
     default_payload = json.loads(default_path.read_text())
     assert len(default_payload["train_filenames"]) == 11
     assert len(default_payload["test_filenames"]) == 1
-    assert default_payload["eia_backend_qualification_only"] is True
+    assert default_payload["depth3d_backend_qualification_only"] is True
 
     train, heldout = deterministic_nerf_validation_split(tuple(frame.frame_id for frame in dataset.frames), validation_count=3)
     explicit_path = export_nerfstudio_dataset(
@@ -146,8 +146,8 @@ def test_explicit_export_preserves_e2_default_and_supports_e3_split(tmp_path: Pa
     payload = json.loads(explicit_path.read_text())
     assert len(payload["train_filenames"]) == 9
     assert len(payload["test_filenames"]) == 3
-    assert payload["eia_explicit_heldout_split"] is True
-    assert {item["eia_frame_id"] for item in payload["frames"]} == {frame.frame_id for frame in dataset.frames}
+    assert payload["depth3d_explicit_heldout_split"] is True
+    assert {item["depth3d_frame_id"] for item in payload["frames"]} == {frame.frame_id for frame in dataset.frames}
 
 
 def test_explicit_export_rejects_overlap_or_partial_coverage(tmp_path: Path) -> None:
@@ -224,7 +224,7 @@ def test_quality_parser_accepts_existing_backend_neutral_d3_metric_payload() -> 
         ],
         "aggregate": {"measured": True, "psnr_db": 21.0, "ssim": 0.8, "lpips": 0.2},
         "evaluator": {
-            "name": "eia-heldout-quality",
+            "name": "depth3d-heldout-quality",
             "psnr_definition": "rgb_mse_unit_range_mse_floor_1e-12",
             "ssim_definition": "gaussian_11_sigma_1.5_rgb_unit_range",
             "lpips_network": "alex",

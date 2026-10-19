@@ -31,7 +31,7 @@ _VIEW_ANGLES = {
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i2-5-dir", type=Path, default=Path("/tmp/eia_i2_5_conservative_diversity_filter_counterfactual"))
+    parser.add_argument("--i2-5-dir", type=Path, default=Path("/tmp/depth3d_i2_5_conservative_diversity_filter_counterfactual"))
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--representation", choices=("extended", "core"), default="extended")
     parser.add_argument("--color-mode", choices=("rgb", "decision", "region", "diversity"), default="rgb")

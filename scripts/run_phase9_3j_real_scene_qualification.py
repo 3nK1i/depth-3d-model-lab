@@ -3,7 +3,7 @@
 
 By default this script performs a *real* execution of the production Phase 9.3H
 worker against the existing South Building image sequence.  DA3 still runs only
-inside the qualified external ``eia-da3`` interpreter.  The harness then reads
+inside the qualified external ``depth3d-da3`` interpreter.  The harness then reads
 back the persistent canonical scene, verifies file integrity/provenance and
 records measured elapsed time / DA3 peak VRAM exactly as reported by the real
 worker.
@@ -40,8 +40,8 @@ from core.reconstruction.persistent_scene import (
 )
 
 DEFAULT_IMAGES = Path.home() / "Desktop/phase8_3c_south_building/south-building/images"
-DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 WORKER = ROOT / "scripts" / "run_phase9_3h_da3_canonical_job.py"
 SUMMARY_NAME = "phase9_3j_qualification_summary.json"
 

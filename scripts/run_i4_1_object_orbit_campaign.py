@@ -33,11 +33,11 @@ from core.reconstruction.offline_dense_i4_orbit_qualification import (  # noqa: 
     select_camera_poses,
 )
 
-_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
-_DEFAULT_I3_CLOSURE = Path("/tmp/eia_i3_2_second_scene_promotion/i3_2_closure.json")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_object_orbit_campaign")
+_DEFAULT_SFM_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python"
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
+_DEFAULT_I3_CLOSURE = Path("/tmp/depth3d_i3_2_second_scene_promotion/i3_2_closure.json")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_object_orbit_campaign")
 
 
 def _args() -> argparse.Namespace:

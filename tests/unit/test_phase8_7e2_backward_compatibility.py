@@ -44,7 +44,7 @@ def test_production_reconstruction_core_has_no_heavy_nerf_import() -> None:
 
 def test_e2_setup_is_explicitly_isolated_and_pinned() -> None:
     text = (ROOT / "scripts/setup_nerfstudio_backend.sh").read_text(encoding="utf-8")
-    assert 'ENV_NAME="eia-nerf-nerfstudio"' in text
+    assert 'ENV_NAME="depth3d-nerf-nerfstudio"' in text
     assert 'NERFSTUDIO_TAG="v1.1.5"' in text
     assert 'TCNN_REVISION="b3473c81396fe927293bdfd5a6be32df8769927c"' in text
     assert "production `depth` environment" in text

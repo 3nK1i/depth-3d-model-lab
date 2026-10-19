@@ -22,12 +22,12 @@ def _args() -> argparse.Namespace:
     parser.add_argument(
         "--da3-python",
         type=Path,
-        default=Path.home() / "anaconda3/envs/eia-da3/bin/python3.11",
+        default=Path.home() / "anaconda3/envs/depth3d-da3/bin/python3.11",
     )
     parser.add_argument(
         "--da3-repo",
         type=Path,
-        default=Path.home() / "Desktop/eia-da3-backends/depth-anything-3",
+        default=Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()

@@ -31,10 +31,10 @@ from core.reconstruction.offline_dense_i4_sampling_density_diagnosis import (  #
     summarize_pair_observations,
 )
 
-_DEFAULT_CURRENT = Path("/tmp/eia_i4_object_orbit_campaign")
-_DEFAULT_PREFIX = Path("/tmp/eia_i4_horse_pre_i4_1_3_degraded")
-_DEFAULT_CONTROL = Path("/tmp/eia_i4_horse_30s_degraded")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_4_decoupled_sampling_density_diagnosis")
+_DEFAULT_CURRENT = Path("/tmp/depth3d_i4_object_orbit_campaign")
+_DEFAULT_PREFIX = Path("/tmp/depth3d_i4_horse_pre_i4_1_3_degraded")
+_DEFAULT_CONTROL = Path("/tmp/depth3d_i4_horse_30s_degraded")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_4_decoupled_sampling_density_diagnosis")
 _EDGE_RE = re.compile(r"^\s*edge\s+(\d+)<->(\d+)\s+status=(pass|degraded|inconclusive)\s*$", re.IGNORECASE)
 
 

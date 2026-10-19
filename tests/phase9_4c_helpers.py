@@ -18,7 +18,7 @@ from core.reconstruction import (
 
 
 def ready_gaussian_runtime(tmp_path: Path):
-    python = (tmp_path / "eia-gaussian-gsplat" / "bin" / "python").resolve()
+    python = (tmp_path / "depth3d-gaussian-gsplat" / "bin" / "python").resolve()
     checkout = (tmp_path / "gsplat").resolve()
     python.parent.mkdir(parents=True, exist_ok=True)
     checkout.mkdir(parents=True, exist_ok=True)

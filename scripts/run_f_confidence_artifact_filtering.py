@@ -44,8 +44,8 @@ from scripts.run_e2_consistency_aware_fusion_refinement import (  # noqa: E402
     _write_binary_ply,
 )
 
-_DEFAULT_E3_DIR = Path("/tmp/eia_e3_qualified_scene_fusion_expansion")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_f_confidence_artifact_filtering")
+_DEFAULT_E3_DIR = Path("/tmp/depth3d_e3_qualified_scene_fusion_expansion")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_f_confidence_artifact_filtering")
 
 
 def _parse_args() -> argparse.Namespace:

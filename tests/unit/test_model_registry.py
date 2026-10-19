@@ -494,7 +494,7 @@ def test_metric3d_v2_availability_requires_source_and_checkpoint_markers(
     assert availability.checkpoint_status == "missing"
     assert len(availability.missing_assets) == 2
 
-    (tmp_path / ".eia_metric3d_v2_ready.json").write_text("{}")
+    (tmp_path / ".depth3d_metric3d_v2_ready.json").write_text("{}")
     (tmp_path / ".ready").write_text("{}")
     availability = check_model_availability(METRIC3D_V2_MODEL_ID, _gpu())
     assert availability.available is True

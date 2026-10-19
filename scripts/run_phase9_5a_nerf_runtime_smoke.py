@@ -26,7 +26,7 @@ from core.reconstruction import (  # noqa: E402
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="phase9_5a_") as tmp:
         root = Path(tmp)
-        python = root / "eia-nerf-nerfstudio" / "bin" / "python"
+        python = root / "depth3d-nerf-nerfstudio" / "bin" / "python"
         ns_root = root / "nerfstudio"
         tcnn_root = root / "tiny-cuda-nn"
         python.parent.mkdir(parents=True)

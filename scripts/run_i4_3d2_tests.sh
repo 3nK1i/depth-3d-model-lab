@@ -86,8 +86,8 @@ assert callable(module.main) and callable(module.run)
 print("I4.3D2 isolated RollingDepth worker import probe: PASS")
 PYPROBE
 
-ROLLING_DEPTH_PYTHON="${ROLLING_DEPTH_PYTHON:-$HOME/anaconda3/envs/eia-rollingdepth/bin/python}"
-ROLLING_DEPTH_REPO="${ROLLING_DEPTH_REPO:-$HOME/Desktop/eia-rollingdepth-backends/RollingDepth}"
+ROLLING_DEPTH_PYTHON="${ROLLING_DEPTH_PYTHON:-$HOME/anaconda3/envs/depth3d-rollingdepth/bin/python}"
+ROLLING_DEPTH_REPO="${ROLLING_DEPTH_REPO:-$HOME/Desktop/depth3d-rollingdepth-backends/RollingDepth}"
 if [[ -x "$ROLLING_DEPTH_PYTHON" && -d "$ROLLING_DEPTH_REPO" ]]; then
   ROLLING_DEPTH_PYTHON="$ROLLING_DEPTH_PYTHON" ROLLING_DEPTH_REPO="$ROLLING_DEPTH_REPO" python - <<'PYRUNTIME'
 import os

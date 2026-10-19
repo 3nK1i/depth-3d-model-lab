@@ -19,7 +19,7 @@ def main() -> int:
     parser.add_argument(
         "--profile-dir",
         type=Path,
-        default=Path("/tmp/eia_phase9_1f_calibration_profiles"),
+        default=Path("/tmp/depth3d_phase9_1f_calibration_profiles"),
         help="Profile library used by the preview (default: /tmp, so production profiles are untouched).",
     )
     args = parser.parse_args()

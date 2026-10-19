@@ -34,9 +34,9 @@ from core.reconstruction.mvs_visual_ab import (  # noqa: E402
     write_json,
 )
 
-_DEFAULT_DA3 = Path("/tmp/eia_i4_1_9_house_visual_acceptance_02_cap3m")
-_DEFAULT_A2 = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a2_mvs_attempt01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a3_visual_ab")
+_DEFAULT_DA3 = Path("/tmp/depth3d_i4_1_9_house_visual_acceptance_02_cap3m")
+_DEFAULT_A2 = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a2_mvs_attempt01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a3_visual_ab")
 
 
 def _args() -> argparse.Namespace:

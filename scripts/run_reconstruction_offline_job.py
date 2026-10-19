@@ -57,8 +57,8 @@ from core.reconstruction.reconstruction_progressive_sfm_transport import (
     progressive_sfm_transport_line,
 )
 
-PROTOCOL = "eia.reconstruction.offline.v1"
-OFFLINE_VISUALIZATION_SCHEMA = "eia.reconstruction.offline.visualization.v1"
+PROTOCOL = "depth3d.reconstruction.offline.v1"
+OFFLINE_VISUALIZATION_SCHEMA = "depth3d.reconstruction.offline.visualization.v1"
 OFFLINE_VISUALIZATION_LANDMARK_CAP = 8_192
 _MIB = 1024**2
 

@@ -25,7 +25,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i2-5-2-dir", type=Path, default=Path("/tmp/eia_i2_5_2_extremum_local_geometry_manifold_diagnosis"))
+    p.add_argument("--i2-5-2-dir", type=Path, default=Path("/tmp/depth3d_i2_5_2_extremum_local_geometry_manifold_diagnosis"))
     p.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")
     p.add_argument("--color-mode", choices=("manifold", "linearity", "ray", "rgb"), default="manifold")
     p.add_argument("--fit", choices=("full", "robust"), default="full")

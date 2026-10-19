@@ -32,10 +32,10 @@ from scripts.run_i2_4_support_diversity_parallax_diagnosis import _camera_center
 from scripts.run_i2_5_1_spatial_extremum_survivor_diagnosis import _load_f_extended  # noqa: E402
 
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I251 = Path("/tmp/eia_i2_5_1_spatial_extremum_survivor_diagnosis")
-_DEFAULT_OUT = Path("/tmp/eia_i2_5_2_extremum_local_geometry_manifold_diagnosis")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I251 = Path("/tmp/depth3d_i2_5_1_spatial_extremum_survivor_diagnosis")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_5_2_extremum_local_geometry_manifold_diagnosis")
 
 
 def _args() -> argparse.Namespace:

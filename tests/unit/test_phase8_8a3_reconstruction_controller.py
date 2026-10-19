@@ -142,7 +142,7 @@ def test_offline_line_protocol_is_forwarded_without_backend_imports(application_
     controller.offline_log_received.connect(logs.append)
 
     controller.offline_controller._consume_line(
-        '{"protocol":"eia.reconstruction.offline.v1","event":"progress","stage":"camera_pose","message":"ok"}'
+        '{"protocol":"depth3d.reconstruction.offline.v1","event":"progress","stage":"camera_pose","message":"ok"}'
     )
     controller.offline_controller._consume_line("native worker log")
 

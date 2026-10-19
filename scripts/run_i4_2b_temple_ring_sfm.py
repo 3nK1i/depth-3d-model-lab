@@ -11,7 +11,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run I4.2B authoritative TempleRing SfM")
     parser.add_argument("--i4-2a-dir", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--python", default=str(Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"))
+    parser.add_argument("--python", default=str(Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"))
     parser.add_argument("--cpu", action="store_true", help="Use CPU SIFT extraction/matching instead of CUDA")
     parser.add_argument("--timeout-s", type=float, default=7200.0)
     args = parser.parse_args()

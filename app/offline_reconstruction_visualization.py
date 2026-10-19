@@ -19,7 +19,7 @@ from typing import Mapping
 
 import numpy as np
 
-OFFLINE_VISUALIZATION_SCHEMA = "eia.reconstruction.offline.visualization.v1"
+OFFLINE_VISUALIZATION_SCHEMA = "depth3d.reconstruction.offline.visualization.v1"
 MAX_OFFLINE_VISUALIZATION_BYTES = 16 * 1024 * 1024
 
 

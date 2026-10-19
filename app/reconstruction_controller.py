@@ -173,11 +173,11 @@ SUPPORTED_RECONSTRUCTION_VIDEO_EXTENSIONS = (
     ".webm",
 )
 
-DEFAULT_RECONSTRUCTION_OUTPUT_ROOT = Path(tempfile.gettempdir()) / "eia_depth_reconstruction"
-DEFAULT_PYCOLMAP_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python"
-DEFAULT_STELLA_INSTALL_PREFIX = Path.home() / "Desktop/eia-stella-vslam-probe"
+DEFAULT_RECONSTRUCTION_OUTPUT_ROOT = Path(tempfile.gettempdir()) / "depth3d_reconstruction"
+DEFAULT_PYCOLMAP_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python"
+DEFAULT_STELLA_INSTALL_PREFIX = Path.home() / "Desktop/depth3d-stella-vslam-probe"
 DEFAULT_STELLA_WORKER = (
-    Path.home() / "Desktop/eia-stella-live-worker/bin/eia_stella_live_worker"
+    Path.home() / "Desktop/depth3d-stella-live-worker/bin/depth3d_stella_live_worker"
 )
 DEFAULT_STELLA_VOCABULARY = (
     Path.home() / "Desktop/phase8_4_stella_probe_data/orb_vocab.fbow"

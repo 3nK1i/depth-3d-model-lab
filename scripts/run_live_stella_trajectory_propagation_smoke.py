@@ -50,12 +50,12 @@ def main() -> int:
     parser.add_argument(
         "--stella-prefix",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-vslam-probe",
+        default=Path.home() / "Desktop" / "depth3d-stella-vslam-probe",
     )
     parser.add_argument(
         "--worker",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-stella-live-worker" / "bin" / "eia_stella_live_worker",
+        default=Path.home() / "Desktop" / "depth3d-stella-live-worker" / "bin" / "depth3d_stella_live_worker",
     )
     parser.add_argument(
         "--vocab",

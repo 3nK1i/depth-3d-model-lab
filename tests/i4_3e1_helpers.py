@@ -56,7 +56,7 @@ def d3_snapshot() -> dict:
 def good_metric3d_environment(tmp_path: Path, *, available: bool = True) -> Metric3DV2EnvironmentProbe:
     root = (tmp_path / "project").resolve()
     source = root / "third_party/Metric3D"
-    marker = source / ".eia_metric3d_v2_ready.json"
+    marker = source / ".depth3d_metric3d_v2_ready.json"
     checkpoint = root / "checkpoints/metric3d-v2/metric_depth_vit_small_800k.pth"
     python = root / "bin/python"
     source.mkdir(parents=True, exist_ok=True)

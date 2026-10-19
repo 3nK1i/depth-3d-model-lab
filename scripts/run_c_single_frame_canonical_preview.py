@@ -33,12 +33,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cloud",
         type=Path,
-        default=Path("/tmp/eia_c_single_frame_projection/c_canonical_single_frame_cloud.npz"),
+        default=Path("/tmp/depth3d_c_single_frame_projection/c_canonical_single_frame_cloud.npz"),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/tmp/eia_c_single_frame_projection/c_canonical_preview.png"),
+        default=Path("/tmp/depth3d_c_single_frame_projection/c_canonical_preview.png"),
     )
     parser.add_argument("--point-budget", type=int, default=250_000)
     parser.add_argument("--point-size", type=float, default=2.0)

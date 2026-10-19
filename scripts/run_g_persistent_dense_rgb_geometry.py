@@ -34,8 +34,8 @@ from core.reconstruction.dense_scene_persistence import (  # noqa: E402
 )
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 
-_DEFAULT_F_DIR = Path("/tmp/eia_f_confidence_artifact_filtering")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_g_persistent_dense_rgb_geometry")
+_DEFAULT_F_DIR = Path("/tmp/depth3d_f_confidence_artifact_filtering")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_g_persistent_dense_rgb_geometry")
 
 
 def _parse_args() -> argparse.Namespace:

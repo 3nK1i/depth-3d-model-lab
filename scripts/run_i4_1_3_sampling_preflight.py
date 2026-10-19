@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/tmp/eia_i4_1_3_sampling_preflight.json"),
+        default=Path("/tmp/depth3d_i4_1_3_sampling_preflight.json"),
     )
     args = parser.parse_args()
     if args.target_fps <= 0.0:

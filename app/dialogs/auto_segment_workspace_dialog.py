@@ -127,7 +127,7 @@ class _ProposalListRow(QWidget):
 def default_segmentation_project_root() -> Path:
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
     if not str(base).strip():
-        base = str(Path.home() / ".local" / "share" / "eia-depth-3d-model-lab")
+        base = str(Path.home() / ".local" / "share" / "depth3d-model-lab")
     return Path(base).expanduser().resolve() / "segmentation_projects"
 
 

@@ -54,7 +54,7 @@ def write_h3_worker(path: Path) -> Path:
 
             result(True)
             print(json.dumps({
-                'protocol': 'eia.reconstruction.offline.v1',
+                'protocol': 'depth3d.reconstruction.offline.v1',
                 'event': 'completed',
                 'stage': 'camera_pose',
                 'message': 'H3 mock completed',

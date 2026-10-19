@@ -71,8 +71,8 @@ def runtime_config(profile: str = "efficient") -> dict:
     }
     encoder, filename, label, input_size, max_resolution = variants[profile]
     return {
-        "source_dir": "/opt/eia/Video-Depth-Anything",
-        "checkpoint": f"/opt/eia/checkpoints/{filename}",
+        "source_dir": "/opt/depth3d/Video-Depth-Anything",
+        "checkpoint": f"/opt/depth3d/checkpoints/{filename}",
         "encoder": encoder,
         "model_label": label,
         "input_size": input_size,
@@ -240,10 +240,10 @@ def provider_summary(status: str = "pass", *, views: int = 19, rejected_views: i
         "runtime_config": cfg,
         "runtime": {
             "schema_version": 1,
-            "python_executable": "/opt/eia/python",
-            "project_root": "/opt/eia/project",
-            "source_directory": "/opt/eia/Video-Depth-Anything",
-            "ready_marker": "/opt/eia/ready.json",
+            "python_executable": "/opt/depth3d/python",
+            "project_root": "/opt/depth3d/project",
+            "source_directory": "/opt/depth3d/Video-Depth-Anything",
+            "ready_marker": "/opt/depth3d/ready.json",
             "checkpoint_path": cfg["checkpoint"],
             "source_revision": "a" * 40,
             "source_ready": True,

@@ -73,7 +73,7 @@ def main() -> int:
     parser.add_argument(
         "--sfm-python",
         type=Path,
-        default=Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python",
+        default=Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python",
     )
     parser.add_argument(
         "--output-dir",

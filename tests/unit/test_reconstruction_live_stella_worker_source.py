@@ -45,8 +45,8 @@ def test_native_worker_never_owns_usb_rtsp_or_video_capture() -> None:
 def test_native_worker_build_script_is_shell_syntax_clean_and_external_build_only() -> None:
     subprocess.run(["bash", "-n", str(BUILD_SCRIPT)], check=True)
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert "$HOME/Desktop/eia-stella-live-worker-build" in text
-    assert "$HOME/Desktop/eia-stella-live-worker" in text
+    assert "$HOME/Desktop/depth3d-stella-live-worker-build" in text
+    assert "$HOME/Desktop/depth3d-stella-live-worker" in text
     assert "unset CONDA_PREFIX" in text
     assert "STELLA LIVE WORKER BUILD: PASS" in text
 

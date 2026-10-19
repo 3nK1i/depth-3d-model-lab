@@ -59,7 +59,7 @@ def test_i43e2_environment_probe_accepts_namespace_package_when_runtime_class_is
     model_file.parent.mkdir(parents=True, exist_ok=True)
     model_file.write_text("class UniDepthV2: pass\n", encoding="utf-8")
     (source / ".git").mkdir()
-    (source / ".eia_unidepth_v2_compat.json").write_text(
+    (source / ".depth3d_unidepth_v2_compat.json").write_text(
         json.dumps(
             {
                 "commit": "8d8cfe4c7ee15297099983607febf0d4f32eb3d6",

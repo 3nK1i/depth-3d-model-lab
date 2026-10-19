@@ -159,8 +159,8 @@ class GaussianInteractiveRuntimeSpec:
 def default_phase9_gaussian_runtime_spec(home: str | Path | None = None) -> GaussianInteractiveRuntimeSpec:
     root = Path.home() if home is None else Path(home)
     return GaussianInteractiveRuntimeSpec(
-        python_executable=str(root / "anaconda3" / "envs" / "eia-gaussian-gsplat" / "bin" / "python"),
-        checkout_root=str(root / "Desktop" / "eia-gaussian-backends" / "gsplat"),
+        python_executable=str(root / "anaconda3" / "envs" / "depth3d-gaussian-gsplat" / "bin" / "python"),
+        checkout_root=str(root / "Desktop" / "depth3d-gaussian-backends" / "gsplat"),
     )
 
 

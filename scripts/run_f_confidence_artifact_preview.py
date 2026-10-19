@@ -25,7 +25,7 @@ from core.reconstruction.dense_confidence_filtering import DenseArtifactReason  
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--f-dir", type=Path, default=Path("/tmp/eia_f_confidence_artifact_filtering"))
+    parser.add_argument("--f-dir", type=Path, default=Path("/tmp/depth3d_f_confidence_artifact_filtering"))
     parser.add_argument(
         "--cloud",
         choices=("core", "extended", "rejected", "fringe", "detached", "coverage"),

@@ -60,8 +60,8 @@ def test_e2_default_export_split_remains_last_frame_eval(tmp_path: Path) -> None
     assert len(payload["train_filenames"]) == 2
     assert len(payload["val_filenames"]) == 1
     assert payload["val_filenames"] == payload["test_filenames"]
-    assert payload["eia_backend_qualification_only"] is True
-    assert payload["eia_explicit_heldout_split"] is False
+    assert payload["depth3d_backend_qualification_only"] is True
+    assert payload["depth3d_explicit_heldout_split"] is False
 
 
 def test_e3_does_not_add_heavy_nerf_runtime_to_production_manifest() -> None:

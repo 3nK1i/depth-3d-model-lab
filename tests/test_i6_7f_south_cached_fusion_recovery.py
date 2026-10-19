@@ -151,7 +151,7 @@ def test_prior_non_cached_attempt_does_not_block_single_cached_attempt(tmp_path)
     recoveries = tmp_path / 'fusion_recoveries'
     prior = recoveries / str(uuid4())
     prior.mkdir(parents=True)
-    (prior / 'launch.json').write_text(json.dumps({'protocol': 'eia.i6_7f.fusion_only_recovery.v1'}), encoding='utf-8')
+    (prior / 'launch.json').write_text(json.dumps({'protocol': 'depth3d.i6_7f.fusion_only_recovery.v1'}), encoding='utf-8')
     m.require_single_cached_attempt(tmp_path, str(uuid4()))
 
 

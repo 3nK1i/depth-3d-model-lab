@@ -280,13 +280,13 @@ def main() -> int:
         default="rtx_2060_6gb",
     )
     parser.add_argument("--hardware-label", default="NVIDIA GeForce RTX 2060 6 GB")
-    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("eia-gaussian-gsplat"))
-    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("eia-gaussian-graphdeco"))
-    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("eia-gaussian-metrics"))
+    parser.add_argument("--gsplat-python", type=Path, default=_default_env_python("depth3d-gaussian-gsplat"))
+    parser.add_argument("--graphdeco-python", type=Path, default=_default_env_python("depth3d-gaussian-graphdeco"))
+    parser.add_argument("--metrics-python", type=Path, default=_default_env_python("depth3d-gaussian-metrics"))
     parser.add_argument(
         "--graphdeco-root",
         type=Path,
-        default=Path.home() / "Desktop" / "eia-gaussian-backends" / "gaussian-splatting",
+        default=Path.home() / "Desktop" / "depth3d-gaussian-backends" / "gaussian-splatting",
     )
     parser.add_argument("--metrics-device", choices=("cpu", "cuda", "auto"), default="cpu")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)

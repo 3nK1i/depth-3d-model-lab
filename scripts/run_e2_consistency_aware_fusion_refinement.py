@@ -32,8 +32,8 @@ if str(ROOT) not in sys.path:
 
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 
-_DEFAULT_E1_DIR = Path("/tmp/eia_e1_qualified_ten_view_voxel_fusion")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_e2_consistency_aware_fusion_refinement")
+_DEFAULT_E1_DIR = Path("/tmp/depth3d_e1_qualified_ten_view_voxel_fusion")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_e2_consistency_aware_fusion_refinement")
 
 _NEIGHBOR26 = tuple(
     (dx, dy, dz)

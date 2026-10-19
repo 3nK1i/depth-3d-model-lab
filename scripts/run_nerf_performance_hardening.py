@@ -94,8 +94,8 @@ def main() -> int:
         default=NerfHardwareProfile.RTX_2060_6GB.value,
     )
     parser.add_argument("--nerf-python", type=Path, default=default_env_python())
-    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/nerfstudio")
-    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/eia-nerf-backends/tiny-cuda-nn")
+    parser.add_argument("--nerfstudio-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/nerfstudio")
+    parser.add_argument("--tiny-cuda-nn-root", type=Path, default=Path.home() / "Desktop/depth3d-nerf-backends/tiny-cuda-nn")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--timeout-s", type=float, default=3600.0)
     args = parser.parse_args()

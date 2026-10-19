@@ -35,7 +35,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i4-1-8b-dir", type=Path, default=Path("/tmp/eia_i4_1_8b_retained_core_object_support"))
+    p.add_argument("--i4-1-8b-dir", type=Path, default=Path("/tmp/depth3d_i4_1_8b_retained_core_object_support"))
     p.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")
     p.add_argument("--fit", choices=("all", "core", "support"), default="all")
     p.add_argument("--point-budget", type=int, default=250_000)

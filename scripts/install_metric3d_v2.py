@@ -15,7 +15,7 @@ DEFAULT_SOURCE = ROOT / "third_party" / "Metric3D"
 OFFICIAL_REPOSITORY = "https://github.com/YvanYin/Metric3D.git"
 OFFICIAL_COMMIT = "eb5b6fac0dc155e4e52f576e304fbf11655ff339"
 REQUIREMENTS = ROOT / "requirements" / "models-metric3d-v2.txt"
-READY_MARKER = ".eia_metric3d_v2_ready.json"
+READY_MARKER = ".depth3d_metric3d_v2_ready.json"
 _REQUIRED_SOURCE_FILES = (
     "hubconf.py",
     "LICENSE",

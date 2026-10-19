@@ -19,8 +19,8 @@ from core.reconstruction.errors import ReconstructionValidationError
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DA3_CANONICAL_WORKER = PROJECT_ROOT / "scripts" / "run_phase9_3h_da3_canonical_job.py"
 DA3_CANONICAL_EVENT_PROTOCOL = "depth3d.reconstruction.da3-canonical.v1"
-DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-DEFAULT_DA3_REPOSITORY = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+DEFAULT_DA3_REPOSITORY = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 
 
 class DA3CanonicalSourceKind(str, Enum):

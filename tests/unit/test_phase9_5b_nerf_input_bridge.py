@@ -73,8 +73,8 @@ def test_5b_manifest_and_nerfstudio_export_preserve_camera_evidence(tmp_path: Pa
     )
     payload = json.loads(transforms.read_text(encoding="utf-8"))
     assert payload["orientation_override"] == "none"
-    assert payload["eia_pose_source_convention"] == "T_reconstruction_from_camera"
-    assert payload["eia_nerfstudio_camera_convention"] == "OpenGL_c2w"
+    assert payload["depth3d_pose_source_convention"] == "T_reconstruction_from_camera"
+    assert payload["depth3d_nerfstudio_camera_convention"] == "OpenGL_c2w"
     assert len(payload["frames"]) == 5
     converted = np.asarray(payload["frames"][2]["transform_matrix"], dtype=np.float64)
     assert np.allclose(converted[:, 0], poses[2][:, 0])

@@ -25,7 +25,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i2-5-3-dir", type=Path, default=Path("/tmp/eia_i2_5_3_conservative_manifold_filter_counterfactual"))
+    p.add_argument("--i2-5-3-dir", type=Path, default=Path("/tmp/depth3d_i2_5_3_conservative_manifold_filter_counterfactual"))
     p.add_argument("--scenario", default=None, help="Scenario name; defaults to first manual-review priority.")
     p.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")
     p.add_argument("--color-mode", choices=("rgb", "decision"), default="rgb")

@@ -20,7 +20,7 @@ from core.reconstruction import (
 
 
 def _spec(tmp_path: Path) -> NerfInteractiveRuntimeSpec:
-    python = tmp_path / "eia-nerf-nerfstudio/bin/python"
+    python = tmp_path / "depth3d-nerf-nerfstudio/bin/python"
     ns = tmp_path / "nerfstudio"
     tcnn = tmp_path / "tiny-cuda-nn"
     python.parent.mkdir(parents=True)
@@ -79,9 +79,9 @@ def _report(spec: NerfInteractiveRuntimeSpec, **kwargs):
 
 def test_5a_default_runtime_paths_and_exact_pins_are_stable(tmp_path: Path) -> None:
     spec = default_phase9_nerf_runtime_spec(tmp_path)
-    assert spec.python_executable.endswith("anaconda3/envs/eia-nerf-nerfstudio/bin/python")
-    assert spec.nerfstudio_root.endswith("Desktop/eia-nerf-backends/nerfstudio")
-    assert spec.tiny_cuda_nn_root.endswith("Desktop/eia-nerf-backends/tiny-cuda-nn")
+    assert spec.python_executable.endswith("anaconda3/envs/depth3d-nerf-nerfstudio/bin/python")
+    assert spec.nerfstudio_root.endswith("Desktop/depth3d-nerf-backends/nerfstudio")
+    assert spec.tiny_cuda_nn_root.endswith("Desktop/depth3d-nerf-backends/tiny-cuda-nn")
     assert spec.expected_nerfstudio_revision == PHASE9_5A_NERFSTUDIO_QUALIFIED_REVISION
     assert spec.expected_tiny_cuda_nn_revision == PHASE9_5A_TCNN_QUALIFIED_REVISION
 

@@ -147,7 +147,7 @@ def test_i6_1a_recorded_video_is_supported_but_live_source_is_not_offline_ready(
 def test_i6_1a_active_progress_is_normalized_without_owning_runtime_state() -> None:
     selection, session = _session(offline_state="running")
     event = {
-        "protocol": "eia.reconstruction.offline.v1",
+        "protocol": "depth3d.reconstruction.offline.v1",
         "event": "progress",
         "stage": "camera_pose",
         "message": "Registering sparse cameras.",

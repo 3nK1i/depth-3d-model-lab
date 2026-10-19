@@ -31,7 +31,7 @@ SOURCES: dict[str, SourceSpec] = {
         repository="https://github.com/DepthAnything/Depth-Anything-V2.git",
         source_dir=ROOT / "third_party" / "Depth-Anything-V2",
         ref="main",
-        marker=".eia_depth_anything_v2_ready.json",
+        marker=".depth3d_depth_anything_v2_ready.json",
         required_files=("depth_anything_v2/dpt.py", "depth_anything_v2/dinov2.py", "LICENSE"),
         requirement_file=ROOT / "requirements" / "models-depth-anything-v2.txt",
     ),
@@ -40,7 +40,7 @@ SOURCES: dict[str, SourceSpec] = {
         repository="https://github.com/DepthAnything/Video-Depth-Anything.git",
         source_dir=ROOT / "third_party" / "Video-Depth-Anything",
         ref="main",
-        marker=".eia_video_depth_anything_ready.json",
+        marker=".depth3d_video_depth_anything_ready.json",
         required_files=(
             "video_depth_anything/video_depth_stream.py",
             "video_depth_anything/dpt_temporal.py",

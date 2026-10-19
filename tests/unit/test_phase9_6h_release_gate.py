@@ -43,7 +43,7 @@ def _evidence() -> dict:
             "measurement_authoritative": False, "qc_authoritative": False, "certified_metrology": False,
         },
         "state_export": {
-            "schema": "eia.digital-twin.state-export.v1", "scene_id": "prs-nerf",
+            "schema": "depth3d.digital-twin.state-export.v1", "scene_id": "prs-nerf",
             "artifact_payloads_embedded": False, "portable_payload_bundle": False,
             "restore_requires_referenced_files": True, "canonical_geometry_authoritative": False,
             "metric_scale_authoritative": False, "measurement_authoritative": False,

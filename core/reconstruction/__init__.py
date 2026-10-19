@@ -184,7 +184,7 @@ from core.reconstruction.nerf import (
     NerfWorkerRequest,
     nerf_backend_provenance,
     nerf_backend_runtime_pin,
-    eia_pose_from_nerfstudio_camera_to_world,
+    depth3d_pose_from_nerfstudio_camera_to_world,
     nerfstudio_camera_to_world_from_eia_pose,
     probe_nerf_environment,
     run_nerf_external_worker,

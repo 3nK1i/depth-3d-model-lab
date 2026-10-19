@@ -59,7 +59,7 @@ DIGITAL_TWIN_WORKSPACE_SCHEMA_VERSION = 1
 DIGITAL_TWIN_WORKSPACE_PHASE = "9.6F"
 DIGITAL_TWIN_WORKSPACE_MANIFEST = "digital_twin_workspace_state.json"
 DIGITAL_TWIN_WORKSPACE_CHECKSUM = "digital_twin_workspace_state.json.sha256"
-DIGITAL_TWIN_STATE_EXPORT_SCHEMA = "eia.digital-twin.state-export.v1"
+DIGITAL_TWIN_STATE_EXPORT_SCHEMA = "depth3d.digital-twin.state-export.v1"
 DIGITAL_TWIN_STATE_EXPORT_MANIFEST = "digital_twin_state_export.json"
 DIGITAL_TWIN_STATE_EXPORT_CHECKSUM = "digital_twin_state_export.sha256"
 

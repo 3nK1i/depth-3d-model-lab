@@ -58,7 +58,7 @@ def test_f1_checkout_allows_first_porcelain_line_after_runner_whitespace_trim(tm
         "_git_status",
         lambda _path: [
             "M src/depth_anything_3/api.py",
-            "?? .eia_da3_runtime_lock.json",
+            "?? .depth3d_da3_runtime_lock.json",
         ],
     )
 
@@ -67,7 +67,7 @@ def test_f1_checkout_allows_first_porcelain_line_after_runner_whitespace_trim(tm
         expected_revision="abc123",
         allow_status_prefixes=(
             " M src/depth_anything_3/api.py",
-            "?? .eia_da3_runtime_lock.json",
+            "?? .depth3d_da3_runtime_lock.json",
         ),
     )
 

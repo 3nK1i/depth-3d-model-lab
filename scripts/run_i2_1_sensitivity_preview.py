@@ -25,7 +25,7 @@ _VIEW_ANGLES = {"oblique": (32.0, 24.0), "front": (0.0, 0.0), "side": (90.0, 0.0
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--i2-1-dir", type=Path, default=Path("/tmp/eia_i2_1_targeted_peripheral_diagnosis"))
+    parser.add_argument("--i2-1-dir", type=Path, default=Path("/tmp/depth3d_i2_1_targeted_peripheral_diagnosis"))
     parser.add_argument("--scenario", default="early_suspect", help="segment name or view:<workspace_order>")
     parser.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")
     parser.add_argument("--point-budget", type=int, default=250_000)

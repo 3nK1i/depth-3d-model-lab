@@ -14,11 +14,11 @@ from core.reconstruction import (
 def test_worker_process_spec_is_absolute_and_versioned() -> None:
     spec = LiveSlamWorkerProcessSpec(
         backend_id="stella-vslam",
-        executable_path="/opt/eia/live-slam-worker",
-        unix_socket_path="/tmp/eia-live-slam.sock",
+        executable_path="/opt/depth3d/live-slam-worker",
+        unix_socket_path="/tmp/depth3d-live-slam.sock",
     )
     assert spec.protocol_version == LIVE_SLAM_PROTOCOL_VERSION
-    assert spec.as_dict()["unix_socket_path"] == "/tmp/eia-live-slam.sock"
+    assert spec.as_dict()["unix_socket_path"] == "/tmp/depth3d-live-slam.sock"
 
 
 def test_worker_process_spec_rejects_relative_paths() -> None:
@@ -26,7 +26,7 @@ def test_worker_process_spec_rejects_relative_paths() -> None:
         LiveSlamWorkerProcessSpec(
             backend_id="stella-vslam",
             executable_path="relative-worker",
-            unix_socket_path="/tmp/eia.sock",
+            unix_socket_path="/tmp/depth3d.sock",
         )
 
 

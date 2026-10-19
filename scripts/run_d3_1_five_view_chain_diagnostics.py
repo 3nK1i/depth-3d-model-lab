@@ -50,13 +50,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d3-dir",
         type=Path,
-        default=Path("/tmp/eia_d3_1_five_view_candidate"),
+        default=Path("/tmp/depth3d_d3_1_five_view_candidate"),
         help="Successful unfused D3 five-view output directory to qualify.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d3_1_five_view_qualification"),
+        default=Path("/tmp/depth3d_d3_1_five_view_qualification"),
     )
     parser.add_argument("--max-points-per-direction", type=int, default=120_000)
     parser.add_argument("--nn-max-points-per-view", type=int, default=60_000)

@@ -24,8 +24,8 @@ def test_phase96h_release_gate_is_validation_only() -> None:
 
 
 def test_phase96h_release_gate_bounds_are_explicit() -> None:
-    assert RELEASE_GATE_SCHEMA == "eia.digital-twin.phase9-6h-release-gate.v1"
-    assert STATE_EXPORT_SCHEMA == "eia.digital-twin.state-export.v1"
+    assert RELEASE_GATE_SCHEMA == "depth3d.digital-twin.phase9-6h-release-gate.v1"
+    assert STATE_EXPORT_SCHEMA == "depth3d.digital-twin.state-export.v1"
     assert (MIN_REAL_SCENE_DURATION_S, MAX_REAL_SCENE_DURATION_S) == (120.0, 180.0)
     assert QUALIFIED_NERF_STEPS == frozenset({64, 128, 256})
 

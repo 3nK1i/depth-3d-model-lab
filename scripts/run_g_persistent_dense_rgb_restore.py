@@ -22,7 +22,7 @@ from core.reconstruction.dense_scene_persistence import (  # noqa: E402
     verify_persistent_dense_scene_files,
 )
 
-_DEFAULT_SCENE_DIR = Path("/tmp/eia_g_persistent_dense_rgb_geometry")
+_DEFAULT_SCENE_DIR = Path("/tmp/depth3d_g_persistent_dense_rgb_geometry")
 
 
 def _parse_args() -> argparse.Namespace:

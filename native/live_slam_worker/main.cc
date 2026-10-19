@@ -85,7 +85,7 @@ Options parse_args(int argc, char** argv) {
             std::exit(0);
         }
         if (arg == "--version") {
-            std::cout << "eia_stella_live_worker " << kWorkerVersion
+            std::cout << "depth3d_stella_live_worker " << kWorkerVersion
                       << " stella_vslam=" << EIA_STELLA_VERSION
                       << " commit=" << EIA_STELLA_COMMIT << "\n";
             std::exit(0);

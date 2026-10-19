@@ -55,13 +55,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--d4-1-dir",
         type=Path,
-        default=Path("/tmp/eia_d4_1_ten_view_qualification"),
+        default=Path("/tmp/depth3d_d4_1_ten_view_qualification"),
         help="D4.1 output containing one degraded adjacent pair.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/tmp/eia_d4_2_weak_link_bridge_diagnosis"),
+        default=Path("/tmp/depth3d_d4_2_weak_link_bridge_diagnosis"),
     )
     parser.add_argument("--max-points-per-direction", type=int, default=_D42_MAX_POINTS_PER_DIRECTION)
     parser.add_argument("--nn-max-points-per-view", type=int, default=_D42_NN_MAX_POINTS_PER_VIEW)

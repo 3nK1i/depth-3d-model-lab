@@ -39,8 +39,8 @@ from scripts.run_e2_consistency_aware_fusion_refinement import (  # noqa: E402
 )
 
 
-_DEFAULT_I1_DIR = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_i2_full_video_quality")
+_DEFAULT_I1_DIR = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_i2_full_video_quality")
 
 
 def _parse_args() -> argparse.Namespace:

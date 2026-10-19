@@ -50,7 +50,7 @@ def test_repeated_real_backend_qualification_contract_is_bounded_and_determinist
     )
     artifact = GaussianSceneArtifact(
         request_id="stress",
-        backend_id="eia-gsplat-external",
+        backend_id="depth3d-gsplat-external",
         backend_version=GSPLAT_QUALIFIED_VERSION,
         backend_provenance=gaussian_backend_provenance(GaussianBackendKind.GSPLAT_EXTERNAL),
         optimization_state=GaussianOptimizationState.OPTIMIZED,

@@ -18,7 +18,7 @@ from app.widgets.reconstruction_page import ReconstructionPage  # noqa: E402
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i3-2-dir", type=Path, default=Path("/tmp/eia_i3_2_second_scene_promotion"))
+    p.add_argument("--i3-2-dir", type=Path, default=Path("/tmp/depth3d_i3_2_second_scene_promotion"))
     p.add_argument("--show", action="store_true")
     return p.parse_args()
 

@@ -22,9 +22,9 @@ from core.reconstruction.mvs_environment import (  # noqa: E402
     build_mvs_preflight_report,
 )
 
-_DEFAULT_PYCOLMAP_PYTHON = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
-_DEFAULT_WORKSPACE = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control")
-_DEFAULT_REPORT = Path("/tmp/eia_i4_1_9a_mvs_preflight.json")
+_DEFAULT_PYCOLMAP_PYTHON = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"
+_DEFAULT_WORKSPACE = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control")
+_DEFAULT_REPORT = Path("/tmp/depth3d_i4_1_9a_mvs_preflight.json")
 
 
 def main() -> int:

@@ -94,7 +94,7 @@ def _worker(path: Path) -> None:
 
             write_result(args.session_id, True)
             print(json.dumps({
-                'protocol': 'eia.reconstruction.offline.v1',
+                'protocol': 'depth3d.reconstruction.offline.v1',
                 'event': 'completed',
                 'stage': 'camera_pose',
                 'message': 'mock completed',

@@ -26,8 +26,8 @@ from core.reconstruction.offline_dense_i4_orbit_geometry_sampling_diagnosis impo
 )
 from core.reconstruction.offline_dense_i4_orbit_qualification import camera_poses_from_sfm_report  # noqa: E402
 
-_DEFAULT_I4 = Path("/tmp/eia_i4_object_orbit_campaign")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_2_orbit_geometry_sampling_diagnosis")
+_DEFAULT_I4 = Path("/tmp/depth3d_i4_object_orbit_campaign")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_2_orbit_geometry_sampling_diagnosis")
 
 
 def _args() -> argparse.Namespace:

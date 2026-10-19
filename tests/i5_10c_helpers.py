@@ -52,7 +52,7 @@ def synthetic_preflight(tmp_path: Path | None = None) -> dict[str, Any]:
             "distribution_version": "4.1.1",
             "error": "",
             "pycolmap_version": "4.1.1",
-            "python_executable": "/opt/eia-pycolmap-probe/bin/python3.11",
+            "python_executable": "/opt/depth3d-pycolmap-probe/bin/python3.11",
             "recommended_version": True,
             "required_apis_available": True,
             "apis": {"match_sequential": True, "match_exhaustive": True, "incremental_mapping": True},

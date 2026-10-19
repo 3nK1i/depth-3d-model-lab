@@ -62,7 +62,7 @@ def _scene():
         session_id=SESSION,
         state=SimpleNamespace(value="ready"),
         artifacts=(
-            _Artifact("f1-ui-gaussian", "gaussian_scene", "gaussian-provider", "eia-gsplat-external", "1.5.3", "optimized"),
+            _Artifact("f1-ui-gaussian", "gaussian_scene", "gaussian-provider", "depth3d-gsplat-external", "1.5.3", "optimized"),
             _Artifact("f1-ui-nerf", "nerf_scene", "nerf-provider", "nerfstudio-nerfacto", "1.1.5", "trained"),
         ),
         canonical_geometry_authoritative=True,
@@ -98,7 +98,7 @@ def test_f1_persistent_scene_exposes_gaussian_and_nerf_metadata_controls(window)
     assert page._appearance_available_value.text() == "Gaussian • NeRF"
     assert page.selected_appearance_representation is not None
     assert page.selected_appearance_representation.label == "Gaussian"
-    assert "eia-gsplat-external" in page._appearance_provider_value.text()
+    assert "depth3d-gsplat-external" in page._appearance_provider_value.text()
     assert page._appearance_render_value.text() == "Declared render-capable"
     assert page._viewport_state.text() == before_viewport
 

@@ -13,10 +13,10 @@ if str(ROOT) not in sys.path:
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 from core.reconstruction.temple_ring_mvs import TempleRingMvsConfig, run_temple_ring_mvs  # noqa: E402
 
-_DEFAULT_B = Path("/tmp/eia_i4_2_temple_ring/i4_2b_sfm_attempt01")
-_DEFAULT_C = Path("/tmp/eia_i4_2_temple_ring/i4_2c_trajectory_validation_attempt01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_2_temple_ring/i4_2d_mvs_attempt01")
-_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
+_DEFAULT_B = Path("/tmp/depth3d_i4_2_temple_ring/i4_2b_sfm_attempt01")
+_DEFAULT_C = Path("/tmp/depth3d_i4_2_temple_ring/i4_2c_trajectory_validation_attempt01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_2_temple_ring/i4_2d_mvs_attempt01")
+_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"
 _DEFAULT_WORKER = ROOT / "scripts/reconstruction_pycolmap_temple_ring_mvs_worker.py"
 
 

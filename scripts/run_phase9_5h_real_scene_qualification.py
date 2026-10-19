@@ -258,7 +258,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--metrics-python",
         type=Path,
-        default=Path.home() / "anaconda3/envs/eia-gaussian-metrics/bin/python",
+        default=Path.home() / "anaconda3/envs/depth3d-gaussian-metrics/bin/python",
         help="Existing isolated backend-neutral PSNR/SSIM/LPIPS metrics interpreter from Phase 8.7D3.",
     )
     parser.add_argument("--keep-output", action="store_true")

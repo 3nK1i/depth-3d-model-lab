@@ -78,10 +78,10 @@ from scripts.run_e1_qualified_ten_view_voxel_fusion import (  # noqa: E402
     _write_binary_ply,
 )
 
-_DEFAULT_E2_DIR = Path("/tmp/eia_e2_consistency_aware_fusion_refinement")
-_DEFAULT_OUTPUT_DIR = Path("/tmp/eia_e3_qualified_scene_fusion_expansion")
-_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-_DEFAULT_DA3_REPO = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+_DEFAULT_E2_DIR = Path("/tmp/depth3d_e2_consistency_aware_fusion_refinement")
+_DEFAULT_OUTPUT_DIR = Path("/tmp/depth3d_e3_qualified_scene_fusion_expansion")
+_DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+_DEFAULT_DA3_REPO = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 _DA3_WORKER = ROOT / "scripts/da3_workers/da3_worker.py"
 
 # The numerical gates are intentionally the unchanged D4.1/D2 gates.  At

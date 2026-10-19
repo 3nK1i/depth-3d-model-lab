@@ -33,7 +33,7 @@ from core.reconstruction import (  # noqa: E402
     SfmScaleStatus,
     SfmWorldAlignmentStatus,
     deterministic_nerf_validation_split,
-    eia_pose_from_nerfstudio_camera_to_world,
+    depth3d_pose_from_nerfstudio_camera_to_world,
     neural_scene_dataset_fingerprint,
     write_neural_scene_dataset_manifest,
 )
@@ -173,7 +173,7 @@ def prepare(source_dir: Path, output_dir: Path, *, max_frames: int, heldout_coun
             max_long_edge=int(max_long_edge),
         )
         pose = np.asarray(
-            eia_pose_from_nerfstudio_camera_to_world(item["transform_matrix"]), dtype=np.float64
+            depth3d_pose_from_nerfstudio_camera_to_world(item["transform_matrix"]), dtype=np.float64
         )
         frames.append(
             NeuralSceneFrame(

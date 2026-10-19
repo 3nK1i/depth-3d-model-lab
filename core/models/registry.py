@@ -770,7 +770,7 @@ def _register_builtins() -> None:
             },
             checkpoints=(
                 ModelCheckpoint(
-                    "third_party/Metric3D/.eia_metric3d_v2_ready.json",
+                    "third_party/Metric3D/.depth3d_metric3d_v2_ready.json",
                     source=CheckpointSource.LOCAL,
                 ),
                 ModelCheckpoint(
@@ -887,7 +887,7 @@ def _register_builtins() -> None:
             },
             checkpoints=(
                 ModelCheckpoint(
-                    "third_party/Depth-Anything-V2/.eia_depth_anything_v2_ready.json",
+                    "third_party/Depth-Anything-V2/.depth3d_depth_anything_v2_ready.json",
                     source=CheckpointSource.LOCAL,
                 ),
                 ModelCheckpoint(
@@ -1021,7 +1021,7 @@ def _register_builtins() -> None:
             },
             checkpoints=(
                 ModelCheckpoint(
-                    "third_party/Video-Depth-Anything/.eia_video_depth_anything_ready.json",
+                    "third_party/Video-Depth-Anything/.depth3d_video_depth_anything_ready.json",
                     source=CheckpointSource.LOCAL,
                 ),
                 ModelCheckpoint(

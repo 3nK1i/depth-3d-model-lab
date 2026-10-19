@@ -16,10 +16,10 @@ if str(ROOT) not in sys.path:
 
 from core.reconstruction.mvs_camera_bridge import build_house_mvs_camera_bridge  # noqa: E402
 
-_DEFAULT_I4_1_7 = Path("/tmp/eia_i4_1_7_house_visual_positive_control_01")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_9a_house_mvs_positive_control/a1_camera_bridge")
-_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/eia-pycolmap-probe/bin/python3.11"
-_DEFAULT_A0_REPORT = Path("/tmp/eia_i4_1_9a_mvs_preflight.json")
+_DEFAULT_I4_1_7 = Path("/tmp/depth3d_i4_1_7_house_visual_positive_control_01")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_9a_house_mvs_positive_control/a1_camera_bridge")
+_DEFAULT_PYCOLMAP = Path.home() / "anaconda3/envs/depth3d-pycolmap-probe/bin/python3.11"
+_DEFAULT_A0_REPORT = Path("/tmp/depth3d_i4_1_9a_mvs_preflight.json")
 _DEFAULT_WORKER = ROOT / "scripts/reconstruction_pycolmap_mvs_bridge_worker.py"
 
 

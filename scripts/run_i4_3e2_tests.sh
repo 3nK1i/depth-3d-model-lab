@@ -44,7 +44,7 @@ from core.models.adapters.unidepth_v2_adapter import UniDepthV2GeometryModel
 from core.models.catalog import UNIDEPTH_V2_MODEL_ID
 
 root = Path.cwd()
-marker = root / "third_party/UniDepth/.eia_unidepth_v2_compat.json"
+marker = root / "third_party/UniDepth/.depth3d_unidepth_v2_compat.json"
 worker = root / "scripts/reconstruction_unidepth_v2_provider_worker.py"
 assert UniDepthV2GeometryModel is not None
 assert UNIDEPTH_V2_MODEL_ID == "unidepth-v2"

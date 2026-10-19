@@ -21,9 +21,9 @@ quick() {
 
 full() {
   quick
-  rm -rf /tmp/eia_pre_h_final_requal
+  rm -rf /tmp/depth3d_pre_h_final_requal
   python scripts/run_phase8_9_pre_h_final_requalification.py \
-    --output-dir /tmp/eia_pre_h_final_requal
+    --output-dir /tmp/depth3d_pre_h_final_requal
 }
 
 case "$MODE" in

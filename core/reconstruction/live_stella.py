@@ -217,7 +217,7 @@ class ExternalStellaLiveSlamBackend:
         config_path = write_stella_monocular_config(request, temp_root / "camera.yaml")
         self._log_path = temp_root / "worker.log"
         self._log_handle = self._log_path.open("wb")
-        socket_path = Path("/tmp") / f"eia-ls-{os.getpid()}-{uuid4().hex[:8]}.sock"
+        socket_path = Path("/tmp") / f"depth3d-ls-{os.getpid()}-{uuid4().hex[:8]}.sock"
         self._process_spec = LiveSlamWorkerProcessSpec(
             backend_id=STELLA_LIVE_BACKEND_ID,
             executable_path=str(self._worker_executable),

@@ -53,10 +53,10 @@ from scripts.run_e3_qualified_scene_fusion_expansion import (  # noqa: E402
 )
 
 
-_DEFAULT_I1 = Path("/tmp/eia_i1_offline_dense_campaign_recovered")
-_DEFAULT_I2 = Path("/tmp/eia_i2_full_video_quality")
-_DEFAULT_I21 = Path("/tmp/eia_i2_1_targeted_peripheral_diagnosis")
-_DEFAULT_OUT = Path("/tmp/eia_i2_2_narrow_exact_counterfactual_refusion")
+_DEFAULT_I1 = Path("/tmp/depth3d_i1_offline_dense_campaign_recovered")
+_DEFAULT_I2 = Path("/tmp/depth3d_i2_full_video_quality")
+_DEFAULT_I21 = Path("/tmp/depth3d_i2_1_targeted_peripheral_diagnosis")
+_DEFAULT_OUT = Path("/tmp/depth3d_i2_2_narrow_exact_counterfactual_refusion")
 
 
 def _args() -> argparse.Namespace:

@@ -76,7 +76,7 @@ def e1_snapshot() -> dict:
 def good_unidepth_environment(tmp_path: Path, *, available: bool = True) -> UniDepthV2EnvironmentProbe:
     root = (tmp_path / "project").resolve()
     source = root / "third_party/UniDepth"
-    marker = source / ".eia_unidepth_v2_compat.json"
+    marker = source / ".depth3d_unidepth_v2_compat.json"
     checkpoint = root / "checkpoints/unidepth-v2/vits14"
     python = root / "bin/python"
     source.mkdir(parents=True, exist_ok=True)

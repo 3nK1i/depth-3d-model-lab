@@ -178,7 +178,7 @@ def inspect_repository() -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="/tmp/eia_phase8_9h3_release_candidate/summary.json")
+    parser.add_argument("--output", default="/tmp/depth3d_phase8_9h3_release_candidate/summary.json")
     args = parser.parse_args()
 
     result = inspect_repository()

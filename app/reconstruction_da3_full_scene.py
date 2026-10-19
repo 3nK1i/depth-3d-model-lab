@@ -1,7 +1,7 @@
 """Full-scene recorded-video DA3 build contracts for Phase 9.6E2.
 
 The production ``depth`` process owns orchestration only. Heavy Depth Anything 3
-inference remains in the qualified external ``eia-da3`` interpreter. Full-scene
+inference remains in the qualified external ``depth3d-da3`` interpreter. Full-scene
 coverage is produced from quality-filtered keyframes and bounded overlapping
 three-view windows; it never turns DA3 into canonical, metric-scale,
 measurement, QC, or certified-metrology authority.
@@ -28,8 +28,8 @@ from core.reconstruction.da3 import DA3_EFFICIENT_MODEL_ID
 from core.reconstruction.errors import ReconstructionValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/eia-da3/bin/python"
-DEFAULT_DA3_REPOSITORY = Path.home() / "Desktop/eia-da3-backends/depth-anything-3"
+DEFAULT_DA3_PYTHON = Path.home() / "anaconda3/envs/depth3d-da3/bin/python"
+DEFAULT_DA3_REPOSITORY = Path.home() / "Desktop/depth3d-da3-backends/depth-anything-3"
 
 def _default_da3_python_path() -> Path:
     raw = os.environ.get("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", "").strip()

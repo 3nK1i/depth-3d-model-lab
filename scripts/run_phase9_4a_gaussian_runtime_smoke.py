@@ -30,7 +30,7 @@ from core.reconstruction import (  # noqa: E402
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="phase9_4a_") as tmp:
         root = Path(tmp)
-        python = root / "eia-gaussian-gsplat" / "bin" / "python"
+        python = root / "depth3d-gaussian-gsplat" / "bin" / "python"
         checkout = root / "gsplat"
         python.parent.mkdir(parents=True)
         checkout.mkdir()

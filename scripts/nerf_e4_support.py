@@ -23,7 +23,7 @@ from core.reconstruction import (
 )
 
 
-def default_env_python(name: str = "eia-nerf-nerfstudio") -> Path:
+def default_env_python(name: str = "depth3d-nerf-nerfstudio") -> Path:
     return Path.home() / "anaconda3" / "envs" / name / "bin" / "python"
 
 

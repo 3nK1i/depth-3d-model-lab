@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STELLA_PREFIX="${EIA_STELLA_PREFIX:-$HOME/Desktop/eia-stella-vslam-probe}"
-BUILD_ROOT="${EIA_STELLA_LIVE_WORKER_BUILD:-$HOME/Desktop/eia-stella-live-worker-build}"
-INSTALL_ROOT="${EIA_STELLA_LIVE_WORKER_PREFIX:-$HOME/Desktop/eia-stella-live-worker}"
+STELLA_PREFIX="${EIA_STELLA_PREFIX:-$HOME/Desktop/depth3d-stella-vslam-probe}"
+BUILD_ROOT="${EIA_STELLA_LIVE_WORKER_BUILD:-$HOME/Desktop/depth3d-stella-live-worker-build}"
+INSTALL_ROOT="${EIA_STELLA_LIVE_WORKER_PREFIX:-$HOME/Desktop/depth3d-stella-live-worker}"
 METADATA="$STELLA_PREFIX/EIA_STELLA_PROBE_INFO.txt"
 QUALIFIED_VERSION="0.3.13"
 QUALIFIED_COMMIT="7902892d445843563d2d3149505fd3e1a118a141"
@@ -60,7 +60,7 @@ cmake \
 cmake --build "$BUILD_ROOT" --parallel "${EIA_BUILD_JOBS:-4}"
 cmake --install "$BUILD_ROOT"
 
-WORKER="$INSTALL_ROOT/bin/eia_stella_live_worker"
+WORKER="$INSTALL_ROOT/bin/depth3d_stella_live_worker"
 if [[ ! -x "$WORKER" ]]; then
     echo "ERROR: worker was not installed: $WORKER" >&2
     exit 1
@@ -72,8 +72,8 @@ if LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" ldd "$WORKER" | gre
     exit 1
 fi
 
-LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" "$WORKER" --help >/tmp/eia_stella_live_worker_help.txt
-LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" "$WORKER" --version >/tmp/eia_stella_live_worker_version.txt
+LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" "$WORKER" --help >/tmp/depth3d_stella_live_worker_help.txt
+LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" "$WORKER" --version >/tmp/depth3d_stella_live_worker_version.txt
 
 REPO_BASE="unknown"
 if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -111,4 +111,4 @@ echo "=== Runtime linkage ==="
 LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" ldd "$WORKER" | grep -Ei 'stella|fbow|g2o|opencv|yaml' || true
 echo
 echo "=== Worker version ==="
-cat /tmp/eia_stella_live_worker_version.txt
+cat /tmp/depth3d_stella_live_worker_version.txt

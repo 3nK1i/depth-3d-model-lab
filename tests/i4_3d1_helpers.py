@@ -23,7 +23,7 @@ from tests.i4_3c_helpers import make_da3_sfm_result
 def good_vda_environment(tmp_path: Path, *, available: bool = True) -> VideoDepthAnythingEnvironmentProbe:
     root = tmp_path / "project"
     source = root / "third_party/Video-Depth-Anything"
-    marker = source / ".eia_video_depth_anything_ready.json"
+    marker = source / ".depth3d_video_depth_anything_ready.json"
     checkpoint = root / "checkpoints/video-depth-anything/metric_video_depth_anything_vits.pth"
     python = tmp_path / "bin/python"
     source.mkdir(parents=True, exist_ok=True)

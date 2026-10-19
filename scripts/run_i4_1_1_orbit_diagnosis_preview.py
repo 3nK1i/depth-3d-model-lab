@@ -26,7 +26,7 @@ _CAMERA_SETS = ("registered", "aligned", "rejected", "selected")
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--diagnosis-dir", type=Path, default=Path("/tmp/eia_i4_1_1_orbit_alignment_coverage_diagnosis"))
+    p.add_argument("--diagnosis-dir", type=Path, default=Path("/tmp/depth3d_i4_1_1_orbit_alignment_coverage_diagnosis"))
     p.add_argument("--geometry", choices=("extended", "core"), default="extended")
     p.add_argument("--camera-set", choices=_CAMERA_SETS, default="selected")
     p.add_argument("--view", choices=tuple(_VIEW_ANGLES), default="oblique")

@@ -24,9 +24,9 @@ from core.reconstruction.offline_dense_i4_decoupled_sampling_counterfactual impo
     build_i4_1_5_counterfactual,
 )
 
-_DEFAULT_I414 = Path("/tmp/eia_i4_1_4_decoupled_sampling_density_diagnosis/i4_1_4_summary.json")
-_DEFAULT_I413 = Path("/tmp/eia_i4_1_3_sampling_preflight.json")
-_DEFAULT_OUTPUT = Path("/tmp/eia_i4_1_5_decoupled_sampling_counterfactual")
+_DEFAULT_I414 = Path("/tmp/depth3d_i4_1_4_decoupled_sampling_density_diagnosis/i4_1_4_summary.json")
+_DEFAULT_I413 = Path("/tmp/depth3d_i4_1_3_sampling_preflight.json")
+_DEFAULT_OUTPUT = Path("/tmp/depth3d_i4_1_5_decoupled_sampling_counterfactual")
 
 
 def _args() -> argparse.Namespace:

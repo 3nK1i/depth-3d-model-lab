@@ -21,7 +21,7 @@ def test_only_top_level_private_empty_temp_folder_may_receive_fixture_sidecars(t
     with pytest.raises(ValueError):
         _fixture_root(tmp_path)
     with pytest.raises((ValueError, FileNotFoundError)):
-        _fixture_root(Path('/tmp/eia_depth_reconstruction'))
+        _fixture_root(Path('/tmp/depth3d_reconstruction'))
 
 
 def test_test_flag_identity_and_input_restrictions(tmp_path):

@@ -19,7 +19,7 @@ D2_WORKERS = HERE.parent / "gaussian_workers"
 
 import importlib.util
 _BENCH_COMMON_SPEC = importlib.util.spec_from_file_location(
-    "eia_d3_gaussian_benchmark_worker_common", HERE / "common.py"
+    "depth3d_d3_gaussian_benchmark_worker_common", HERE / "common.py"
 )
 if _BENCH_COMMON_SPEC is None or _BENCH_COMMON_SPEC.loader is None:
     raise RuntimeError("cannot load D3 Gaussian benchmark worker helpers")
@@ -32,7 +32,7 @@ write_render_manifest = _BENCH_COMMON.write_render_manifest
 apply_lifecycle_fault_injection = _BENCH_COMMON.apply_lifecycle_fault_injection
 
 _PERF_SPEC = importlib.util.spec_from_file_location(
-    "eia_d3_gaussian_benchmark_performance", HERE / "performance.py"
+    "depth3d_d3_gaussian_benchmark_performance", HERE / "performance.py"
 )
 if _PERF_SPEC is None or _PERF_SPEC.loader is None:
     raise RuntimeError("cannot load D3 Gaussian performance helpers")

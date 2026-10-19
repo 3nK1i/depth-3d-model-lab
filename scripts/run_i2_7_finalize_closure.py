@@ -15,7 +15,7 @@ from core.reconstruction.offline_dense_i2_closure import build_i2_closure_record
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--i2-7-dir", type=Path, default=Path("/tmp/eia_i2_7_final_requalification"))
+    p.add_argument("--i2-7-dir", type=Path, default=Path("/tmp/depth3d_i2_7_final_requalification"))
     p.add_argument("--confirm-fixed-view-review-pass", action="store_true", help="Explicit human confirmation after reviewing the requested final fixed views.")
     a = p.parse_args(); d = a.i2_7_dir.expanduser().resolve()
     automated = json.loads((d / "i2_7_summary.json").read_text(encoding="utf-8")); ui = json.loads((d / "i2_7_ui_sanity.json").read_text(encoding="utf-8"))

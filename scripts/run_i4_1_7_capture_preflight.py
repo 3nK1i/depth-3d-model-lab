@@ -21,7 +21,7 @@ from core.reconstruction.offline_dense_i4_decoupled_sampling_integration import 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--video", type=Path, required=True)
-    p.add_argument("--output-dir", type=Path, default=Path("/tmp/eia_i4_1_7_capture_preflight"))
+    p.add_argument("--output-dir", type=Path, default=Path("/tmp/depth3d_i4_1_7_capture_preflight"))
     p.add_argument("--frames", type=int, default=12)
     args = p.parse_args()
     if args.frames < 6 or args.frames > 24:

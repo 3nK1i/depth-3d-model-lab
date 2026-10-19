@@ -24,8 +24,8 @@ from app.widgets.viewport.vispy_canvas import PointCloudCanvas  # noqa: E402
 from core.reconstruction.errors import ReconstructionValidationError  # noqa: E402
 from core.reconstruction.mvs_visual_ab import MVS_VISUAL_AB_VIEWS  # noqa: E402
 
-_DEFAULT_E = Path("/tmp/eia_i4_2_temple_ring/i4_2e_detail_qualification_attempt01")
-_DEFAULT_OUT = Path("/tmp/eia_i4_2_temple_ring/i4_2e_detail_preview_attempt01")
+_DEFAULT_E = Path("/tmp/depth3d_i4_2_temple_ring/i4_2e_detail_qualification_attempt01")
+_DEFAULT_OUT = Path("/tmp/depth3d_i4_2_temple_ring/i4_2e_detail_preview_attempt01")
 
 
 def _args() -> argparse.Namespace:
