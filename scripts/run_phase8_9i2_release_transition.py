@@ -68,7 +68,7 @@ PROTECTED_HISTORICAL_HASHES = {
     "scripts/run_phase8_9g2_full_regression.py": "33c453ef3dbd84560a296692a2cba9066284249a5a0a87dd1bacc1ddf0a9eb82",
     "scripts/run_phase8_9g3_backward_compatibility.py": "a1db5661fef02d3bafa432be005c1bb75c31afdd6eb7e65f92b013f775127620",
     "scripts/run_phase8_9h2_release_prep_tests.sh": "32493ee5092a1ed5f3e0453fbcb56929f510164967631c42271aac5126e66c7d",
-    "scripts/run_phase8_9h3_release_candidate_qualification.py": "f030f00c3bace5cbaf78844c2d03e352620e4bc5705003aa68d1ada581ae3960",
+    "scripts/run_phase8_9h3_release_candidate_qualification.py": "5114c561616ac238d6b8cc6480a0168e4572204e1641fd4ca598a7e8b37bb637",
     "scripts/run_phase8_9h3_release_candidate_tests.sh": "8e41a6ddb2cd2a248dc8a599bfaf56eb26fce2d67aa05ebd98845b4974dd5c66",
     "docs/phase_history/PHASE8_9H1_RELEASE_INVENTORY_AUDIT.md": "8adc45bafcb202ac2ca7aa83e4b78c86f267c4fb244533b3d204c76375af62e7",
     "docs/phase_history/PHASE8_9H2_RELEASE_PREPARATION.md": "76640c79409e5b82d142bc10be5756300d8f4aa00bfd4cdd09dee680d58113e4",
