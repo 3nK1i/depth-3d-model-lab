@@ -36,11 +36,11 @@ I511B_TERMINATE_GRACE_S = 0.25
 I511B_FAULT_WORKER = "scripts/i5_11_bounded_fault_worker.py"
 
 I511B_REPOSITORY_ANCHORS: dict[str, str] = {
-    "core/reconstruction/engine_hardening.py": "b441890a45afd93137a3ccfed1ac9b610e1c3f394658e397825d92ae68f7e6d2",
+    "core/reconstruction/engine_hardening.py": "541bdd9016db0dced5a06bf6104c4138e3c84eda6b6874034e896b852cbcbdf1",
     "core/reconstruction/i5_failure_robustness.py": "6156f88c9c9bf7f677deeaad0c0090197d731604cdfb82de2aa7b4112d03f03e",
     "core/runtime/failures.py": "ba05a440c51d4c5ef6816a586acd44504ddc9ead720243791c4bfe57db4229c4",
     "scripts/reconstruction_engine_fault_worker.py": "463181895302c89703c9ef83ba99c5f11fce6b4bd94a311cd29291f44bf33d17",
-    "scripts/i5_11_bounded_fault_worker.py": "5d3557e1c07b87816800008de0569e1f86d388657f2fbedf1200b8518c58fae7",
+    "scripts/i5_11_bounded_fault_worker.py": "3a94eb740230f9b2d9d2698bae1170883c0a8b4d662521dfb9d783dcc7c13836",
     "app/reconstruction_failure_recovery.py": "4da8cc6a3a1fff30e208c034ff0af99613e3ed3eb43e370a76199c01392e408a",
     "app/reconstruction_processing_job_controller.py": "b60a949b0ddb7814f828d48bb06a02ebf4cf9f3b46b42f87ff03ca3eed2bfa77",
     "docs/phase_history/I5_11A_OOM_DISK_CRASH_RECOVERY_INVENTORY_AND_ADMISSION.md": "2eeb26facf540a94c4ee3e3a0967f45bca17459febb6bb9cb8fa59a72ed86402",

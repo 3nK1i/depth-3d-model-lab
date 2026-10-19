@@ -38,15 +38,15 @@ I511C_RECEIPT_PHASE = "I5.11C_CAMPAIGN_RECEIPT"
 I511C_I511A_FROZEN_SHA256 = "9d1f02e4cc0cc90eb909cf17ea5621a3aaf580a75ddf2a2269ca4402d5cdf1e6"
 I511C_I511B_FROZEN_SHA256 = "e72c7d19ef403aed55e80a9ab3ff6a6f76b2b7ba17706bd3524fda4b8bf3f275"
 I511C_POST_I510D_DELTA_FROZEN_SHA256 = "773f63c31d27d5746fe788f9a0463792a6d5061676fea6f44cb004f99e4a6247"
-I511C_FAULT_WORKER_SHA256 = "5d3557e1c07b87816800008de0569e1f86d388657f2fbedf1200b8518c58fae7"
+I511C_FAULT_WORKER_SHA256 = "3a94eb740230f9b2d9d2698bae1170883c0a8b4d662521dfb9d783dcc7c13836"
 I511C_FAULT_SCENARIOS = ("cuda_oom", "disk_enospc", "crash_orphan_descendant")
 I511C_FAULT_WORKER = "scripts/i5_11_bounded_fault_worker.py"
 I511C_FINAL_ARTIFACT = "i5_11c_bounded_failure_recovery_campaign.json"
 
 I511C_REPOSITORY_ANCHORS: dict[str, str] = {
-    "core/reconstruction/engine_hardening.py": "b441890a45afd93137a3ccfed1ac9b610e1c3f394658e397825d92ae68f7e6d2",
+    "core/reconstruction/engine_hardening.py": "541bdd9016db0dced5a06bf6104c4138e3c84eda6b6874034e896b852cbcbdf1",
     "core/reconstruction/i5_failure_robustness.py": "6156f88c9c9bf7f677deeaad0c0090197d731604cdfb82de2aa7b4112d03f03e",
-    "core/reconstruction/i5_failure_robustness_preflight.py": "24e1691a2c91a6a2f5ff88536d0436def649627092dd538d4bbe403f8c7757cf",
+    "core/reconstruction/i5_failure_robustness_preflight.py": "0c83a922195fabfff089e6b0cdbe3f46343677f150e215198809982a4b68c08a",
     "core/runtime/failures.py": "ba05a440c51d4c5ef6816a586acd44504ddc9ead720243791c4bfe57db4229c4",
     "scripts/i5_11_bounded_fault_worker.py": I511C_FAULT_WORKER_SHA256,
     "scripts/reconstruction_engine_fault_worker.py": "463181895302c89703c9ef83ba99c5f11fce6b4bd94a311cd29291f44bf33d17",
