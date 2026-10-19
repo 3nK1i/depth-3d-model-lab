@@ -27,7 +27,7 @@ from core.reconstruction import (
     aggregate_nerf_held_out_metrics,
     deterministic_nerf_validation_split,
     depth3d_pose_from_nerfstudio_camera_to_world,
-    nerfstudio_camera_to_world_from_eia_pose,
+    nerfstudio_camera_to_world_from_depth3d_pose,
 )
 from scripts.nerf_workers.common import export_nerfstudio_dataset
 
@@ -74,7 +74,7 @@ def _dataset(tmp_path: Path, count: int = 12) -> NeuralSceneDataset:
 def test_nerfstudio_pose_conversion_is_exactly_invertible() -> None:
     pose = np.eye(4, dtype=np.float64)
     pose[:3, 3] = [1.0, 2.0, 3.0]
-    ns_pose = np.asarray(nerfstudio_camera_to_world_from_eia_pose(pose))
+    ns_pose = np.asarray(nerfstudio_camera_to_world_from_depth3d_pose(pose))
     restored = np.asarray(depth3d_pose_from_nerfstudio_camera_to_world(ns_pose))
     assert np.allclose(restored, pose)
     assert np.allclose(ns_pose[:3, 0], pose[:3, 0])

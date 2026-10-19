@@ -24,7 +24,7 @@ from core.reconstruction import (
     NeuralSceneFrame,
     SfmScaleStatus,
     SfmWorldAlignmentStatus,
-    nerfstudio_camera_to_world_from_eia_pose,
+    nerfstudio_camera_to_world_from_depth3d_pose,
 )
 from scripts.nerf_workers.common import export_nerfstudio_dataset, profile_settings
 import scripts.run_nerf_backend_qualification as e2_qualification
@@ -76,10 +76,10 @@ def test_e2_runtime_recipe_is_explicit_and_rtx2060_targeted() -> None:
     assert TINY_CUDA_NN_E2_REVISION == "b3473c81396fe927293bdfd5a6be32df8769927c"
 
 
-def test_eia_to_nerfstudio_pose_flips_camera_yz_only() -> None:
+def test_depth3d_to_nerfstudio_pose_flips_camera_yz_only() -> None:
     pose = np.eye(4, dtype=np.float64)
     pose[:3, 3] = [1.0, 2.0, 3.0]
-    converted = np.asarray(nerfstudio_camera_to_world_from_eia_pose(pose))
+    converted = np.asarray(nerfstudio_camera_to_world_from_depth3d_pose(pose))
     assert np.allclose(converted[:3, 0], [1.0, 0.0, 0.0])
     assert np.allclose(converted[:3, 1], [0.0, -1.0, 0.0])
     assert np.allclose(converted[:3, 2], [0.0, 0.0, -1.0])
@@ -87,9 +87,9 @@ def test_eia_to_nerfstudio_pose_flips_camera_yz_only() -> None:
     assert np.allclose(converted[3], [0.0, 0.0, 0.0, 1.0])
 
 
-def test_eia_to_nerfstudio_pose_rejects_invalid_shape() -> None:
+def test_depth3d_to_nerfstudio_pose_rejects_invalid_shape() -> None:
     with pytest.raises(Exception):
-        nerfstudio_camera_to_world_from_eia_pose(np.eye(3))
+        nerfstudio_camera_to_world_from_depth3d_pose(np.eye(3))
 
 
 def test_exporter_writes_explicit_train_and_test_split(tmp_path: Path) -> None:
@@ -295,7 +295,7 @@ def test_nerfstudio_single_test_render_accepts_flat_rgb_png(tmp_path: Path) -> N
     render_root = tmp_path / "rendered"
     flat = render_root / "test" / "rgb.png"
     flat.parent.mkdir(parents=True)
-    flat.write_bytes(b"\x89PNG\r\n\x1a\nEIA")
+    flat.write_bytes(b"\x89PNG\r\n\x1a\nDEPTH3D")
     assert _find_dataset_render_rgb_png(render_root) == flat
 
 
@@ -305,5 +305,5 @@ def test_nerfstudio_dataset_render_accepts_nested_rgb_png(tmp_path: Path) -> Non
     render_root = tmp_path / "rendered"
     nested = render_root / "test" / "rgb" / "00004_frame.png"
     nested.parent.mkdir(parents=True)
-    nested.write_bytes(b"\x89PNG\r\n\x1a\nEIA")
+    nested.write_bytes(b"\x89PNG\r\n\x1a\nDEPTH3D")
     assert _find_dataset_render_rgb_png(render_root) == nested

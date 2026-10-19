@@ -227,7 +227,7 @@ def prepare(source_dir: Path, output_dir: Path, *, max_frames: int, heldout_coun
             "maximum_frames": int(max_frames),
             "heldout_count": int(heldout_count),
             "max_long_edge": int(max_long_edge),
-            "distortion_policy": "opencv_undistort_to_eia_pinhole",
+            "distortion_policy": "opencv_undistort_to_depth3d_pinhole",
             "sampling_policy": "natural_filename_order_even_coverage",
             "heldout_policy": "deterministic_interior_trajectory_spread",
         },

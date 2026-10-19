@@ -11,7 +11,7 @@ from typing import Any, Sequence
 from core.reconstruction import (
     NeuralSceneDataset,
     NerfOptimizationProfile,
-    nerfstudio_camera_to_world_from_eia_pose,
+    nerfstudio_camera_to_world_from_depth3d_pose,
 )
 
 
@@ -115,7 +115,7 @@ def export_nerfstudio_dataset(
                 "cy": float(frame.cy),
                 "w": int(frame.width),
                 "h": int(frame.height),
-                "transform_matrix": nerfstudio_camera_to_world_from_eia_pose(
+                "transform_matrix": nerfstudio_camera_to_world_from_depth3d_pose(
                     frame.T_reconstruction_from_camera
                 ),
             }

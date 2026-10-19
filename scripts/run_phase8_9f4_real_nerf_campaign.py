@@ -397,7 +397,7 @@ def _build_sfm_appearance_bridge(
             "max_long_edge": int(max_long_edge),
             "sampling_policy": "even_coverage_of_real_registered_f2_sfm_trajectory",
             "heldout_policy": "deterministic_interior_trajectory_spread",
-            "distortion_policy": "sfm_estimated_model_undistort_to_eia_pinhole",
+            "distortion_policy": "sfm_estimated_model_undistort_to_depth3d_pinhole",
         },
         "source_records": source_records,
         "pose_convention": "T_reconstruction_from_camera",

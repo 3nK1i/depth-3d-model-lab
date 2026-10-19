@@ -185,7 +185,7 @@ from core.reconstruction.nerf import (
     nerf_backend_provenance,
     nerf_backend_runtime_pin,
     depth3d_pose_from_nerfstudio_camera_to_world,
-    nerfstudio_camera_to_world_from_eia_pose,
+    nerfstudio_camera_to_world_from_depth3d_pose,
     probe_nerf_environment,
     run_nerf_external_worker,
 )
@@ -1124,7 +1124,7 @@ __all__ = [
     "NerfWorkerRequest",
     "nerf_backend_provenance",
     "nerf_backend_runtime_pin",
-    "nerfstudio_camera_to_world_from_eia_pose",
+    "nerfstudio_camera_to_world_from_depth3d_pose",
     "probe_nerf_environment",
     "run_nerf_external_worker",
     "PHASE9_5A_HEAVY_NERF_MODULES",
