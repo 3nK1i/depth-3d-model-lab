@@ -89,7 +89,7 @@ def main() -> int:
     manifest_path.write_text(json.dumps(artifact_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(artifact_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print("EIA Gaussian development worker: seed-only artifact written")
+    print("Gaussian development worker: seed-only artifact written")
     return 0
 
 
