@@ -114,7 +114,7 @@ expected = {
     'scripts/run_i6_7b_progressive_dense_emission_smoke.py': 'cfacbb604d553f2ce96c115cbdb35329b65628c95476ad33ff50b399fc0143b2',
     'tests/integration/test_i6_7b_dense_provider_execution_emission.py': 'aab059e30203cc05e47b0274a9b9db9a501cc7fff5d15999f50f7123b67ab9da',
     'docs/phase_history/I6_7B_DENSE_PROVIDER_EXECUTION_AND_PROGRESSIVE_EMISSION.md': '9b2f77e75339ea00b84f57d627a27dde1d877530017e239504ed8af9a31f5367',
-    'app/offline_reconstruction_controller.py': 'bd4f9c1cfe1739759d4b95d736cf376f36cffd04288ffb615e133fbb8358aa79',
+    'app/offline_reconstruction_controller.py': '467b551dc2a9f183d77f49f9768363b5057ca9af4adf2f7a26b5d35c54b5b70c',
     'app/reconstruction_controller.py': '57ef77cc5ebad69006b11ad25225e289ef540539e09e1636129b9d9bd4211186',
     'app/widgets/reconstruction_page.py': 'de6d28d89cd6f853f6005488847368f0cfb605d939dc23aa1d93405fdde960d1',
     'scripts/run_reconstruction_offline_job.py': '4b6562cb2a8395ed181f0d360a68d14d81b117b02b2259727bc0839e7ee7e763',

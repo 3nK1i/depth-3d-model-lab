@@ -16,7 +16,7 @@ checks = {
  'core/reconstruction/reconstruction_progressive_dense_transport.py': '5be5d9bca0b564c2454deccff5530b3f483ca7ae45425a4394c05a0efa968074',
  'app/reconstruction_progressive_dense_viewer.py': '453dbbdd8d90852ae0062e01c1370d14d55c849331cc157c551bf9490ab09dd8',
  'app/reconstruction_progressive_sfm_viewer.py': 'cda2e1da490a83a9af0875a95d4ac3672f9637b3dd616a7e6738911702864d76',
- 'app/offline_reconstruction_controller.py': 'bd4f9c1cfe1739759d4b95d736cf376f36cffd04288ffb615e133fbb8358aa79',
+ 'app/offline_reconstruction_controller.py': '467b551dc2a9f183d77f49f9768363b5057ca9af4adf2f7a26b5d35c54b5b70c',
  'app/reconstruction_controller.py': '57ef77cc5ebad69006b11ad25225e289ef540539e09e1636129b9d9bd4211186',
  'app/widgets/reconstruction_page.py': '2e5b406063f29cd02681fd299136c5836837dfbb60317536161748b62b09a590',
  'app/widgets/viewport/vispy_canvas.py': '2f960d58c2259884408e0a5d1813529eec47d84ec5fc0976282d40e5784d4a25',

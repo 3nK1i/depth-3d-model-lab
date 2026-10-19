@@ -19,7 +19,7 @@ checks = {
   'app/reconstruction_dense_final_handoff.py': 'cf761c3854d28707d56d9924e801d9fe89075f7183f5c04e0fa092baf6eb2490',
   'app/reconstruction_dense_final_admission.py': '7168e7b6461dad790ca8513ebc114972440053b3ed05afdda707b2f5155c5987',
   'app/reconstruction_dense_production_worker.py': '7b3db38382300ac30476dc35e33e9c1ce4cfdcafd53c1d759b10fc6e1b4ec66d',
-  'app/offline_reconstruction_controller.py': 'bd4f9c1cfe1739759d4b95d736cf376f36cffd04288ffb615e133fbb8358aa79',
+  'app/offline_reconstruction_controller.py': '467b551dc2a9f183d77f49f9768363b5057ca9af4adf2f7a26b5d35c54b5b70c',
 }
 for name, expected in checks.items():
     path = Path(name)

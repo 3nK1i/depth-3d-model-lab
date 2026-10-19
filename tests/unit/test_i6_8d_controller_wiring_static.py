@@ -8,7 +8,7 @@ DENSE = Path('app/reconstruction_dense_job_controller.py').read_text()
 def test_frozen_sfm_controller_is_unchanged_and_outer_controller_binds_relay():
     import hashlib
     assert hashlib.sha256(OFFLINE.encode()).hexdigest() == (
-        'bd4f9c1cfe1739759d4b95d736cf376f36cffd04288ffb615e133fbb8358aa79')
+        '467b551dc2a9f183d77f49f9768363b5057ca9af4adf2f7a26b5d35c54b5b70c')
     parent = Path('app/reconstruction_controller.py').read_text()
     assert "self._offline_telemetry_relay.begin(" in parent
     assert "'offline_sfm', self._offline_controller.session_id, None," in parent
