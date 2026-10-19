@@ -146,11 +146,11 @@ def nerf_backend_provenance(backend_kind: NerfBackendKind) -> NerfBackendProvena
     if backend_kind is NerfBackendKind.DEVELOPMENT_MOCK:
         return NerfBackendProvenance(
             backend_kind=backend_kind,
-            backend_name="EIA development NeRF mock",
+            backend_name="Development NeRF mock",
             method_name=NERFSTUDIO_METHOD,
-            upstream_repository="internal://eia/development-nerf-mock",
-            license_name="EIA-development-only",
-            license_url="internal://eia/development-nerf-mock/license",
+            upstream_repository="internal://depth3d/development-nerf-mock",
+            license_name="Development-only",
+            license_url="internal://depth3d/development-nerf-mock/license",
             usage_scope=NerfUsageScope.DEVELOPMENT_ONLY,
             commercial_use_permitted_by_backend_license=False,
             redistribution_license_notice_required=False,

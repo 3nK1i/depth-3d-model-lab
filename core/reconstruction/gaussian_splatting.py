@@ -165,10 +165,10 @@ def gaussian_backend_provenance(backend_kind: GaussianBackendKind) -> GaussianBa
     if backend_kind is GaussianBackendKind.DEVELOPMENT_MOCK:
         return GaussianBackendProvenance(
             backend_kind=backend_kind,
-            backend_name="EIA development Gaussian mock",
-            upstream_repository="internal://eia/development-gaussian-mock",
-            license_name="EIA-development-only",
-            license_url="internal://eia/development-gaussian-mock/license",
+            backend_name="Development Gaussian mock",
+            upstream_repository="internal://depth3d/development-gaussian-mock",
+            license_name="Development-only",
+            license_url="internal://depth3d/development-gaussian-mock/license",
             usage_scope=GaussianUsageScope.DEVELOPMENT_ONLY,
             commercial_use_permitted_by_backend_license=False,
             explicit_commercial_consent_required=False,
