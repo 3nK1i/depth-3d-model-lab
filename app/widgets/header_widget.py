@@ -37,8 +37,8 @@ class _LogoTile(QLabel):
     product text remains a separate, accessible label in the header.
     """
 
-    LOGO_HEIGHT = 30
-    LOGO_MAX_WIDTH = 34
+    LOGO_HEIGHT = 34
+    LOGO_MAX_WIDTH = 38
 
     def __init__(self) -> None:
         super().__init__()

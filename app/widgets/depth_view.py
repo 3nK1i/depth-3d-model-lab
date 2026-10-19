@@ -169,7 +169,7 @@ class DepthMapView(QFrame):
     def _build_title_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px;")
+        dot.setStyleSheet(f"color: {PALETTE.footer_status_red_fg}; font-size: 9px;")
         title = QLabel("DEPTH MAP")
         title.setObjectName("panelTitle")
         row.addWidget(dot)

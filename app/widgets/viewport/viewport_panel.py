@@ -140,7 +140,7 @@ class _ViewportHeader(QWidget):
         row.setSpacing(7)
 
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {PALETTE.accent}; font-size: 9px; background: transparent;")
+        dot.setStyleSheet(f"color: {PALETTE.footer_status_red_fg}; font-size: 9px; background: transparent;")
         self._title = QLabel("3D VIEWPORT")
         self._title.setObjectName("viewportTitle")
         self._light_background = False
