@@ -61,10 +61,10 @@ def test_i66c_does_not_add_viewport_or_ui_consumption() -> None:
 def test_i66b_worker_remains_frozen_at_sanitized_equivalent_hash() -> None:
     import hashlib
 
-    # Open-source sanitization changed only the CLI description string.
+    # Open-source sanitization changed only reviewed non-runtime worker prose.
     # Freeze the reviewed sanitized bytes without claiming a new runtime qualification.
     source = WORKER.read_text(encoding="utf-8")
     assert source.count('description="Isolated PyCOLMAP SfM worker"') == 1
 
     digest = hashlib.sha256(WORKER.read_bytes()).hexdigest()
-    assert digest == "5cafb22c9c6bd59d3c81e14498561521618953bca6bf9058bda761ed72d02642"
+    assert digest == "68dce73875d7a717dd2d9f63ecdfb2304a7a40c671429a55fb095e90f04422ec"
