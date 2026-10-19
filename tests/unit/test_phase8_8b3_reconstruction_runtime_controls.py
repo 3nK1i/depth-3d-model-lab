@@ -220,42 +220,6 @@ def test_b3_runtime_defaults_support_environment_overrides(monkeypatch, tmp_path
     assert settings.vocabulary_path == vocab.resolve()
 
 
-def test_b3_runtime_defaults_accept_legacy_environment_overrides(monkeypatch, tmp_path: Path) -> None:
-    pycolmap = tmp_path / "legacy-pycolmap-python"
-    pycolmap.write_bytes(b"python")
-    prefix = tmp_path / "legacy-stella-prefix"
-    prefix.mkdir()
-    worker = tmp_path / "legacy-worker"
-    worker.write_bytes(b"worker")
-    vocab = tmp_path / "legacy-orb_vocab.fbow"
-    vocab.write_bytes(b"vocab")
-    output_root = tmp_path / "legacy-runtime-output"
-
-    monkeypatch.setenv("EIA_RECONSTRUCTION_PYCOLMAP_PYTHON", str(pycolmap))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_STELLA_PREFIX", str(prefix))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_STELLA_WORKER", str(worker))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_STELLA_VOCAB", str(vocab))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_OUTPUT_ROOT", str(output_root))
-
-    assert default_pycolmap_python_path() == pycolmap.resolve()
-    assert default_reconstruction_output_root() == output_root.resolve()
-
-    settings = default_live_stella_launch_settings()
-    assert settings.install_prefix == prefix.resolve()
-    assert settings.worker_executable == worker.resolve()
-    assert settings.vocabulary_path == vocab.resolve()
-
-
-def test_b3_public_environment_override_wins_over_legacy(monkeypatch, tmp_path: Path) -> None:
-    public_root = tmp_path / "public-runtime-output"
-    legacy_root = tmp_path / "legacy-runtime-output"
-
-    monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT", str(public_root))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_OUTPUT_ROOT", str(legacy_root))
-
-    assert default_reconstruction_output_root() == public_root.resolve()
-
-
 def test_b3_missing_external_runtime_fails_before_backend_start(monkeypatch, tmp_path: Path) -> None:
     missing = tmp_path / "missing-python"
     monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON", str(missing))

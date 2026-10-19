@@ -25,40 +25,6 @@ def _w2c(rotation_c2w: np.ndarray, center: np.ndarray) -> np.ndarray:
     return output
 
 
-def test_e2_da3_environment_overrides_accept_legacy_namespace(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    legacy_python = tmp_path / "legacy-da3-python"
-    legacy_repo = tmp_path / "legacy-da3-repository"
-
-    monkeypatch.delenv("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", raising=False)
-    monkeypatch.delenv("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", raising=False)
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_PYTHON", str(legacy_python))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_REPOSITORY", str(legacy_repo))
-
-    assert _default_da3_python_path() == legacy_python.resolve()
-    assert _default_da3_repository_path() == legacy_repo.resolve()
-
-
-def test_e2_da3_public_environment_overrides_win_over_legacy(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    public_python = tmp_path / "public-da3-python"
-    public_repo = tmp_path / "public-da3-repository"
-    legacy_python = tmp_path / "legacy-da3-python"
-    legacy_repo = tmp_path / "legacy-da3-repository"
-
-    monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", str(public_python))
-    monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", str(public_repo))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_PYTHON", str(legacy_python))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_REPOSITORY", str(legacy_repo))
-
-    assert _default_da3_python_path() == public_python.resolve()
-    assert _default_da3_repository_path() == public_repo.resolve()
-
-
 def test_e2_profile_is_bounded_three_view_overlap_and_arbitrary_scale_safe() -> None:
     profile = DA3FullSceneProfile()
     assert profile.window_size == 3

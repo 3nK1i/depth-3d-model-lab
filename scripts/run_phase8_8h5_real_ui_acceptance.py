@@ -108,8 +108,8 @@ def main() -> int:
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
-    os.environ["EIA_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
-    os.environ["EIA_RECONSTRUCTION_OUTPUT_ROOT"] = str(output / "runs")
+    os.environ["DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
+    os.environ["DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT"] = str(output / "runs")
     # H5 is a real viewport/UI acceptance. Never inherit fake/offscreen VisPy flags.
     os.environ.pop("DEPTH3D_TEST_FAKE_VISPY", None)
     os.environ.pop("QT_QPA_PLATFORM", None)

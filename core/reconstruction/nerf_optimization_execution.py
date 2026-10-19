@@ -82,8 +82,6 @@ def _isolated_worker_environment(runtime_report: NerfInteractiveRuntimeReport) -
     env["CONDA_DEFAULT_ENV"] = prefix.name
     env["PYTHONNOUSERSITE"] = "1"
     env.pop("PYTHONPATH", None)
-    env.pop("EIA_NERFSTUDIO_ROOT", None)
-    env.pop("EIA_TCNN_ROOT", None)
     env["DEPTH3D_NERFSTUDIO_ROOT"] = runtime_report.spec.nerfstudio_root
     env["DEPTH3D_TCNN_ROOT"] = runtime_report.spec.tiny_cuda_nn_root
 

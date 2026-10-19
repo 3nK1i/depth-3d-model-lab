@@ -52,8 +52,8 @@ def main() -> int:
     output.mkdir(parents=True)
     runtime_root = output / "runs"
 
-    os.environ["EIA_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
-    os.environ["EIA_RECONSTRUCTION_OUTPUT_ROOT"] = str(runtime_root)
+    os.environ["DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
+    os.environ["DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT"] = str(runtime_root)
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("QT_OPENGL", "software")
     os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")

@@ -51,8 +51,8 @@ def main() -> int:
         shutil.rmtree(output)
     output.mkdir(parents=True)
 
-    os.environ["EIA_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
-    os.environ["EIA_RECONSTRUCTION_OUTPUT_ROOT"] = str(output / "runs")
+    os.environ["DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
+    os.environ["DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT"] = str(output / "runs")
     os.environ.pop("DEPTH3D_TEST_FAKE_VISPY", None)
 
     CameraEnumerator.start = lambda self: None  # type: ignore[method-assign]

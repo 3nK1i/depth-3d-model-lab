@@ -93,15 +93,11 @@ class DA3CanonicalIntegrationConfiguration:
 
 def default_da3_python_path() -> Path:
     raw = os.environ.get("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", "").strip()
-    if not raw:
-        raw = os.environ.get("EIA_RECONSTRUCTION_DA3_PYTHON", "").strip()
     return Path(raw).expanduser().resolve() if raw else DEFAULT_DA3_PYTHON.expanduser().resolve()
 
 
 def default_da3_repository_path() -> Path:
     raw = os.environ.get("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", "").strip()
-    if not raw:
-        raw = os.environ.get("EIA_RECONSTRUCTION_DA3_REPOSITORY", "").strip()
     return Path(raw).expanduser().resolve() if raw else DEFAULT_DA3_REPOSITORY.expanduser().resolve()
 
 

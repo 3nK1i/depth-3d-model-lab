@@ -52,12 +52,8 @@ def _git_revision(path: Path) -> str:
 def _require_checkout(
     env_name: str,
     expected_prefix: str,
-    *,
-    legacy_env_name: str | None = None,
 ) -> tuple[Path, str]:
     raw = os.environ.get(env_name, "").strip()
-    if not raw and legacy_env_name:
-        raw = os.environ.get(legacy_env_name, "").strip()
     if not raw:
         raise RuntimeError(f"{env_name} is required for reproducible E2 qualification")
     root = Path(raw).expanduser().resolve()
@@ -181,12 +177,10 @@ def _run(request_path: Path, result_path: Path) -> None:
     nerfstudio_root, nerfstudio_revision = _require_checkout(
         "DEPTH3D_NERFSTUDIO_ROOT",
         NERFSTUDIO_RELEASE_REVISION_PREFIX,
-        legacy_env_name="EIA_NERFSTUDIO_ROOT",
     )
     tcnn_root, tcnn_revision = _require_checkout(
         "DEPTH3D_TCNN_ROOT",
         TINY_CUDA_NN_E2_REVISION,
-        legacy_env_name="EIA_TCNN_ROOT",
     )
 
     import torch

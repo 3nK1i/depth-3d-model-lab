@@ -335,7 +335,7 @@ def main() -> int:
     parser.add_argument('--images-dir', type=Path, default=DEFAULT_SOURCE,
                         help='existing real images folder; never modified')
     parser.add_argument('--sfm-python', type=Path,
-                        default=Path(os.environ.get('EIA_RECONSTRUCTION_PYCOLMAP_PYTHON', str(DEFAULT_SFM))))
+                        default=Path(os.environ.get('DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON', str(DEFAULT_SFM))))
     parser.add_argument('--image-count', type=int, default=IMAGE_COUNT,
                         help='number of adjacent real source images, 8..24 (default 24; never changes hard limits)')
     parser.add_argument('--run', action='store_true', help='explicitly start ONE bounded real CPU SfM worker')

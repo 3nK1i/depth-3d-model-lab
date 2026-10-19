@@ -141,15 +141,8 @@ def _existing_file(value: Any, *, label: str) -> Path:
     return path
 
 
-def _environment_value(
-    name: str,
-    *,
-    legacy_name: str | None = None,
-) -> str:
-    raw = os.environ.get(name, "").strip()
-    if not raw and legacy_name:
-        raw = os.environ.get(legacy_name, "").strip()
-    return raw
+def _environment_value(name: str) -> str:
+    return os.environ.get(name, "").strip()
 
 
 def _existing_dir(value: Any, *, label: str) -> Path:
@@ -340,14 +333,12 @@ def main() -> int:
         nerfstudio_root = _existing_dir(
             _environment_value(
                 "DEPTH3D_NERFSTUDIO_ROOT",
-                legacy_name="EIA_NERFSTUDIO_ROOT",
             ),
             label="Nerfstudio checkout",
         )
         tcnn_root = _existing_dir(
             _environment_value(
                 "DEPTH3D_TCNN_ROOT",
-                legacy_name="EIA_TCNN_ROOT",
             ),
             label="tiny-cuda-nn checkout",
         )

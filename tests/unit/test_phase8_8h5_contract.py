@@ -21,7 +21,7 @@ def test_h5_requires_real_image_or_video_source_and_external_pycolmap() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert 'source.add_argument("--images"' in text
     assert 'source.add_argument("--video"' in text
-    assert '"EIA_RECONSTRUCTION_PYCOLMAP_PYTHON"' in text
+    assert '"DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON"' in text
     assert '"pycolmap" not in sys.modules' in text
     assert 'result.get("tests_fixture_used") is False' in text
 

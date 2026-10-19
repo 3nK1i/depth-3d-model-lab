@@ -52,8 +52,8 @@ def main() -> int:
     output.mkdir(parents=True)
     runtime_root = output / "runs"
 
-    os.environ["EIA_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
-    os.environ["EIA_RECONSTRUCTION_OUTPUT_ROOT"] = str(runtime_root)
+    os.environ["DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON"] = str(sfm_python)
+    os.environ["DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT"] = str(runtime_root)
     # D1 is a real rendering gate: deliberately do not force Qt offscreen/fake VisPy.
     os.environ.pop("DEPTH3D_TEST_FAKE_VISPY", None)
 

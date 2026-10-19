@@ -18,8 +18,6 @@ def test_3h_da3_worker_boundary_keeps_external_runtime_isolated() -> None:
     worker = _text("scripts/run_phase9_3h_da3_canonical_job.py")
     assert "DEPTH3D_RECONSTRUCTION_DA3_PYTHON" in controller
     assert "DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY" in controller
-    assert "EIA_RECONSTRUCTION_DA3_PYTHON" in controller
-    assert "EIA_RECONSTRUCTION_DA3_REPOSITORY" in controller
     assert '"--da3-python"' in controller
     assert '"--da3-repo"' in controller
     assert "DA3ExternalWorkerRunner" in worker
@@ -29,40 +27,6 @@ def test_3h_da3_worker_boundary_keeps_external_runtime_isolated() -> None:
     assert "imported.relative_to(repository)" in worker
     assert "pip install" not in worker
     assert "conda install" not in worker
-
-
-def test_3h_da3_environment_overrides_accept_legacy_namespace(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    legacy_python = tmp_path / "legacy-da3-python"
-    legacy_repo = tmp_path / "legacy-da3-repository"
-
-    monkeypatch.delenv("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", raising=False)
-    monkeypatch.delenv("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", raising=False)
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_PYTHON", str(legacy_python))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_REPOSITORY", str(legacy_repo))
-
-    assert default_da3_python_path() == legacy_python.resolve()
-    assert default_da3_repository_path() == legacy_repo.resolve()
-
-
-def test_3h_da3_public_environment_overrides_win_over_legacy(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    public_python = tmp_path / "public-da3-python"
-    public_repo = tmp_path / "public-da3-repository"
-    legacy_python = tmp_path / "legacy-da3-python"
-    legacy_repo = tmp_path / "legacy-da3-repository"
-
-    monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_DA3_PYTHON", str(public_python))
-    monkeypatch.setenv("DEPTH3D_RECONSTRUCTION_DA3_REPOSITORY", str(public_repo))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_PYTHON", str(legacy_python))
-    monkeypatch.setenv("EIA_RECONSTRUCTION_DA3_REPOSITORY", str(legacy_repo))
-
-    assert default_da3_python_path() == public_python.resolve()
-    assert default_da3_repository_path() == public_repo.resolve()
 
 
 def test_3h_da3_cancellation_targets_the_worker_process_group() -> None:

@@ -168,8 +168,6 @@ def main() -> int:
 
     root_text = os.environ.get("DEPTH3D_GRAPHDECO_ROOT", "").strip()
     if not root_text:
-        root_text = os.environ.get("EIA_GRAPHDECO_ROOT", "").strip()
-    if not root_text:
         raise RuntimeError("DEPTH3D_GRAPHDECO_ROOT is required for the Graphdeco external worker")
     graphdeco_root = Path(root_text).resolve()
     _validate_graphdeco_root(graphdeco_root)

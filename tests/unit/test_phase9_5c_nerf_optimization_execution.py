@@ -151,8 +151,6 @@ def test_5c_supervisor_executes_existing_worker_without_importing_backend(tmp_pa
     assert "PYTHONPATH" not in captured["kwargs"]["env"]
     assert captured["kwargs"]["env"]["DEPTH3D_NERFSTUDIO_ROOT"] == runtime.spec.nerfstudio_root
     assert captured["kwargs"]["env"]["DEPTH3D_TCNN_ROOT"] == runtime.spec.tiny_cuda_nn_root
-    assert "EIA_NERFSTUDIO_ROOT" not in captured["kwargs"]["env"]
-    assert "EIA_TCNN_ROOT" not in captured["kwargs"]["env"]
     assert report.state is NerfOptimizationExecutionState.COMPLETED
     assert report.artifact.training_steps == 64
     assert Path(report.preview_path).is_file()

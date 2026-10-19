@@ -189,12 +189,8 @@ DEFAULT_TEST_FOCAL_LENGTH_RELATIVE_UNCERTAINTY = 0.15
 def _runtime_path_from_environment(
     name: str,
     fallback: Path,
-    *,
-    legacy_name: str | None = None,
 ) -> Path:
     raw = os.environ.get(name, "").strip()
-    if not raw and legacy_name:
-        raw = os.environ.get(legacy_name, "").strip()
     return Path(raw).expanduser().resolve() if raw else fallback.expanduser().resolve()
 
 
@@ -204,7 +200,6 @@ def _configured_pycolmap_python_path() -> Path:
     return _runtime_path_from_environment(
         "DEPTH3D_RECONSTRUCTION_PYCOLMAP_PYTHON",
         DEFAULT_PYCOLMAP_PYTHON,
-        legacy_name="EIA_RECONSTRUCTION_PYCOLMAP_PYTHON",
     )
 
 
@@ -226,7 +221,6 @@ def default_reconstruction_output_root() -> Path:
     return _runtime_path_from_environment(
         "DEPTH3D_RECONSTRUCTION_OUTPUT_ROOT",
         DEFAULT_RECONSTRUCTION_OUTPUT_ROOT,
-        legacy_name="EIA_RECONSTRUCTION_OUTPUT_ROOT",
     )
 
 
@@ -236,17 +230,14 @@ def default_live_stella_launch_settings() -> LiveStellaLaunchSettings:
     install_prefix = _runtime_path_from_environment(
         "DEPTH3D_RECONSTRUCTION_STELLA_PREFIX",
         DEFAULT_STELLA_INSTALL_PREFIX,
-        legacy_name="EIA_RECONSTRUCTION_STELLA_PREFIX",
     )
     worker = _runtime_path_from_environment(
         "DEPTH3D_RECONSTRUCTION_STELLA_WORKER",
         DEFAULT_STELLA_WORKER,
-        legacy_name="EIA_RECONSTRUCTION_STELLA_WORKER",
     )
     vocabulary = _runtime_path_from_environment(
         "DEPTH3D_RECONSTRUCTION_STELLA_VOCAB",
         DEFAULT_STELLA_VOCABULARY,
-        legacy_name="EIA_RECONSTRUCTION_STELLA_VOCAB",
     )
     if not install_prefix.is_dir():
         raise ReconstructionValidationError(
