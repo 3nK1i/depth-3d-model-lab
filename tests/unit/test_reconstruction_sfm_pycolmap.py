@@ -168,7 +168,7 @@ import argparse, json
 from pathlib import Path
 p=argparse.ArgumentParser(); p.add_argument('--request'); p.add_argument('--result'); a=p.parse_args()
 request=json.loads(Path(a.request).read_text())
-print('EIA_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':'progress','stage':'matching','message':'fake matching','progress_fraction':0.5,'metadata':{}}), flush=True)
+print('DEPTH3D_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':'progress','stage':'matching','message':'fake matching','progress_fraction':0.5,'metadata':{}}), flush=True)
 payload=PAYLOAD
 Path(a.result).write_text(json.dumps(payload))
 """.replace("PAYLOAD", repr(payload)),
@@ -228,7 +228,7 @@ def test_external_backend_terminates_worker_on_cancellation(tmp_path) -> None:
         """
 import argparse, time
 p=argparse.ArgumentParser(); p.add_argument('--request'); p.add_argument('--result'); p.parse_args()
-print('EIA_SFM_EVENT {"schema_version":1,"event_type":"status","stage":"startup","message":"sleeping","progress_fraction":0.1,"metadata":{}}', flush=True)
+print('DEPTH3D_SFM_EVENT {"schema_version":1,"event_type":"status","stage":"startup","message":"sleeping","progress_fraction":0.1,"metadata":{}}', flush=True)
 time.sleep(10)
 """,
         encoding="utf-8",

@@ -12,7 +12,7 @@ from core.reconstruction.errors import ReconstructionValidationError, SfmWorkerP
 from core.reconstruction.validation import require_nonnegative_int, require_probability
 
 SFM_WORKER_SCHEMA_VERSION = 1
-SFM_WORKER_EVENT_PREFIX = "EIA_SFM_EVENT "
+SFM_WORKER_EVENT_PREFIX = "DEPTH3D_SFM_EVENT "
 
 
 class SfmWorkerEventType(str, Enum):

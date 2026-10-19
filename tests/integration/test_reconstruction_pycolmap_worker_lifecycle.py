@@ -86,7 +86,7 @@ def test_workspace_external_worker_conversion_lifecycle(tmp_path) -> None:
 import argparse, json
 from pathlib import Path
 p=argparse.ArgumentParser(); p.add_argument('--request'); p.add_argument('--result'); a=p.parse_args()
-print('EIA_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':'progress','stage':'mapping','message':'mapping','progress_fraction':0.7,'metadata':{}}), flush=True)
+print('DEPTH3D_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':'progress','stage':'mapping','message':'mapping','progress_fraction':0.7,'metadata':{}}), flush=True)
 Path(a.result).write_text(json.dumps(PAYLOAD))
 """.replace("PAYLOAD", repr(payload)),
         encoding="utf-8",

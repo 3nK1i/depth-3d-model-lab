@@ -123,7 +123,7 @@ assert helper.PROGRESSIVE_SFM_EVENT_PREFIX == 'DEPTH3D_SFM_PROGRESSIVE '
 assert helper.PROGRESSIVE_MAX_CAMERA_SAMPLES == 64
 assert helper.PROGRESSIVE_MAX_LANDMARK_SAMPLES == 4096
 assert helper.mapping_snapshot_frame_interval(128) == 11
-assert worker.EVENT_PREFIX == 'EIA_SFM_EVENT '
+assert worker.EVENT_PREFIX == 'DEPTH3D_SFM_EVENT '
 assert hasattr(worker, '_ProgressiveSfmWorkerEmitter')
 print('I6.6B progressive worker emission import probe: PASS')
 PY

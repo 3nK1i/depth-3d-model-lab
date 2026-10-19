@@ -31,11 +31,11 @@
 #include <thread>
 #include <vector>
 
-#ifndef EIA_STELLA_VERSION
-#define EIA_STELLA_VERSION "unknown"
+#ifndef DEPTH3D_STELLA_VERSION
+#define DEPTH3D_STELLA_VERSION "unknown"
 #endif
-#ifndef EIA_STELLA_COMMIT
-#define EIA_STELLA_COMMIT "unknown"
+#ifndef DEPTH3D_STELLA_COMMIT
+#define DEPTH3D_STELLA_COMMIT "unknown"
 #endif
 
 namespace {
@@ -86,8 +86,8 @@ Options parse_args(int argc, char** argv) {
         }
         if (arg == "--version") {
             std::cout << "depth3d_stella_live_worker " << kWorkerVersion
-                      << " stella_vslam=" << EIA_STELLA_VERSION
-                      << " commit=" << EIA_STELLA_COMMIT << "\n";
+                      << " stella_vslam=" << DEPTH3D_STELLA_VERSION
+                      << " commit=" << DEPTH3D_STELLA_COMMIT << "\n";
             std::exit(0);
         }
         if (i + 1 >= argc) {
@@ -365,14 +365,14 @@ public:
         const std::uint64_t expected = generation << 1U;
         const std::uint64_t before = __atomic_load_n(token_ptr, __ATOMIC_ACQUIRE);
         if ((before & 1U) != 0U || before != expected) {
-            throw std::runtime_error("EIA_STALE_FRAME:shared-memory generation was overwritten before read");
+            throw std::runtime_error("DEPTH3D_STALE_FRAME:shared-memory generation was overwritten before read");
         }
         std::vector<std::uint8_t> bytes(byte_length);
         std::memcpy(bytes.data(), data_ + base + kHeaderBytes, byte_length);
         std::atomic_thread_fence(std::memory_order_acquire);
         const std::uint64_t after = __atomic_load_n(token_ptr, __ATOMIC_ACQUIRE);
         if ((after & 1U) != 0U || after != expected) {
-            throw std::runtime_error("EIA_STALE_FRAME:shared-memory generation changed during read");
+            throw std::runtime_error("DEPTH3D_STALE_FRAME:shared-memory generation changed during read");
         }
         return bytes;
     }
@@ -543,12 +543,12 @@ public:
             pixels = ring_.read_frame(slot_index, generation, byte_length);
         } catch (const std::runtime_error& exc) {
             const std::string message(exc.what());
-            if (message.rfind("EIA_STALE_FRAME:", 0) == 0) {
+            if (message.rfind("DEPTH3D_STALE_FRAME:", 0) == 0) {
                 channel_.send_message(
                     "error",
                     {
                         {"code", "stale_frame"},
-                        {"message", message.substr(std::strlen("EIA_STALE_FRAME:"))},
+                        {"message", message.substr(std::strlen("DEPTH3D_STALE_FRAME:"))},
                         {"retryable", true},
                         {"frame_id", frame_id},
                         {"sequence_index", sequence_index},
@@ -893,8 +893,8 @@ int run_worker(const Options& options) {
         {
             {"backend_id", options.backend_id},
             {"worker_version", kWorkerVersion},
-            {"stella_version", EIA_STELLA_VERSION},
-            {"stella_commit", EIA_STELLA_COMMIT},
+            {"stella_version", DEPTH3D_STELLA_VERSION},
+            {"stella_commit", DEPTH3D_STELLA_COMMIT},
             {"pose_input_convention", kPoseInputConvention},
             {"pose_output_convention", kPoseOutputConvention},
             {"pixel_transport", "posix_shared_memory"},

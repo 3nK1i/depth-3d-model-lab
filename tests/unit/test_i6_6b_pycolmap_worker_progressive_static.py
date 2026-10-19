@@ -23,7 +23,7 @@ def test_worker_progressive_transport_is_separate_from_existing_event_protocol()
     protocol = PROTOCOL.read_text(encoding="utf-8")
     assert "DEPTH3D_SFM_PROGRESSIVE " in worker or "progressive_event_line" in worker
     assert "DEPTH3D_SFM_PROGRESSIVE " not in protocol
-    assert 'SFM_WORKER_EVENT_PREFIX = "EIA_SFM_EVENT "' in protocol
+    assert 'SFM_WORKER_EVENT_PREFIX = "DEPTH3D_SFM_EVENT "' in protocol
 
 
 def test_i66b_does_not_wire_controller_or_ui_consumption() -> None:

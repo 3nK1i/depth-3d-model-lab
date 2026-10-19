@@ -22,7 +22,7 @@ def _make_probe_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     prefix = tmp_path / "stella"
     (prefix / "lib").mkdir(parents=True)
     (prefix / "lib" / "libstella_vslam.so").write_bytes(b"probe")
-    (prefix / "EIA_STELLA_PROBE_INFO.txt").write_text(
+    (prefix / "DEPTH3D_STELLA_PROBE_INFO.txt").write_text(
         "\n".join(
             [
                 "probe_status=PASS",
@@ -53,7 +53,7 @@ def test_stella_environment_probe_accepts_exact_qualified_isolated_layout(tmp_pa
 
 def test_stella_environment_probe_rejects_unqualified_commit(tmp_path: Path) -> None:
     prefix, worker, vocab = _make_probe_layout(tmp_path)
-    metadata = prefix / "EIA_STELLA_PROBE_INFO.txt"
+    metadata = prefix / "DEPTH3D_STELLA_PROBE_INFO.txt"
     metadata.write_text(
         metadata.read_text(encoding="utf-8").replace(STELLA_QUALIFIED_COMMIT, "bad-commit"),
         encoding="utf-8",

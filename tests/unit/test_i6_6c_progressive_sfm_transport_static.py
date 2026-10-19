@@ -28,7 +28,7 @@ def test_i66c_adds_validated_dedicated_transport_without_touching_worker_protoco
     assert "progressive_sfm_transport_line" in offline_worker
     assert "progressive_snapshot_callback=on_progressive_sfm_snapshot" in offline_worker
     assert "DEPTH3D_SFM_PROGRESSIVE " not in protocol
-    assert 'SFM_WORKER_EVENT_PREFIX = "EIA_SFM_EVENT "' in protocol
+    assert 'SFM_WORKER_EVENT_PREFIX = "DEPTH3D_SFM_EVENT "' in protocol
 
 
 def test_i66c_controller_uses_latest_only_backpressure_and_session_isolation() -> None:
@@ -61,10 +61,10 @@ def test_i66c_does_not_add_viewport_or_ui_consumption() -> None:
 def test_i66b_worker_remains_frozen_at_sanitized_equivalent_hash() -> None:
     import hashlib
 
-    # Open-source sanitization changed only reviewed non-runtime worker prose.
-    # Freeze the reviewed sanitized bytes without claiming a new runtime qualification.
+    # Open-source namespace migration updates the worker protocol prefix to
+    # the public DEPTH3D contract without claiming a new runtime qualification.
     source = WORKER.read_text(encoding="utf-8")
     assert source.count('description="Isolated PyCOLMAP SfM worker"') == 1
 
     digest = hashlib.sha256(WORKER.read_bytes()).hexdigest()
-    assert digest == "68dce73875d7a717dd2d9f63ecdfb2304a7a40c671429a55fb095e90f04422ec"
+    assert digest == "53440a45daf19db70bb32c97f16ff9e596120e2244f13f1ea6d16b0544f7d68d"

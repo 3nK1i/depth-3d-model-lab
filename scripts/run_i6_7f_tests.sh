@@ -13,7 +13,7 @@ import hashlib
 checks = {
   'core/reconstruction/reconstruction_progressive_dense_contract.py': '918c67574ef342909fffdfd495d2503c5909bafd0624fb3856b34c488f2257ee',
   'core/reconstruction/reconstruction_progressive_dense_emission.py': '5c68ec59d1ec0238b15853e95135a56df7e2043824e9c835c66fadaa4f594ff7',
-  'core/reconstruction/reconstruction_progressive_dense_transport.py': '0874b96fc0b398a101fa8f432e965e0c178c857a099d99e36377420a12da560c',
+  'core/reconstruction/reconstruction_progressive_dense_transport.py': '5be5d9bca0b564c2454deccff5530b3f483ca7ae45425a4394c05a0efa968074',
   'app/reconstruction_progressive_dense_viewer.py': '453dbbdd8d90852ae0062e01c1370d14d55c849331cc157c551bf9490ab09dd8',
   'core/reconstruction/reconstruction_dense_artifact_preflight.py': '7b953e9017d74f48a31b1b05509c3452f7eac7bb6d2591b595d885e4e5aafc79',
   'app/reconstruction_dense_final_handoff.py': 'cf761c3854d28707d56d9924e801d9fe89075f7183f5c04e0fa092baf6eb2490',

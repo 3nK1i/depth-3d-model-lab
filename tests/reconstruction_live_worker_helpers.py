@@ -41,8 +41,8 @@ worker_seq = 0
 buf = b''
 request = None
 accepted_loop_requests = 0
-mode = os.environ.get('EIA_FAKE_STELLA_MODE', 'normal')
-marker = os.environ.get('EIA_FAKE_STELLA_MARKER', '')
+mode = os.environ.get('DEPTH3D_FAKE_STELLA_MODE', 'normal')
+marker = os.environ.get('DEPTH3D_FAKE_STELLA_MARKER', '')
 
 def fault_once(kind):
     if mode != kind + '_once':

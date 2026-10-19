@@ -14,24 +14,24 @@ find_package(Threads REQUIRED)
 add_executable(depth3d_stella_live_worker main.cc)
 
 if(TARGET stella_vslam::stella_vslam)
-    set(EIA_STELLA_TARGET stella_vslam::stella_vslam)
+    set(DEPTH3D_STELLA_TARGET stella_vslam::stella_vslam)
 elseif(TARGET stella_vslam)
-    set(EIA_STELLA_TARGET stella_vslam)
+    set(DEPTH3D_STELLA_TARGET stella_vslam)
 else()
     message(FATAL_ERROR "Could not resolve exported stella_vslam CMake target")
 endif()
 
-set(EIA_STELLA_VERSION "0.3.13" CACHE STRING "Qualified stella_vslam version")
-set(EIA_STELLA_COMMIT "unknown" CACHE STRING "Qualified stella_vslam commit")
+set(DEPTH3D_STELLA_VERSION "0.3.13" CACHE STRING "Qualified stella_vslam version")
+set(DEPTH3D_STELLA_COMMIT "unknown" CACHE STRING "Qualified stella_vslam commit")
 
 target_compile_definitions(depth3d_stella_live_worker PRIVATE
-    EIA_STELLA_VERSION="${EIA_STELLA_VERSION}"
-    EIA_STELLA_COMMIT="${EIA_STELLA_COMMIT}"
+    DEPTH3D_STELLA_VERSION="${DEPTH3D_STELLA_VERSION}"
+    DEPTH3D_STELLA_COMMIT="${DEPTH3D_STELLA_COMMIT}"
 )
 
 target_compile_options(depth3d_stella_live_worker PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(depth3d_stella_live_worker PRIVATE
-    ${EIA_STELLA_TARGET}
+    ${DEPTH3D_STELLA_TARGET}
     ${OpenCV_LIBS}
     Eigen3::Eigen
     Threads::Threads

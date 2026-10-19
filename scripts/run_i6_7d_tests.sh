@@ -15,7 +15,7 @@ import hashlib
 expected = {
  'core/reconstruction/reconstruction_progressive_dense_contract.py': '918c67574ef342909fffdfd495d2503c5909bafd0624fb3856b34c488f2257ee',
  'core/reconstruction/reconstruction_progressive_dense_emission.py': '5c68ec59d1ec0238b15853e95135a56df7e2043824e9c835c66fadaa4f594ff7',
- 'core/reconstruction/reconstruction_progressive_dense_transport.py': '0874b96fc0b398a101fa8f432e965e0c178c857a099d99e36377420a12da560c',
+ 'core/reconstruction/reconstruction_progressive_dense_transport.py': '5be5d9bca0b564c2454deccff5530b3f483ca7ae45425a4394c05a0efa968074',
  'app/reconstruction_progressive_sfm_viewer.py': 'cda2e1da490a83a9af0875a95d4ac3672f9637b3dd616a7e6738911702864d76',
 }
 for name, sha in expected.items():

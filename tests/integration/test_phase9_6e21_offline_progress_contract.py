@@ -46,7 +46,7 @@ from pathlib import Path
 p=argparse.ArgumentParser(); p.add_argument('--request'); p.add_argument('--result'); a=p.parse_args()
 r=json.loads(Path(a.request).read_text())
 def emit(t, stage, msg, progress=None):
-    print('EIA_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':t,'stage':stage,'message':msg,'progress_fraction':progress,'metadata':{}}), flush=True)
+    print('DEPTH3D_SFM_EVENT '+json.dumps({'schema_version':1,'event_type':t,'stage':stage,'message':msg,'progress_fraction':progress,'metadata':{}}), flush=True)
 emit('progress','mapping','Starting mapping',0.64)
 emit('progress','mapping','Initial image pair registered',0.68)
 emit('progress','mapping','Registered image',0.74)

@@ -24,7 +24,7 @@ from tests.reconstruction_live_worker_helpers import make_fake_stella_worker_lay
 
 
 def _setup(tmp_path, monkeypatch, mode, *, frame_timeout_s=0.4):
-    monkeypatch.setenv("EIA_FAKE_STELLA_MODE", mode)
+    monkeypatch.setenv("DEPTH3D_FAKE_STELLA_MODE", mode)
     prefix, worker, vocab = make_fake_stella_worker_layout(tmp_path)
     request = make_live_request(backend_id=STELLA_LIVE_BACKEND_ID)
     ring = LiveSharedMemoryFrameRing.create(

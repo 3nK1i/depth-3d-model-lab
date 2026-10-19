@@ -183,7 +183,7 @@ def test_dense_worker_hook_forwards_original_snapshot_even_if_observation_unavai
         return type('Admitted', (), {'as_dict': lambda self: {'admission_test_marker': True}})()
     monkeypatch.setattr(worker, 'execute_explicit_colmap_dense_after_sparse', fake_execute)
     assert worker.main() == 0
-    assert any(str(line).startswith('EIA_DENSE_PROGRESSIVE ') for line in stdout)
+    assert any(str(line).startswith('DEPTH3D_DENSE_PROGRESSIVE ') for line in stdout)
     assert any('"event":"dense_completed"' in str(line) for line in stdout)
     assert not (tmp_path / 'dense_runs').exists()  # observer never creates fake evidence dirs
 
@@ -214,7 +214,7 @@ def test_dense_worker_hook_reports_real_stage_to_latest_only_sidecar(tmp_path, m
     assert event.stage == 'dense_fusion'
     assert event.sequence == 2
     assert event.counter is None
-    assert len([line for line in stdout if str(line).startswith('EIA_DENSE_PROGRESSIVE ')]) == 2
+    assert len([line for line in stdout if str(line).startswith('DEPTH3D_DENSE_PROGRESSIVE ')]) == 2
 
 
 def test_sparse_backend_hook_writes_actual_worker_stage_in_bound_session(tmp_path, monkeypatch):

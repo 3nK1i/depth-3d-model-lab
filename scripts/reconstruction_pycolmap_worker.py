@@ -33,7 +33,7 @@ from reconstruction_progressive_sfm_emission import (
 
 SFM_WORKER_SCHEMA_VERSION = 1
 SFM_WORKER_CHECKPOINT_SCHEMA_VERSION = 1
-EVENT_PREFIX = "EIA_SFM_EVENT "
+EVENT_PREFIX = "DEPTH3D_SFM_EVENT "
 _RESUME_STAGES = {"none": 0, "features": 1, "matching": 2, "complete": 3}
 
 

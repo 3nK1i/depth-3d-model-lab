@@ -49,8 +49,8 @@ def test_external_worker_crash_timeout_or_malformed_ipc_recovers_once(
     frame_timeout_s: float,
 ) -> None:
     marker = tmp_path / f"{mode}.marker"
-    monkeypatch.setenv("EIA_FAKE_STELLA_MODE", mode)
-    monkeypatch.setenv("EIA_FAKE_STELLA_MARKER", str(marker))
+    monkeypatch.setenv("DEPTH3D_FAKE_STELLA_MODE", mode)
+    monkeypatch.setenv("DEPTH3D_FAKE_STELLA_MARKER", str(marker))
     prefix, worker, vocab = make_fake_stella_worker_layout(tmp_path)
     request = make_live_request(backend_id=STELLA_LIVE_BACKEND_ID)
     observations = []

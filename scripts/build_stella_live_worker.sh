@@ -2,10 +2,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STELLA_PREFIX="${EIA_STELLA_PREFIX:-$HOME/Desktop/depth3d-stella-vslam-probe}"
-BUILD_ROOT="${EIA_STELLA_LIVE_WORKER_BUILD:-$HOME/Desktop/depth3d-stella-live-worker-build}"
-INSTALL_ROOT="${EIA_STELLA_LIVE_WORKER_PREFIX:-$HOME/Desktop/depth3d-stella-live-worker}"
-METADATA="$STELLA_PREFIX/EIA_STELLA_PROBE_INFO.txt"
+STELLA_PREFIX="${DEPTH3D_STELLA_PREFIX:-$HOME/Desktop/depth3d-stella-vslam-probe}"
+BUILD_ROOT="${DEPTH3D_STELLA_LIVE_WORKER_BUILD:-$HOME/Desktop/depth3d-stella-live-worker-build}"
+INSTALL_ROOT="${DEPTH3D_STELLA_LIVE_WORKER_PREFIX:-$HOME/Desktop/depth3d-stella-live-worker}"
+METADATA="$STELLA_PREFIX/DEPTH3D_STELLA_PROBE_INFO.txt"
 QUALIFIED_VERSION="0.3.13"
 QUALIFIED_COMMIT="7902892d445843563d2d3149505fd3e1a118a141"
 QUALIFIED_FBOW="7753c2c17dd7ce8bdf4a7a3fb1262b78d5b9b9b5"
@@ -54,10 +54,10 @@ cmake \
     -DCMAKE_PREFIX_PATH="$STELLA_PREFIX" \
     -DCMAKE_BUILD_RPATH="$STELLA_PREFIX/lib;$STELLA_PREFIX/lib64" \
     -DCMAKE_INSTALL_RPATH="$STELLA_PREFIX/lib;$STELLA_PREFIX/lib64" \
-    -DEIA_STELLA_VERSION="$STELLA_VERSION" \
-    -DEIA_STELLA_COMMIT="$STELLA_COMMIT"
+    -DDEPTH3D_STELLA_VERSION="$STELLA_VERSION" \
+    -DDEPTH3D_STELLA_COMMIT="$STELLA_COMMIT"
 
-cmake --build "$BUILD_ROOT" --parallel "${EIA_BUILD_JOBS:-4}"
+cmake --build "$BUILD_ROOT" --parallel "${DEPTH3D_BUILD_JOBS:-4}"
 cmake --install "$BUILD_ROOT"
 
 WORKER="$INSTALL_ROOT/bin/depth3d_stella_live_worker"
@@ -80,7 +80,7 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-w
     REPO_BASE="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 fi
 
-cat > "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt" <<INFO
+cat > "$INSTALL_ROOT/DEPTH3D_STELLA_LIVE_WORKER_INFO.txt" <<INFO
 Depth & 3D Model Lab Phase 8.8C4 isolated stella_vslam map-structure worker
 worker_status=PASS
 worker_protocol_version=1
@@ -105,7 +105,7 @@ INFO
 echo "============================================================"
 echo " STELLA LIVE WORKER BUILD: PASS"
 echo "============================================================"
-cat "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt"
+cat "$INSTALL_ROOT/DEPTH3D_STELLA_LIVE_WORKER_INFO.txt"
 echo
 echo "=== Runtime linkage ==="
 LD_LIBRARY_PATH="$STELLA_PREFIX/lib:$STELLA_PREFIX/lib64" ldd "$WORKER" | grep -Ei 'stella|fbow|g2o|opencv|yaml' || true

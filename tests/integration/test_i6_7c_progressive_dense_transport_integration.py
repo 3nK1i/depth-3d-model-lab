@@ -52,6 +52,6 @@ def test_i67c_malformed_transport_is_fail_soft_at_buffer_boundary() -> None:
     first = make_snapshot(revision=1)
     buffer = ProgressiveDenseSnapshotBuffer()
     buffer.reset(ProgressiveDenseTransportBinding.from_snapshot(first))
-    assert buffer.offer_line("EIA_DENSE_PROGRESSIVE {") is ProgressiveDenseOfferDisposition.REJECTED
+    assert buffer.offer_line("DEPTH3D_DENSE_PROGRESSIVE {") is ProgressiveDenseOfferDisposition.REJECTED
     assert buffer.pending is None
     assert buffer.stats.rejected == 1

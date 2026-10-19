@@ -23,7 +23,7 @@ def test_transport_roundtrip_preserves_frozen_i66a_snapshot() -> None:
 
 
 def test_transport_ignores_ordinary_worker_and_log_lines() -> None:
-    assert parse_progressive_sfm_worker_line("EIA_SFM_EVENT {}") is None
+    assert parse_progressive_sfm_worker_line("DEPTH3D_SFM_EVENT {}") is None
     assert parse_progressive_sfm_worker_line('{"protocol":"depth3d.reconstruction.offline.v1"}') is None
     assert parse_progressive_sfm_worker_line("native colmap log") is None
 

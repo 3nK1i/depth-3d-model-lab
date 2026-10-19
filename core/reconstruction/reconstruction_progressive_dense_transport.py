@@ -26,7 +26,7 @@ from core.reconstruction.reconstruction_progressive_dense_emission import (
 )
 
 I67C_PHASE = "I6.7C_DENSE_TRANSPORT_BACKPRESSURE_AND_MEMORY_BOUNDS"
-PROGRESSIVE_DENSE_EVENT_PREFIX = "EIA_DENSE_PROGRESSIVE "
+PROGRESSIVE_DENSE_EVENT_PREFIX = "DEPTH3D_DENSE_PROGRESSIVE "
 
 # Transport-only limits.  These are not reconstruction thresholds and do not
 # alter provider execution, scientific geometry, or the I6.7B source artifact.
