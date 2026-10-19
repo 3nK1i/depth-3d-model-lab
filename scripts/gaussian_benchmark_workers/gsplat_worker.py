@@ -283,7 +283,7 @@ def main() -> int:
         ),
     )
     message = (
-        f"EIA gsplat held-out benchmark: PASS training={len(training_frames)} "
+        f"gsplat held-out benchmark: PASS training={len(training_frames)} "
         f"validation={len(validation_frames)} steps={steps}"
     )
     if measure_performance:

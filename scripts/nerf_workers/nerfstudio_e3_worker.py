@@ -329,7 +329,7 @@ def main() -> int:
     try:
         _run(args.request.resolve(), args.result.resolve())
     except Exception as exc:
-        print(f"EIA Nerfstudio E3 worker error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Nerfstudio E3 worker error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
 

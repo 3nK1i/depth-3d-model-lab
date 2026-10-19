@@ -523,7 +523,7 @@ class ExternalStellaLiveSlamBackend:
         if payload.get("pose_input_convention") != "T_camera_from_reconstruction":
             raise LiveSlamProtocolError("Native worker must declare stella camera-from-map input pose convention.")
         if payload.get("pose_output_convention") != "T_reconstruction_from_camera":
-            raise LiveSlamProtocolError("Native worker must declare EIA camera-to-reconstruction output convention.")
+            raise LiveSlamProtocolError("Native worker must declare the camera-to-reconstruction output convention.")
 
     def _validate_ready(self, message: LiveSlamProtocolMessage) -> None:
         payload = _message_payload(message)

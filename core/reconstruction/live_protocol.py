@@ -259,7 +259,7 @@ def parse_live_observation_message(
     expected_session_id: str,
     expected_frame: "LiveSlamFrame | None" = None,
 ) -> "LiveSlamObservation":
-    """Convert a native worker observation into dependency-light EIA contracts."""
+    """Convert a native worker observation into dependency-light reconstruction contracts."""
 
     import numpy as np
 
@@ -322,7 +322,7 @@ def parse_live_observation_message(
         pose_payload = _payload_mapping(raw_pose, "observation.pose")
         if pose_payload.get("pose_convention") != "T_reconstruction_from_camera":
             raise LiveSlamProtocolError(
-                "Native stella pose must use T_reconstruction_from_camera at the EIA boundary."
+                "Native stella pose must use T_reconstruction_from_camera at the reconstruction boundary."
             )
         if pose_payload.get("quaternion_order") not in {None, "wxyz"}:
             raise LiveSlamProtocolError("Native live SLAM quaternion order must be wxyz.")
@@ -501,7 +501,7 @@ def parse_live_observation_message(
     except (TypeError, ValueError) as exc:
         if isinstance(exc, LiveSlamProtocolError):
             raise
-        raise LiveSlamProtocolError("Native live SLAM observation violates EIA contracts.") from exc
+        raise LiveSlamProtocolError("Native live SLAM observation violates reconstruction contracts.") from exc
 
 
 def parse_live_worker_error(message: LiveSlamProtocolMessage) -> dict[str, object]:

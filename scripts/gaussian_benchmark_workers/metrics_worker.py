@@ -191,7 +191,7 @@ def main() -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        f"EIA held-out quality: PASS views={len(per_view)} "
+        f"Held-out quality: PASS views={len(per_view)} "
         f"psnr={aggregate['psnr_db']:.4f} ssim={aggregate['ssim']:.6f} lpips={aggregate['lpips']:.6f}"
     )
     return 0

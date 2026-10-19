@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Real isolated Graphdeco reference-backend qualification worker for 8.7D2.
 
-The worker adapts the EIA neural-scene manifest into a minimal COLMAP-text
-workspace, initializes Graphdeco from the trusted EIA Gaussian seed, runs a
+The worker adapts the canonical neural-scene manifest into a minimal COLMAP-text
+workspace, initializes Graphdeco from the trusted Gaussian seed, runs a
 bounded real CUDA optimization, and verifies that upstream render.py can render
 the resulting model.  Full-quality paper-style training belongs to 8.7D3.
 """
@@ -75,8 +75,8 @@ def _materialize_colmap_dataset(dataset: dict, seed: dict[str, np.ndarray], targ
     images_dir.mkdir(parents=True, exist_ok=True)
     sparse_dir.mkdir(parents=True, exist_ok=True)
 
-    cameras_lines = ["# EIA Phase 8.7D2 generated camera intrinsics"]
-    images_lines = ["# EIA Phase 8.7D2 generated camera poses"]
+    cameras_lines = ["# Phase 8.7D2 generated camera intrinsics"]
+    images_lines = ["# Phase 8.7D2 generated camera poses"]
     used_names: set[str] = set()
 
     for index, frame in enumerate(dataset["frames"], start=1):
@@ -289,7 +289,7 @@ def main() -> int:
         peak_vram_mib=None,
     )
     print(
-        f"EIA Graphdeco qualification: PASS steps={steps} gaussians={gaussian_count} "
+        f"Graphdeco qualification: PASS steps={steps} gaussians={gaussian_count} "
         f"revision={revision[:12]} device={device_name}"
     )
     return 0

@@ -955,7 +955,7 @@ int main(int argc, char** argv) {
         const Options options = parse_args(argc, argv);
         return run_worker(options);
     } catch (const std::exception& exc) {
-        std::cerr << "EIA live SLAM worker fatal: " << exc.what() << std::endl;
+        std::cerr << "Live SLAM worker fatal: " << exc.what() << std::endl;
         return 2;
     }
 }

@@ -2,7 +2,7 @@
 """Standalone PyCOLMAP 4.1.1 worker for Phase 8.3D.
 
 This script is intentionally dependency-isolated. It runs under the external
-reconstruction interpreter and imports neither the EIA application package nor
+reconstruction interpreter and imports neither the main application package nor
 PyQt/OpenCV/Torch. Only JSON-safe values cross the process boundary.
 """
 

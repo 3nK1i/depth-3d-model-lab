@@ -103,7 +103,7 @@ control_transport=af_unix_json_lines
 INFO
 
 echo "============================================================"
-echo " EIA STELLA LIVE WORKER BUILD: PASS"
+echo " STELLA LIVE WORKER BUILD: PASS"
 echo "============================================================"
 cat "$INSTALL_ROOT/EIA_STELLA_LIVE_WORKER_INFO.txt"
 echo

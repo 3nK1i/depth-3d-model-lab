@@ -50,11 +50,11 @@ def export_nerfstudio_dataset(
     training_frame_ids: Sequence[str] | None = None,
     validation_frame_ids: Sequence[str] | None = None,
 ) -> Path:
-    """Export an EIA neural-scene dataset to Nerfstudio ``transforms.json``.
+    """Export a canonical neural-scene dataset to Nerfstudio ``transforms.json``.
 
     E2 keeps its historical default split when explicit IDs are omitted. E3 can
     provide exact train/held-out frame IDs; those IDs must be disjoint and cover
-    the dataset exactly. The canonical EIA pose is OpenCV-style camera-to-world
+    the dataset exactly. The canonical reconstruction pose is OpenCV-style camera-to-world
     (X right, Y down, Z forward), while Nerfstudio consumes OpenGL-style c2w.
     """
 

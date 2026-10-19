@@ -245,9 +245,9 @@ def nerf_backend_runtime_pin() -> NerfBackendRuntimePin:
 
 
 def nerfstudio_camera_to_world_from_eia_pose(value: object) -> list[list[float]]:
-    """Convert EIA OpenCV-style camera-to-world pose to Nerfstudio/OpenGL c2w.
+    """Convert canonical OpenCV-style camera-to-world pose to Nerfstudio/OpenGL c2w.
 
-    EIA reconstruction cameras use X-right, Y-down, Z-forward.  Nerfstudio
+    Canonical reconstruction cameras use X-right, Y-down, Z-forward.  Nerfstudio
     camera-to-world matrices use X-right, Y-up, Z-back.  Therefore the world
     transform is preserved and only camera-axis columns Y/Z are negated.
     """
@@ -268,7 +268,7 @@ def nerfstudio_camera_to_world_from_eia_pose(value: object) -> list[list[float]]
 
 
 def eia_pose_from_nerfstudio_camera_to_world(value: object) -> list[list[float]]:
-    """Convert Nerfstudio/OpenGL camera-to-world to EIA OpenCV-style c2w.
+    """Convert Nerfstudio/OpenGL camera-to-world to canonical OpenCV-style c2w.
 
     This is the exact inverse of :func:`nerfstudio_camera_to_world_from_eia_pose`.
     It is used by E3 dataset preparation so public real-scene camera poses enter

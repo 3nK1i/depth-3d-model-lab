@@ -93,9 +93,9 @@ def probe_stella_live_environment(
     if not prefix.is_dir():
         failures.append("stella_vslam isolated install prefix does not exist")
     if not worker.is_file():
-        failures.append("EIA live SLAM worker executable does not exist")
+        failures.append("Live SLAM worker executable does not exist")
     elif not worker.stat().st_mode & 0o111:
-        failures.append("EIA live SLAM worker is not executable")
+        failures.append("Live SLAM worker is not executable")
     if not vocabulary.is_file() or vocabulary.stat().st_size <= 0:
         failures.append("FBoW ORB vocabulary is missing or empty")
     if not library.is_file():
@@ -168,7 +168,7 @@ def _resolved_live_fps(request: LiveSlamRequest) -> float:
 
 
 def stella_monocular_config_text(request: LiveSlamRequest) -> str:
-    """Translate declared EIA camera metadata to a headless stella YAML config.
+    """Translate declared camera metadata to a headless stella YAML config.
 
     Phase 8.6A may explicitly allow provisional estimated intrinsics for
     experimental tracking. Their provenance remains visible in the generated

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real Phase 8.5D global-consistency/trajectory endurance smoke.
 
-Exercises two native stella worker generations in one EIA reconstruction
+Exercises two native stella worker generations in one reconstruction
 session. The first worker performs real loop/global optimization, is then
 intentionally killed, and a replacement worker starts with reset native
 keyframe IDs/revisions. LiveTrajectoryCoordinator must advance the optimizer

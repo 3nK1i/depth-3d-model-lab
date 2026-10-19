@@ -311,7 +311,7 @@ def main() -> int:
     try:
         _run(args.request.resolve(), args.result.resolve())
     except Exception as exc:
-        print(f"EIA Nerfstudio worker error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Nerfstudio worker error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
 

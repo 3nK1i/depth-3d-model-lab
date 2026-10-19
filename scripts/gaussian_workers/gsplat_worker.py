@@ -249,7 +249,7 @@ def main() -> int:
         peak_vram_mib=peak_vram_mib,
     )
     print(
-        f"EIA gsplat qualification: PASS steps={steps} gaussians={len(positions_np)} "
+        f"gsplat qualification: PASS steps={steps} gaussians={len(positions_np)} "
         f"device={torch.cuda.get_device_name(device)}"
     )
     return 0

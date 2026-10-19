@@ -99,8 +99,8 @@ def _materialize_benchmark_dataset(
     sparse_dir.mkdir(parents=True, exist_ok=True)
 
     validation_set = set(validation_frame_ids)
-    cameras_lines = ["# EIA Phase 8.7D3 generated camera intrinsics"]
-    images_lines = ["# EIA Phase 8.7D3 generated camera poses"]
+    cameras_lines = ["# Phase 8.7D3 generated camera intrinsics"]
+    images_lines = ["# Phase 8.7D3 generated camera poses"]
     generated_by_frame: dict[str, str] = {}
 
     for index, frame in enumerate(dataset["frames"], start=1):
@@ -431,7 +431,7 @@ def main() -> int:
         ),
     )
     message = (
-        f"EIA Graphdeco held-out benchmark: PASS training={len(request['training_frame_ids'])} "
+        f"Graphdeco held-out benchmark: PASS training={len(request['training_frame_ids'])} "
         f"validation={len(request['validation_frame_ids'])} steps={steps} revision={revision[:12]}"
     )
     if measure_performance:

@@ -807,7 +807,7 @@ class ExternalPycolmapSfmBackend:
             self._emit(
                 context,
                 event_type=ReconstructionEventType.PROGRESS,
-                message="Real PyCOLMAP sparse reconstruction converted to EIA contracts.",
+                message="Real PyCOLMAP sparse reconstruction converted to reconstruction contracts.",
                 progress=1.0,
                 metadata={
                     "registered_keyframes": result.statistics.registered_keyframes,

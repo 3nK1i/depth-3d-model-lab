@@ -48,7 +48,7 @@ def test_native_worker_build_script_is_shell_syntax_clean_and_external_build_onl
     assert "$HOME/Desktop/eia-stella-live-worker-build" in text
     assert "$HOME/Desktop/eia-stella-live-worker" in text
     assert "unset CONDA_PREFIX" in text
-    assert "EIA STELLA LIVE WORKER BUILD: PASS" in text
+    assert "STELLA LIVE WORKER BUILD: PASS" in text
 
     smoke_text = REAL_SMOKE_SCRIPT.read_text(encoding="utf-8")
     assert "timestamp_origin=TimestampOrigin.CAPTURE_CLOCK" in smoke_text
